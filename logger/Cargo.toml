@@ -1,0 +1,17 @@
+[package]
+name = "logger"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4.19"
+log4rs = "1.2.0"
+byte-unit = "4.0.19"
+chrono = "0.4.26"
+
+[dev-dependencies]
+criterion = { version = "0.4", features = ["html_reports"] }
+
+[[bench]]
+name = "time_millis"
+harness = false

@@ -1,0 +1,22 @@
+version: '3.4'
+services:
+  database:
+    image: postgres:13.3
+    volumes:
+    - .var/postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: default
+      POSTGRES_USER: default
+      POSTGRES_DB: exchanges-arbitrage
+    ports:
+    - 5432:5432
+  jupyterhub:
+    image: jupyterhub/singleuser:4.0.0b2
+    ports:
+    - 8888:8888
+    volumes:
+    - ./notebooks:/home/jovyan/notebooks
+    environment:
+    - POSTGRES_DRIVER_STR=host=database port=5432 user=default password=default dbname=exchanges-arbitrage
+    command: 'start-notebook.sh --NotebookApp.password="sha1:f8409da91c32:bab6de2e611c36ac6b49d3f8d8229689cd9d5474"' # password - root
+    mem_limit: 8gb

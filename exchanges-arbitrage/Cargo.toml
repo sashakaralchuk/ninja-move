@@ -1,0 +1,29 @@
+[package]
+name = "exchanges-arbitrage"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "limit_market_v1"
+path = "src/bin/limit_market_v1.rs"
+
+[dependencies]
+binance = { git = "https://github.com/wisespace-io/binance-rs.git" }
+tungstenite = { version="0.19.0", features = ["native-tls"] }
+async-tungstenite = { version = "*", features = ["async-tls", "tokio-native-tls", "tokio-openssl"] }
+url = "2.4.0"
+serde = { version = "1.0.170", features = ["derive"] }
+serde_json = "1.0.100"
+prettytable-rs = "0.10"
+postgres = "0.19.5"
+chrono = "0.4.26"
+kafka = "0.9"
+log = "0.4.19"
+env_logger = "0.10.0"
+reqwest = { version = "0.11", features = ["json"] }
+sha2 = "0.10.7"
+hmac = "0.12.1"
+hex = "0.4.3"
+ctrlc = "3.4.0"
+futures = "0.3"
+tokio = { version = "1.29.1", features = ["full"] }

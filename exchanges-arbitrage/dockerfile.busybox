@@ -1,0 +1,8 @@
+from rust:1.71.0-buster
+
+workdir /app
+
+copy ./Cargo.toml ./Cargo.toml
+copy ./src ./src
+
+run cargo build --release
