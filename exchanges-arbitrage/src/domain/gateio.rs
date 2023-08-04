@@ -145,9 +145,9 @@ impl TradingHttp {
         Self { signer }
     }
 
-    pub fn create_limit_order(
+    pub fn create_limit_order<'a>(
         &self,
-        symbol: &'static str,
+        symbol: &'a str,
         amount: f64,
         price: f64,
     ) -> Result<String, Box<dyn std::error::Error>> {
@@ -180,7 +180,6 @@ impl TradingHttp {
                 let request_end = timestamp_secs();
                 let status_code = v.status().as_u16();
                 let response_body: serde_json::Value = v.json().unwrap();
-                let order_id = response_body["id"].as_str().unwrap().to_string();
                 if status_code != 201 {
                     let message = format!(
                         "wrong status_code, error: {:?}",
@@ -188,6 +187,7 @@ impl TradingHttp {
                     );
                     return Err(Box::new(TradingError{message, status_code}))
                 }
+                let order_id = response_body["id"].as_str().unwrap().to_string();
                 log::info!(
                     "limit order made, order_id: {}, \
                     status_code: {}, duration(s): {:.2}",
@@ -201,9 +201,9 @@ impl TradingHttp {
         }
     }
 
-    pub fn amend_order(
+    pub fn amend_order<'a>(
         &self,
-        symbol: &'static str,
+        symbol: &'a str,
         order_id: &String,
         price: f64,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -288,7 +288,7 @@ impl TradingHttp {
         }
     }
 
-    pub fn ticker_price(&self, symbol: &'static str) -> f64 {
+    pub fn ticker_price<'a>(&self, symbol: &'a str) -> f64 {
         let path = "/api/v4/spot/tickers";
         let query_str = format!("currency_pair={}", symbol);
         let response = reqwest::blocking::Client::new()
@@ -327,7 +327,7 @@ impl TradingWs {
         Self { signer }
     }
 
-    pub fn listen_orders(&self, symbol: &'static str, on_message: impl Fn(String)) {
+    pub fn listen_orders<'a>(&self, symbol: &'a str, on_message: impl Fn(String)) {
         let channel = "spot.orders";
         let event = "subscribe";
         let timestamp = SystemTime::now()

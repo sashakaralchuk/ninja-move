@@ -57,7 +57,10 @@ impl TradingWs {
             let msg_text = msg.to_text().unwrap().to_string();
             match serde_json::from_str::<Depth>(&msg_text) {
                 Ok(msg_obj) => on_message(msg_obj),
-                Err(error) => log::warn!("listen_depth error: {}", error),
+                Err(error) => log::error!(
+                    "[listen_depth] msg_text: {} error: {}",
+                    msg_text, error,
+                ),
             };
         }
     }
@@ -73,7 +76,7 @@ impl TradingWs {
             let msg_text = msg.to_text().unwrap();
             match serde_json::from_str::<Vec<MiniTicker>>(msg_text) {
                 Ok(msg_obj) => on_message(msg_obj),
-                Err(e) => log::warn!("listen_mini_tickers_arr error: {}", e),
+                Err(e) => log::error!("[listen_mini_tickers_arr] error: {}", e),
             }
         }
     }

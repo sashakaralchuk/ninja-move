@@ -26,9 +26,16 @@ enum MessageKind {BinancePriceUpdate, GateioOrderFilled}
 struct ChannelMessage {kind: MessageKind, content: String}
 
 fn perform() {
-    let symbol_binance = "ARBUSDT";
-    let symbol_gateio = "ARB_USDT";
-    let asset_amount = 2.0;
+    let symbol_binance = std::env::var("SYMBOL_BINANCE").unwrap();
+    let symbol_gateio = std::env::var("SYMBOL_GATEIO").unwrap();
+    let spread_percent = std::env::var("SPREAD_PERCENT")
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    let asset_amount = std::env::var("ASSET_AMOUNT")
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
 
     fn gen_signer() -> gateio::Signer { gateio::Signer::new_from_envs() }
 
@@ -36,16 +43,17 @@ fn perform() {
     let trading_ws_gateio = gateio::TradingWs::new(gen_signer());
     let trading_binance = binance::TradingHttp::new();
 
-    let ticker_price_gateio = trading_http_gateio.ticker_price(symbol_gateio);
+    let ticker_price_gateio = trading_http_gateio.ticker_price(symbol_gateio.as_str());
 
     trading_http_gateio.assert_balance(&vec![
         ("USDT", ticker_price_gateio * asset_amount),
     ]);
     trading_binance.assert_balance(&vec![("ARB", asset_amount)]);
     let order_id_gateio = trading_http_gateio.create_limit_order(
-        symbol_gateio, asset_amount, ticker_price_gateio * 0.75,
+        symbol_gateio.as_str(), asset_amount, ticker_price_gateio * 0.75,
     ).unwrap();
     let order_id_gateio_observe = order_id_gateio.clone();
+    let symbol_gateio_trading = symbol_gateio.clone();
 
     let (tx, rx_trading) = mpsc::channel();
     let tx_binance = tx.clone();
@@ -113,7 +121,7 @@ fn perform() {
                 )
             }
         };
-        trading_ws_gateio.listen_orders(symbol_gateio, on_message);
+        trading_ws_gateio.listen_orders(symbol_gateio.as_str(), on_message);
     });
 
     let t_trading = thread::spawn(move || loop {
@@ -147,7 +155,7 @@ fn perform() {
         let price_update = serde_json::from_str
             ::<BinancePriceUpdate>(&last_binance_update.unwrap())
             .unwrap();
-        let next_limit_price = price_update.market_price * (1.0 - 0.01);
+        let next_limit_price = price_update.market_price * (1.0 - spread_percent);
         log::info!(
             "[t_trading] price update, \
             next price: {}, next_limit_price: {}",
@@ -155,7 +163,7 @@ fn perform() {
             next_limit_price,
         );
         let amend = trading_http_gateio.amend_order(
-            symbol_gateio, &order_id_gateio, next_limit_price,
+            symbol_gateio_trading.as_str(), &order_id_gateio, next_limit_price,
         );
         match amend {
             Ok(_) => {}
@@ -169,10 +177,14 @@ fn perform() {
     pool(&vec![t_binance, t_gateio, t_trading]);
 }
 
-fn main() {
-    env_logger::init();
+fn pool_env() {
     let t = thread::spawn(move || perform());
     match t.join() { Ok(_) => {}, Err(_) => {} }
     TelegramBotRepository::new_from_envs()
         .notify_pretty("limit-market-v1", "finished");
+}
+
+fn main() {
+    env_logger::init();
+    pool_env();
 }
