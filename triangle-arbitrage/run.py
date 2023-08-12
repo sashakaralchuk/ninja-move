@@ -1,5 +1,7 @@
 import os
+import typing
 import logging
+import time
 import datetime as dt
 import dataclasses as dc
 
@@ -121,7 +123,32 @@ class BybitFeesAdapter:
         return fees
 
 
+class TelegramPort:
+    token: str
+    chat_id: str
+
+    def __init__(self, token: str, chat_id: int):
+        self._token = token
+        self._chat_id = chat_id
+
+    def notify(self, message: str, parse_mode: typing.Optional[str] = None) -> None:
+        url = f'https://api.telegram.org/bot{self._token}/sendMessage'
+        params = dict(chat_id=self._chat_id, text=message, parse_mode=parse_mode)
+        requests.get(url=url, params=params)
+
+    def notify_markdown(self, message: str) -> None:
+        self.notify(message=f'```\n{message}```', parse_mode='Markdown')
+
+
 logger = logging.getLogger()
+
+
+def configure_logger() -> None:
+    level_env = os.environ.get('LOG_LEVEL', 'WARNING')
+    logging.basicConfig(
+        level=getattr(logging, level_env, 'WARNING'),
+        format='[%(asctime)s][%(levelname)s] %(message)s',
+    )
 
 
 def gen_ways(symbols: list[Symbol], max_depth: int = 5) -> list[str]:
@@ -255,9 +282,7 @@ def fetch_fees() -> None:
     _ = fees_adapter.fetch()
 
 
-def calc_ways() -> None:
-    logging.basicConfig(level=logging.INFO)
-
+def calc_ways() -> pd.DataFrame:
     public_port = BybitPublicPort()
     symbols = public_port.fetch_symbols()
     tickers = public_port.fetch_tickers()
@@ -275,7 +300,7 @@ def calc_ways() -> None:
 
     def apply_price(row: pd.Series) -> float:
         tokens = [x for x in row.tolist() if x]
-        amount = 100  # at the beginning amoutn is in USDT
+        amount = 100  # at the beginning amount is in USDT
         for i in range(len(tokens)-1):
             key = '{}{}'.format(tokens[i], tokens[i+1])
             amount *= prices[key]
@@ -285,9 +310,34 @@ def calc_ways() -> None:
         final_price=lambda x: x.apply(apply_price, axis=1),
     )
 
-    # ways_df.sort_values(by=['final_price'])
-    breakpoint()
-    pass
+    return ways_df
+
+
+def construct_msg_from_ways(ways_df: pd.DataFrame) -> str:
+    steps_columns = [x for x in ways_df.columns if x.startswith('step')]
+    messages = []
+    for (_, row) in ways_df.iterrows():
+        steps = [row[col] for col in steps_columns if row[col]]
+        message = '{} - {:.2f}'.format('->'.join(steps), row.final_price)
+        messages.append(message)
+    return '\n'.join(messages)
+
+
+def watch_for_profit() -> None:
+    token = os.environ['TOKEN_TELEGRAM_BOT']
+    chat_id = os.environ['CHAT_ID_TELEGRAM_BOT']
+    sleep_interval = int(os.environ['SLEEP_INTERVAL'])
+    telegram_port = TelegramPort(token=token, chat_id=chat_id)
+    while True:
+        time.sleep(sleep_interval)
+        logger.info('tick')
+        ways_df = calc_ways()
+        ways_target = ways_df[lambda x: x.final_price > 105]
+        if ways_target.empty:
+            logger.info('there is no ways for notification')
+            continue
+        message = construct_msg_from_ways(ways_df=ways_target)
+        telegram_port.notify_markdown(message=message)
 
 
 def main() -> None:
@@ -295,9 +345,11 @@ def main() -> None:
     test_gen_ways_2()
     test_gen_prices()
     test_gen_prices_zeros()
+    configure_logger()
     # fetch_for_calc()
     # fetch_fees()
-    calc_ways()
+    # calc_ways()
+    watch_for_profit()
 
 
 if __name__ == '__main__':
