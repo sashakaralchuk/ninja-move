@@ -85,6 +85,7 @@ class Binance:
     def _fill_pairs(self) -> None:
         """Generates pairs depending on symbols and order_books"""
         start_time = dt.datetime.utcnow()
+        logger.info('pairs filling started')
         tokens_assets = [
             (x['baseAsset'], x['quoteAsset'])
             for x in self._trading_symbols
@@ -92,6 +93,7 @@ class Binance:
         tokens: set[str] = set([x for l in tokens_assets for x in l])
         pairs = []
 
+        logger.info('pairs generating started')
         for d1 in tokens:
             for d2 in tokens:
                 for d3 in tokens:

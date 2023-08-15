@@ -3,3 +3,6 @@
 __pycache__
 .env
 .env.example
+.env.heavy_crypto_binance
+.env.look_on_bybit
+makefile
