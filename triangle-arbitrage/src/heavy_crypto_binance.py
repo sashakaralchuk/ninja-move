@@ -222,7 +222,6 @@ def main() -> None:
         binance.look_for_opportunities()
     except Exception as error:
         logger.error(error)
-        pass
         message = json.dumps({
             'type': 'heavy-crypto-binance',
             'commit_hash': commit_hash,

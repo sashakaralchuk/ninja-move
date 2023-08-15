@@ -1,13 +1,14 @@
 import os
-import typing
-import logging
 import time
+import json
 import datetime as dt
 import dataclasses as dc
 
 import requests
 import pandas as pd
 from pybit.unified_trading import HTTP
+
+from src.common import logger, configure_logger, TelegramPort
 
 
 @dc.dataclass
@@ -121,34 +122,6 @@ class BybitFeesAdapter:
             )
             fees[symbol_alias] = fee
         return fees
-
-
-class TelegramPort:
-    token: str
-    chat_id: str
-
-    def __init__(self, token: str, chat_id: int):
-        self._token = token
-        self._chat_id = chat_id
-
-    def notify(self, message: str, parse_mode: typing.Optional[str] = None) -> None:
-        url = f'https://api.telegram.org/bot{self._token}/sendMessage'
-        params = dict(chat_id=self._chat_id, text=message, parse_mode=parse_mode)
-        requests.get(url=url, params=params)
-
-    def notify_markdown(self, message: str) -> None:
-        self.notify(message=f'```\n{message}```', parse_mode='Markdown')
-
-
-logger = logging.getLogger()
-
-
-def configure_logger() -> None:
-    level_env = os.environ.get('LOG_LEVEL', 'WARNING')
-    logging.basicConfig(
-        level=getattr(logging, level_env, 'WARNING'),
-        format='[%(asctime)s][%(levelname)s] %(message)s',
-    )
 
 
 def gen_ways(symbols: list[Symbol], max_depth: int = 5) -> list[str]:
@@ -327,16 +300,28 @@ def watch_for_profit() -> None:
     token = os.environ['TOKEN_TELEGRAM_BOT']
     chat_id = os.environ['CHAT_ID_TELEGRAM_BOT']
     sleep_interval = int(os.environ['SLEEP_INTERVAL'])
+    commit_hash = os.environ['COMMIT_HASH']
     telegram_port = TelegramPort(token=token, chat_id=chat_id)
-    while True:
-        time.sleep(sleep_interval)
-        logger.info('tick')
-        ways_df = calc_ways()
-        ways_target = ways_df[lambda x: x.final_price > 105]
-        if ways_target.empty:
-            logger.info('there is no ways for notification')
-            continue
-        message = construct_msg_from_ways(ways_df=ways_target)
+    logger.info('start')
+    try:
+        while True:
+            time.sleep(sleep_interval)
+            logger.info('tick')
+            ways_df = calc_ways()
+            ways_target = ways_df[lambda x: x.final_price > 105]
+            if ways_target.empty:
+                logger.info('there is no ways for notification')
+                continue
+            message = construct_msg_from_ways(ways_df=ways_target)
+            telegram_port.notify_markdown(message=message)
+    except Exception as error:
+        logger.error(error)
+        message = json.dumps({
+            'type': 'look-on-bybit',
+            'commit_hash': commit_hash,
+            'action': 'finished',
+            'now': dt.datetime.utcnow().isoformat(),
+        }, indent=2)
         telegram_port.notify_markdown(message=message)
 
 
