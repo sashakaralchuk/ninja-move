@@ -162,3 +162,4 @@ cython_debug/
 .var
 .env.heavy_crypto_binance
 .env.look_on_bybit
+.notes
