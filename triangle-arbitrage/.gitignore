@@ -160,3 +160,5 @@ cython_debug/
 #.idea/
 
 .var
+.env.heavy_crypto_binance
+.env.look_on_bybit

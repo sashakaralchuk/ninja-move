@@ -301,6 +301,7 @@ def watch_for_profit() -> None:
     chat_id = os.environ['CHAT_ID_TELEGRAM_BOT']
     sleep_interval = int(os.environ['SLEEP_INTERVAL'])
     commit_hash = os.environ['COMMIT_HASH']
+    threshold_notify = float(os.environ['THRESHOLD_NOTIFY'])
     telegram_port = TelegramPort(token=token, chat_id=chat_id)
     logger.info('start')
     try:
@@ -308,7 +309,7 @@ def watch_for_profit() -> None:
             time.sleep(sleep_interval)
             logger.info('tick')
             ways_df = calc_ways()
-            ways_target = ways_df[lambda x: x.final_price > 105]
+            ways_target = ways_df[lambda x: x.final_price > threshold_notify]
             if ways_target.empty:
                 logger.info('there is no ways for notification')
                 continue
