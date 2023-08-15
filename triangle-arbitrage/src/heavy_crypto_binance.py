@@ -70,10 +70,6 @@ class Binance:
         self._rows_to_print = rows_to_print
 
     def look_for_opportunities(self) -> None:
-        # NOTE: debug-purpose
-        import time
-        time.sleep(2)
-        raise Exception('lala')
         self._fill_order_books()
         self._fill_pairs()
         self._binance_port.listen_for_tickers(self._handler)
