@@ -2,6 +2,8 @@ import json
 import os
 import functools
 import typing
+import argparse
+import abc
 import dataclasses as dc
 import datetime as dt
 
@@ -15,6 +17,7 @@ from src.common import configure_logger, logger, TelegramPort
 
 @dc.dataclass
 class BinancePair:
+
     l1: str
     l2: str
     l3: str
@@ -29,11 +32,13 @@ class BinancePair:
 
 @dc.dataclass
 class OrderBook:
+
     ask_price: float
     bid_price: float
 
 
 class BinancePort:
+
     def fetch_symbols(self) -> dict:
         response = requests.get('https://api.binance.com/api/v3/exchangeInfo')
         if response.status_code != 200:
@@ -52,22 +57,67 @@ class BinancePort:
             handler(json.loads(ws.recv()))
 
 
+class IHandler(abc.ABC):
+
+    @abc.abstractmethod
+    def handle_diff(self, pairs_df: pd.DataFrame) -> None:
+        pass
+
+
+class PrintHandler(IHandler):
+
+    def __init__(self, rows_to_print: int) -> None:
+        self._rows_to_print = rows_to_print
+
+    def handle_diff(self, pairs_df: pd.DataFrame) -> None:
+        if not self._rows_to_print:
+            return
+        pairs_to_print_df = pairs_df.head(self._rows_to_print)
+        os.system('clear')
+        print(tabulate(pairs_to_print_df, headers='keys', tablefmt='psql'))
+
+
+class NotifyHandler(IHandler):
+
+    def __init__(
+        self,
+        threshold: float,
+        telegram_port: TelegramPort,
+    ) -> None:
+        """Parameters
+        ----------
+        x : float
+            Notify threshold in percents.
+        """
+        self._threshold = threshold
+        self._telegram_port = telegram_port
+
+    def handle_diff(self, pairs_df: pd.DataFrame) -> None:
+        pair_to_notify_df = pairs_df[lambda x: x.value > self._threshold]
+        if pair_to_notify_df.empty:
+            return
+        rows = []
+        for (_, row) in pair_to_notify_df.iterrows():
+            steps = '{}->{}->{}->{}'.format(row.d1, row.d2, row.d3, row.d1)
+            message = '{} - {:.2f}'.format(steps, row.value)
+            rows.append(message)
+        message = '\n'.join(rows)
+        self._telegram_port.notify_markdown(message=message)
+
+
 class Binance:
+
     def __init__(
         self,
         binance_port: BinancePort,
-        telegram_port: TelegramPort,
         price_threshold: float,  # in percents
-        notify_threshold: float,  # in percents
-        rows_to_print: typing.Optional[int] = None,
+        handlers: list[IHandler],
     ) -> None:
         self._binance_port = binance_port
-        self._telegram_port = telegram_port
         self._order_books: typing.Optional[dict[str, OrderBook]] = None
         self._pairs: typing.Optional[list[BinancePair]] = None
         self._price_threshold = price_threshold
-        self._notify_threshold = notify_threshold
-        self._rows_to_print = rows_to_print
+        self._handlers = handlers
 
     def look_for_opportunities(self) -> None:
         self._fill_order_books()
@@ -182,21 +232,10 @@ class Binance:
             pair.value = (lv_calc - 1) * 100
         logger.info('message processed, len: %s', len(message))
         pairs_df = pd.DataFrame([dc.asdict(pair) for pair in self._pairs])
-        pairs_df = pairs_df.sort_values(by=['value'], ascending=False)
         pairs_df = pairs_df[lambda x: x.value < self._price_threshold]
-        if self._rows_to_print:
-            pairs_to_print_df = pairs_df.head(self._rows_to_print)
-            os.system('clear')
-            print(tabulate(pairs_to_print_df, headers='keys', tablefmt='psql'))
-        pair_to_notify_df = pairs_df[lambda x: x.value > self._notify_threshold]
-        if not pair_to_notify_df.empty:
-            rows = []
-            for (_, row) in pair_to_notify_df.iterrows():
-                steps = '{}->{}->{}->{}'.format(row.d1, row.d2, row.d3, row.d1)
-                message = '{} - {:.2f}'.format(steps, row.value)
-                rows.append(message)
-            message = '\n'.join(rows)
-            self._telegram_port.notify_markdown(message=message)
+        pairs_df = pairs_df.sort_values(by=['value'], ascending=False)
+        for handler in self._handlers:
+            handler.handle_diff(pairs_df=pairs_df)
 
     @functools.cached_property
     def _trading_symbols(self) -> dict:
@@ -205,21 +244,44 @@ class Binance:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--actions', required=True, type=str, nargs='+')
+    args = parser.parse_args()
+
     token = os.environ['TOKEN_TELEGRAM_BOT']
     chat_id = os.environ['CHAT_ID_TELEGRAM_BOT']
-    rows_to_print = int(os.environ.get('ROWS_TO_PRINT', '0'))
+    telegram_port = TelegramPort(token=token, chat_id=chat_id)
+
+    handlers = []
+    for action in set(args.actions):
+        match action:
+            case 'print':
+                rows_to_print = int(os.environ.get('ROWS_TO_PRINT', '0'))
+                handler = PrintHandler(rows_to_print=rows_to_print)
+                handlers.append(handler)
+            case 'notify':
+                notify_threshold = float(os.environ['THRESHOLD_NOTIFY'])
+                handler = NotifyHandler(
+                    threshold=notify_threshold,
+                    telegram_port=telegram_port,
+                )
+                handlers.append(handler)
+            case 'trade-v1':
+                logger.warning('TODO: inplement trade_v1 handler')
+                return
+            case _:
+                logger.warning('incorrect action %s', action)
+                return
+
     price_threshold = float(os.environ['THRESHOLD_PRICE'])
-    notify_threshold = float(os.environ['THRESHOLD_NOTIFY'])
     commit_hash = os.environ['COMMIT_HASH']
     binance_port = BinancePort()
-    telegram_port = TelegramPort(token=token, chat_id=chat_id)
     binance = Binance(
         binance_port=binance_port,
-        telegram_port=telegram_port,
         price_threshold=price_threshold,
-        notify_threshold=notify_threshold,
-        rows_to_print=rows_to_print,
+        handlers=handlers,
     )
+
     try:
         binance.look_for_opportunities()
     except Exception as error:
@@ -231,7 +293,6 @@ def main() -> None:
             'now': dt.datetime.utcnow().isoformat(),
         }, indent=2)
         telegram_port.notify_markdown(message=message)
-
 
 
 if __name__ == '__main__':
