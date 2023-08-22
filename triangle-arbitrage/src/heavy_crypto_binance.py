@@ -272,6 +272,7 @@ class TradeV1Handler(IHandler):
         telegram_port: TelegramPort,
         trading_binance: Binance.TradingDomain,
         commit_hash: str,
+        usdt_to_trade: float,
     ) -> None:
         """Parameters
         ----------
@@ -282,6 +283,7 @@ class TradeV1Handler(IHandler):
         self._telegram_port = telegram_port
         self._trading_binance = trading_binance
         self._commit_hash = commit_hash
+        self._usdt_to_trade = usdt_to_trade
         self._made = False
 
     def handle_diff(
@@ -305,7 +307,7 @@ class TradeV1Handler(IHandler):
         path = to_trade_df.sort_values(by=['value'], ascending=False).iloc[0]
         try:
             logger.info('trade start %s->%s->%s', path.d1, path.d2, path.d3)
-            qty_start_usdt = 20
+            qty_start_usdt = self._usdt_to_trade
             qty_end_usdt = self._trade(
                 path=path,
                 qty_usdt=qty_start_usdt,
@@ -428,6 +430,7 @@ def test_trade_v1_trade_step() -> None:
         telegram_port=None,
         trading_binance=trading_binance,
         commit_hash='',
+        usdt_to_trade=0.0,
     )
     symbol_raw = {
         'baseAsset': 'AVA',
@@ -569,6 +572,7 @@ def debug_binance_USDT_AVA_BTC() -> None:
         telegram_port=None,
         trading_binance=trading_binance,
         commit_hash='',
+        usdt_to_trade=0.0,
     )
 
     token1 = 'USDT'
@@ -802,6 +806,7 @@ def main() -> None:
                 api_secret_binance = os.environ['API_SECRET_BINANCE']
                 chat_id = os.environ['CHAT_ID_TRADES_TELEGRAM_BOT']
                 trade_threshold = float(os.environ['THRESHOLD_TRADE'])
+                usdt_to_trade = float(os.environ['AMOUNT_USDT_TO_TRADE'])
                 signer_binance = Binance.HmacSigner(secret_key=api_secret_binance)
                 http_port_binance = HttpPort(url_base='https://api.binance.com')
                 trading_binance = Binance.TradingDomain(
@@ -815,6 +820,7 @@ def main() -> None:
                     telegram_port=telegram_port_trades,
                     trading_binance=trading_binance,
                     commit_hash=commit_hash,
+                    usdt_to_trade=usdt_to_trade,
                 )
                 handlers.append(handler)
             case _:
