@@ -256,46 +256,6 @@ class TradeError(Exception):
     pass
 
 
-def binance_trade_step_v1(
-    trading: Binance.TradingDomain,
-    symbol: Symbol,
-    token_from: str,
-    qty: float,
-) -> float:
-    # TODO: put to TradeV1Handler
-    # TODO: add tests, i guess this way def test_trade_v1_trade_step
-    #       will be redunant(completely useless)
-    """Performs exchange and returns next token amount"""
-    logger.info(
-        '[binance_trade_step_v1] symbol %s, token_from %s, qty %s',
-        symbol.alias,
-        token_from,
-        qty,
-    )
-    match token_from:
-        case symbol.base_asset:
-            trade_kwargs = {'symbol': symbol.alias, 'side': 'SELL', 'quantity': qty}
-        case symbol.quote_asset:
-            trade_kwargs = {'symbol': symbol.alias, 'side': 'BUY', 'quote_order_qty': qty}
-        case _:
-            raise TradeError('havent found pair match')
-    trade = trading.market(**trade_kwargs)
-    if not trade.success:
-        message = 'trade_args: {}, body: {}'.format(
-            trade_kwargs, trade.body,
-        )
-        raise TradeError(message)
-    match token_from:
-        case symbol.base_asset:
-            out_qty = float(trade.body['cummulativeQuoteQty'])
-        case symbol.quote_asset:
-            out_qty = float(trade.body['executedQty'])
-        case _:
-            pass
-    logger.info('out_qty: %s', out_qty)
-    return out_qty
-
-
 class TradeV1Handler(IHandler):
 
     def __init__(
@@ -367,19 +327,19 @@ class TradeV1Handler(IHandler):
         symbol23 = path.lv2
         symbol31 = path.lv3
 
-        token2_qty = binance_trade_step_v1(
+        token2_qty = self._trade_step(
             trading=self._trading_binance,
             symbol=symbols_info[symbol12],
             token_from=token1,
             qty=qty_usdt,
         )
-        token3_qty = binance_trade_step_v1(
+        token3_qty = self._trade_step(
             trading=self._trading_binance,
             symbol=symbols_info[symbol23],
             token_from=token2,
             qty=token2_qty,
         )
-        token1_qty = binance_trade_step_v1(
+        token1_qty = self._trade_step(
             trading=self._trading_binance,
             symbol=symbols_info[symbol31],
             token_from=token3,
@@ -387,62 +347,115 @@ class TradeV1Handler(IHandler):
         )
         logger.info('token1_qty: %s', token1_qty)
 
-        return
-        trade_l1 = self._trade_step(l=path.l1, symbol=path.lv1, qty=qty_usdt)
-        qty_l2 = float(trade_l1.body['executedQty'])
-        trade_l2 = self._trade_step(l=path.l2, symbol=path.lv2, qty=qty_l2)
-        qty_l3 = float(trade_l2.body['cummulativeQuoteQty'])
-        self._trade_step(l=path.l3, symbol=path.lv3, qty=qty_l3)
-
-    def _trade_step(self, l: str, symbol: str, qty: float) -> TradeSumUp:
-        trading_binance = self._trading_binance
-        match l:
-            case 'num':
-                side = 'SELL'
-                quantity_arg = {'quantity': qty}
-            case 'den':
-                side = 'BUY'
-                quantity_arg = {'quote_order_qty': qty}
-            case _:
-                raise TradeError(f'unknown l {l!r}')
+    def _trade_step(
+        self,
+        symbol: Symbol,
+        token_from: str,
+        token_to: str,
+        qty: float,
+    ) -> float:
+        """Performs exchange and returns next token amount"""
         logger.info(
-            'trade-step: symbol %s, side %s, quantity_arg %s',
-            symbol,
-            side,
-            quantity_arg,
+            '[_trade_step_v1] symbol %s, token_from %s, qty %s',
+            symbol.alias,
+            token_from,
+            qty,
         )
-        trade_response = trading_binance.market(
-            symbol=symbol,
-            side=side,
-            **quantity_arg,
-        )
-        if not trade_response.success:
-            raise TradeError('error: {}'.format(trade_response.body))
-        return trade_response
+        match token_from:
+            case symbol.base_asset:
+                trade_kwargs = {'symbol': symbol.alias, 'side': 'SELL', 'quantity': qty}
+            case symbol.quote_asset:
+                trade_kwargs = {'symbol': symbol.alias, 'side': 'BUY', 'quote_order_qty': qty}
+            case _:
+                raise TradeError('havent found pair match')
+        trade = self._trading_binance.market(**trade_kwargs)
+        if not trade.success:
+            message = 'trade_args: {}, body: {}'.format(
+                trade_kwargs, trade.body,
+            )
+            raise TradeError(message)
+        match token_from:
+            case symbol.base_asset:
+                out_qty = float(trade.body['cummulativeQuoteQty'])
+            case symbol.quote_asset:
+                out_qty = float(trade.body['executedQty'])
+            case _:
+                pass
+        for fill in trade.body['fills']:
+            if fill['commissionAsset'] == token_to:
+                out_qty -= float(fill['commission'])
+        logger.info('out_qty: %s', out_qty)
+        return out_qty
 
 
 def test_trade_v1_trade_step() -> None:
-    telegram_port = unittest.mock.MagicMock()
     trading_binance = unittest.mock.MagicMock()
+    body = {
+        'cummulativeQuoteQty': '1.0',
+        'executedQty': '2.0',
+        'fills': [{
+            'commissionAsset': 'AVA',
+            'commission': '0.1',
+        }],
+    }
+    trading_binance.market.return_value = TradeSumUp(
+        success=True,
+        status_code=200,
+        body=body,
+    )
     handler = TradeV1Handler(
         threshold=0.0,
-        telegram_port=telegram_port,
+        telegram_port=None,
         trading_binance=trading_binance,
         commit_hash='',
     )
+    symbol_raw = {
+        'baseAsset': 'AVA',
+        'filters': [{'filterType': 'LOT_SIZE',
+                    'maxQty': '100000.00000000',
+                    'minQty': '0.00010000',
+                    'stepSize': '0.00010000'}],
+        'quoteAsset': 'USDT',
+        'symbol': 'AVAUSDT'}
+    symbol_avausdt = Symbol.new_from_raw(content=symbol_raw)
 
-    handler._trade_step(l='num', symbol='ETHUSDT', qty=44.77)
-    _, kwargs_1 = trading_binance.market.call_args
-    assert kwargs_1['symbol'] == 'ETHUSDT'
-    assert kwargs_1['side'] == 'SELL'
-    assert kwargs_1['quantity'] == 44.77
+    def buy_1() -> None:
+        handler._trade_step(
+            symbol=symbol_avausdt,
+            token_from='USDT',
+            token_to='AVA',
+            qty=14.44,
+        )
+        _, kwargs = trading_binance.market.call_args
+        expected = {'symbol': 'AVAUSDT', 'side': 'BUY', 'quote_order_qty': 14.44}
+        assert kwargs == expected
+        trading_binance.reset_mock()
 
-    trading_binance.reset_mock()
-    handler._trade_step(l='den', symbol='ETHUSDT', qty=44.77)
-    _, kwargs_2 = trading_binance.market.call_args
-    assert kwargs_2['symbol'] == 'ETHUSDT'
-    assert kwargs_2['side'] == 'BUY'
-    assert kwargs_2['quote_order_qty'] == 44.77
+    def buy_2() -> None:
+        handler._trade_step(
+            symbol=symbol_avausdt,
+            token_from='AVA',
+            token_to='USDT',
+            qty=14.44,
+        )
+        _, kwargs = trading_binance.market.call_args
+        expected = {'symbol': 'AVAUSDT', 'side': 'SELL', 'quantity': 14.44}
+        assert kwargs == expected
+        trading_binance.reset_mock()
+
+    def fill_check() -> None:
+        qty = handler._trade_step(
+            symbol=symbol_avausdt,
+            token_from='USDT',
+            token_to='AVA',
+            qty=14.44,
+        )
+        assert qty == 1.9
+        trading_binance.reset_mock()
+
+    buy_1()
+    buy_2()
+    fill_check()
 
 
 def debug_binance_trade() -> None:
@@ -515,8 +528,6 @@ def debug_binance_trade() -> None:
 
 
 def debug_binance_USDT_AVA_BTC() -> None:
-    # FIXME: for AVAUSDT commision pays in AVA
-    #        this causes 
     api_key_binance = os.environ['API_KEY_BINANCE']
     api_secret_binance = os.environ['API_SECRET_BINANCE']
     signer_binance = Binance.HmacSigner(secret_key=api_secret_binance)
@@ -533,6 +544,12 @@ def debug_binance_USDT_AVA_BTC() -> None:
         symbol['symbol']: Symbol.new_from_raw(content=symbol)
         for symbol in trading_symbols
     }
+    trade_v1 = TradeV1Handler(
+        threshold=0.0,
+        telegram_port=None,
+        trading_binance=trading_binance,
+        commit_hash='',
+    )
 
     token1 = 'USDT'
     token2 = 'AVA'
@@ -543,26 +560,26 @@ def debug_binance_USDT_AVA_BTC() -> None:
 
     qty_usdt = 20
     token1_qty_f = symbols_info[symbol12].lot_size.apply(qty=qty_usdt)
-    token2_qty = binance_trade_step_v1(
-        trading=trading_binance,
+    token2_qty = trade_v1._trade_step(
         symbol=symbols_info[symbol12],
         token_from=token1,
+        token_to=token2,
         qty=token1_qty_f,
     )
 
     token2_qty_f = symbols_info[symbol23].lot_size.apply(qty=token2_qty)
-    token3_qty = binance_trade_step_v1(
-        trading=trading_binance,
+    token3_qty = trade_v1._trade_step(
         symbol=symbols_info[symbol23],
         token_from=token2,
+        token_to=token3,
         qty=token2_qty_f,
     )
 
     token3_qty_f = symbols_info[symbol31].lot_size.apply(qty=token3_qty)
-    token_qty_end = binance_trade_step_v1(
-        trading=trading_binance,
+    token_qty_end = trade_v1._trade_step(
         symbol=symbols_info[symbol31],
         token_from=token3,
+        token_to=token1,
         qty=token3_qty_f,
     )
     logger.info('token_qty_end(USDT): %s', token_qty_end)
@@ -795,6 +812,6 @@ if __name__ == '__main__':
     test_lot_size_apply()
     test_trade_v1_trade_step()
     configure_logger()
-    debug_binance_trade()
-    debug_binance_USDT_AVA_BTC()
+    # debug_binance_trade()
+    # debug_binance_USDT_AVA_BTC()
     # main()
