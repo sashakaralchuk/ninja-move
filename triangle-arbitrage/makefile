@@ -6,7 +6,9 @@ commit_hash=${shell git rev-parse HEAD | cut -c 1-7}
 
 
 heavy-crypto-binance:
-	${env_vars_heavy_crypto_binance} python -m src.heavy_crypto_binance
+	${env_vars_heavy_crypto_binance} \
+	python -m src.heavy_crypto_binance \
+	--actions trade-v1 notify
 
 look-on-bybit:
 	${env_vars_look_on_bybit} python -m src.look_on_bybit

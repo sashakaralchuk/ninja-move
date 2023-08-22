@@ -216,7 +216,11 @@ class PrintHandler(IHandler):
     def __init__(self, rows_to_print: int) -> None:
         self._rows_to_print = rows_to_print
 
-    def handle_diff(self, pairs_df: pd.DataFrame, _: dict[str, Symbol]) -> None:
+    def handle_diff(
+        self,
+        pairs_df: pd.DataFrame,
+        symbols_info: dict[str, Symbol],
+    ) -> None:
         if not self._rows_to_print:
             return
         pairs_to_print_df = pairs_df.head(self._rows_to_print)
@@ -239,7 +243,11 @@ class NotifyHandler(IHandler):
         self._threshold = threshold
         self._telegram_port = telegram_port
 
-    def handle_diff(self, pairs_df: pd.DataFrame, _: dict[str, Symbol]) -> None:
+    def handle_diff(
+        self,
+        pairs_df: pd.DataFrame,
+        symbols_info: dict[str, Symbol],
+    ) -> None:
         pair_to_notify_df = pairs_df[lambda x: x.value > self._threshold]
         if pair_to_notify_df.empty:
             return
@@ -289,9 +297,7 @@ class TradeV1Handler(IHandler):
         if self._made:
             return
         start_time = dt.datetime.utcnow()
-        # NOTE: debug-purpose
-        # to_trade_df = pairs_df[lambda x: x.value > self._threshold]
-        to_trade_df = pairs_df[lambda x: x.value > 0.01]
+        to_trade_df = pairs_df[lambda x: x.value > self._threshold]
         to_trade_df = to_trade_df[lambda x: x.d1 == 'USDT']
         if to_trade_df.empty:
             return
@@ -299,7 +305,12 @@ class TradeV1Handler(IHandler):
         path = to_trade_df.sort_values(by=['value'], ascending=False).iloc[0]
         try:
             logger.info('trade start %s->%s->%s', path.d1, path.d2, path.d3)
-            self._trade(path=path, qty_usdt=25, symbols_info=symbols_info)
+            qty_start_usdt = 20
+            qty_end_usdt = self._trade(
+                path=path,
+                qty_usdt=qty_start_usdt,
+                symbols_info=symbols_info,
+            )
             duration = dt.datetime.utcnow() - start_time
             message = json.dumps({
                 'type': 'heavy-crypto-binance--trade',
@@ -308,10 +319,13 @@ class TradeV1Handler(IHandler):
                 'commin_hash': self._commit_hash,
                 'duration': str(duration),
                 'path': '{}->{}->{}'.format(path.d1, path.d2, path.d3),
+                'qty_start_usdt': qty_start_usdt,
+                'qty_end_usdt': qty_end_usdt,
             }, indent=2)
             logger.info(message)
             self._telegram_port.notify_markdown(message=message)
         except TradeError as error:
+            logger.error(error)
             self._telegram_port.notify_error(error)
 
     def _trade(
@@ -319,33 +333,30 @@ class TradeV1Handler(IHandler):
         path: pd.Series,
         qty_usdt: float,
         symbols_info: dict[str, Symbol],
-    ) -> None:
-        token1 = 'USDT'
-        token2 = path.d2
-        token3 = path.d3
-        symbol12 = path.lv1
-        symbol23 = path.lv2
-        symbol31 = path.lv3
+    ) -> float:
+        token1, token2, token3 = 'USDT', path.d2, path.d3
+        symbol12, symbol23, symbol31 = path.lv1, path.lv2, path.lv3
 
         token2_qty = self._trade_step(
-            trading=self._trading_binance,
             symbol=symbols_info[symbol12],
             token_from=token1,
+            token_to=token2,
             qty=qty_usdt,
         )
         token3_qty = self._trade_step(
-            trading=self._trading_binance,
             symbol=symbols_info[symbol23],
             token_from=token2,
+            token_to=token3,
             qty=token2_qty,
         )
         token1_qty = self._trade_step(
-            trading=self._trading_binance,
             symbol=symbols_info[symbol31],
             token_from=token3,
+            token_to=token1,
             qty=token3_qty,
         )
-        logger.info('token1_qty: %s', token1_qty)
+
+        return token1_qty
 
     def _trade_step(
         self,
@@ -361,11 +372,20 @@ class TradeV1Handler(IHandler):
             token_from,
             qty,
         )
+        qty_f = symbol.lot_size.apply(qty=qty)
         match token_from:
             case symbol.base_asset:
-                trade_kwargs = {'symbol': symbol.alias, 'side': 'SELL', 'quantity': qty}
+                trade_kwargs = {
+                    'symbol': symbol.alias,
+                    'side': 'SELL',
+                    'quantity': qty_f,
+                }
             case symbol.quote_asset:
-                trade_kwargs = {'symbol': symbol.alias, 'side': 'BUY', 'quote_order_qty': qty}
+                trade_kwargs = {
+                    'symbol': symbol.alias,
+                    'side': 'BUY',
+                    'quote_order_qty': qty_f,
+                }
             case _:
                 raise TradeError('havent found pair match')
         trade = self._trading_binance.market(**trade_kwargs)
@@ -585,6 +605,26 @@ def debug_binance_USDT_AVA_BTC() -> None:
     logger.info('token_qty_end(USDT): %s', token_qty_end)
 
 
+def debug_binance_AVAXETH() -> None:
+    '''
+    [2023-08-22 09:58:48,200][INFO] trade start USDT->AVAX->ETH
+    [2023-08-22 09:58:48,200][INFO] [_trade_step_v1] symbol AVAXUSDT, token_from USDT, qty 25
+    [2023-08-22 09:58:48,475][INFO] out_qty: 2.41758
+    [2023-08-22 09:58:48,476][INFO] [_trade_step_v1] symbol AVAXETH, token_from AVAX, qty 2.41758
+    [2023-08-22 09:58:48,764][ERROR] trade_args: {'symbol': 'AVAXETH', 'side': 'SELL', 'quantity': 2.41758}, body: {'code': -1013, 'msg': 'Filter failure: LOT_SIZE'}
+
+    (Pdb) trading_binance.market(**{'symbol': 'AVAXETH', 'side': 'SELL', 'quantity': 2.41758})
+    TradeSumUp(success=False, status_code=400, body={'code': -1013, 'msg': 'Filter failure: LOT_SIZE'})
+    (Pdb) trading_binance.market(**{'symbol': 'AVAXETH', 'side': 'SELL', 'quantity': 2.4175})
+    TradeSumUp(success=False, status_code=400, body={'code': -1013, 'msg': 'Filter failure: LOT_SIZE'})
+    (Pdb) trading_binance.market(**{'symbol': 'AVAXETH', 'side': 'SELL', 'quantity': 2.417})
+    TradeSumUp(success=False, status_code=400, body={'code': -1013, 'msg': 'Filter failure: LOT_SIZE'})
+    (Pdb) trading_binance.market(**{'symbol': 'AVAXETH', 'side': 'SELL', 'quantity': 2.41})
+    TradeSumUp(success=True, status_code=200, body={'symbol': 'AVAXETH', 'orderId': 61738321, 'orderListId': -1, 'clientOrderId': '3m0SpQKAOF1noiJWRMdfPr', 'transactTime': 1692691288017, 'price': '0.00000000', 'origQty': '2.41000000', 'executedQty': '2.41000000', 'cummulativeQuoteQty': '0.01489380', 'status': 'FILLED', 'timeInForce': 'GTC', 'type': 'MARKET', 'side': 'SELL', 'workingTime': 1692691288017, 'fills': [{'price': '0.00618000', 'qty': '2.41000000', 'commission': '0.00001489', 'commissionAsset': 'ETH', 'tradeId': 2295540}], 'selfTradePreventionMode': 'NONE'})
+    '''
+    pass
+
+
 class BinanceDomain:
 
     def __init__(
@@ -609,11 +649,7 @@ class BinanceDomain:
     def _fill_symbols_info(self) -> None:
         """Fills hash map with symbols informations"""
         self._symbols_info = {
-            symbol['symbol']: Symbol(
-                alias=symbol['symbol'],
-                base_asset=symbol['baseAsset'],
-                quote_asset=symbol['quoteAsset'],
-            )
+            symbol['symbol']: Symbol.new_from_raw(content=symbol)
             for symbol in self._trading_symbols
         }
         logger.info('symbols information have filled')
@@ -814,4 +850,5 @@ if __name__ == '__main__':
     configure_logger()
     # debug_binance_trade()
     # debug_binance_USDT_AVA_BTC()
-    # main()
+    # debug_binance_AVAXETH()
+    main()
