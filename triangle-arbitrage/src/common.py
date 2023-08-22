@@ -1,5 +1,7 @@
 import typing
 import logging
+import traceback
+import sys
 import os
 
 import requests
@@ -40,3 +42,17 @@ class TelegramPort:
     def notify_markdown(self, message: str) -> None:
         text = message[:self.TEXT_LEN-7]
         self.notify(message=f'```\n{text}```', parse_mode='Markdown')
+
+    def notify_error(self, error: Exception) -> None:
+        _, _, ex_traceback = sys.exc_info()
+        trace_back = traceback.extract_tb(ex_traceback)
+        stack_trace_list = [
+            '  File "%s", line: %d, in %s\n    %s'
+                % (trace[0], trace[1], trace[2], trace[3])
+            for trace in trace_back
+        ]
+        header = 'Traceback (most recent call last):\n'
+        stack_trace = '\n'.join(stack_trace_list)
+        footer = f'\n{error.__class__.__name__}: {error}'
+        message = header + stack_trace + footer
+        self.notify(message=message)
