@@ -1,5 +1,4 @@
 .env
-.var
 order-py
 notebooks/**/.ipynb_checkpoints
 notebooks/**/*.csv
