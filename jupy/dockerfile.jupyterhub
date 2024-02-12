@@ -3,13 +3,11 @@ FROM jupyterhub/singleuser:4.0.0b2
 USER root
 RUN apt update -y
 RUN apt upgrade -y
-RUN apt install build-essential -y
-RUN apt install curl -y
-RUN pip install spylon-kernel
+RUN apt install build-essential curl -y
+RUN pip install spylon-kernel pandas==2.2.0 matplotlib==3.8.2
 
 USER jovyan
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="$HOME/.cargo/bin:$PATH"
-# RUN conda install -y -c conda-forge nb_conda_kernels
 RUN cargo install evcxr_jupyter
 RUN evcxr_jupyter --install
