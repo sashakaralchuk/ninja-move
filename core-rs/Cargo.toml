@@ -7,6 +7,10 @@ edition = "2021"
 name = "limit_market_v1"
 path = "src/bin/limit_market_v1.rs"
 
+[[bench]]
+name = "time_millis"
+harness = false
+
 [dependencies]
 binance = { git = "https://github.com/wisespace-io/binance-rs.git" }
 tungstenite = { version="0.19.0", features = ["native-tls"] }
@@ -27,3 +31,8 @@ hex = "0.4.3"
 ctrlc = "3.4.0"
 futures = "0.3"
 tokio = { version = "1.29.1", features = ["full"] }
+log4rs = "1.2.0"
+byte-unit = "4.0.19"
+
+[dev-dependencies]
+criterion = { version = "0.4", features = ["html_reports"] }

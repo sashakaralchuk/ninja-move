@@ -1,4 +1,5 @@
 .env
+.logs
 order-py
 notebooks/**/.ipynb_checkpoints
 notebooks/**/*.csv

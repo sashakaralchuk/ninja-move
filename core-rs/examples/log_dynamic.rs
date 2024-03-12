@@ -52,8 +52,6 @@ fn _config(date: &str, symbols: &[&str]) -> Config {
         .unwrap()
 }
 
-
-/// cargo run --example log_dynamic
 fn main() {
     let symbols = ["ETHUSDT", "BNBUSDT"];
     let handle = log4rs::init_config(

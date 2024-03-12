@@ -1,19 +1,27 @@
 env_vars=${shell cat .env | grep -v "\#" | xargs}
 
-
 monitor-v1:
 	${env_vars} cargo run --bin monitor -- --command v1 --write
 
-
 monitor-v2:
 	${env_vars} cargo run --bin monitor -- --command v2
-
 
 generate-mat-views:
 	${env_vars} cargo run --bin monitor -- \
 		--command generate-mat-views \
 		--write
 
-
 trade-limit-market:
 	${env_vars} cargo run --bin limit_market_v1
+
+use-logger:
+	cargo run --example use_logger
+
+bench-time-libs:
+	cargo bench --bench time_millis
+
+run-example-log-dynamic:
+	cargo run --example log_dynamic
+
+run-example-log-to-file:
+	cargo run --example log_to_file
