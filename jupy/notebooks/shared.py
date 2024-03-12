@@ -1,5 +1,5 @@
 """
-!pip install pandas mplfinance pandera
+!pip install pandas mplfinance pandera nb-black-only
 """
 
 import os
