@@ -67,6 +67,10 @@ impl TwoTopIntersection {
 }
 
 fn trade() {
+    // TODO: re-make history - add columns exchange symbol
+    let symbol = "BTCUSDT".to_string();
+    let symbol_receive = symbol.clone();
+    let symbol_calc = symbol.clone();
     let (tx_tickers_calc_signals, rx_tickers_calc_signals) = mpsc::channel();
     let (tx_tickers_trade_signals, rx_tickers_trade_signals) = mpsc::channel();
     let (tx_calc_trade_signals, rx_calc_trade_signals) = mpsc::channel();
@@ -75,35 +79,35 @@ fn trade() {
             tx_tickers_calc_signals.send(m.clone()).unwrap();
             tx_tickers_trade_signals.send(m).unwrap();
         };
-        bybit::TradingWs::listen_tickers(on_message);
+        bybit::TradingWs::listen_tickers(on_message, &symbol_receive);
     };
-    let calc_signals = move || {
-        let mut two_top_intersection = TwoTopIntersection::new();
-        let prev_candles =
-            CandlesPort::new_and_connect().fetch_last_candles(200);
-        for candle in prev_candles.iter() {
-            two_top_intersection.apply_candle(&candle)
-        }
-        let start_ticker = Candle::wait_for_next(&rx_tickers_calc_signals);
-        let mut current_candle = Candle::new_from_ticker(&start_ticker);
-        loop {
-            let ticker = rx_tickers_calc_signals.recv().unwrap();
-            if current_candle.expired() {
-                log::debug!("candle expired {:?}", current_candle);
-                two_top_intersection.apply_candle(&current_candle);
-                current_candle = Candle::new_from_ticker(&ticker);
-            } else {
-                current_candle.apply_ticker(&ticker)
+    let calc_signals =
+        move || {
+            let mut two_top_intersection = TwoTopIntersection::new();
+            let prev_candles = CandlesPort::new_and_connect()
+                .fetch_last_candles(200, "bybit", symbol_calc.as_str());
+            for candle in prev_candles.iter() {
+                two_top_intersection.apply_candle(&candle)
             }
-            match two_top_intersection.fire(ticker.data_last_price) {
-                Some(signal) => tx_calc_trade_signals.send(signal).unwrap(),
-                None => {}
+            let start_ticker = Candle::wait_for_next(&rx_tickers_calc_signals);
+            let mut current_candle = Candle::new_from_ticker(&start_ticker);
+            loop {
+                let ticker = rx_tickers_calc_signals.recv().unwrap();
+                if current_candle.expired() {
+                    log::debug!("candle expired {:?}", current_candle);
+                    two_top_intersection.apply_candle(&current_candle);
+                    current_candle = Candle::new_from_ticker(&ticker);
+                } else {
+                    current_candle.apply_ticker(&ticker)
+                }
+                match two_top_intersection.fire(ticker.data_last_price) {
+                    Some(signal) => tx_calc_trade_signals.send(signal).unwrap(),
+                    None => {}
+                }
             }
-        }
-    };
+        };
     let trade_signals = move || {
         let mut history_port = HistoryPort::new_and_connect();
-
         let trading = bybit::TradingHttpDebug::new();
         loop {
             // XXX: use single message(one shot) channels
@@ -201,19 +205,23 @@ fn listen_save_candles() {
     //      p.s. error "expected a closure that implements
     //      the `Fn` trait, but this closure only implements
     //      `FnMut`" must be handled
+    let symbol = "BTCUSDT".to_string();
+    let symbol_receive = symbol.clone();
+    let symbol_calc = symbol.clone();
     let (tx, rx) = mpsc::channel();
     let receive_tickers = move || {
         let on_message = |m: FlatTicker| {
             tx.send(m.clone()).unwrap();
         };
-        bybit::TradingWs::listen_tickers(on_message);
+        bybit::TradingWs::listen_tickers(on_message, &symbol_receive);
     };
     let calc_signals = move || {
         let mut port = CandlesPort::new_and_connect();
         let mut current_candle = Candle::new_from_ticker(&FlatTicker {
             ts: 0,
-            data_symbol: "BTCUSDT".to_string(),
+            data_symbol: symbol_calc,
             data_last_price: 0.0,
+            exchange: "bybit".to_string(),
         });
         loop {
             let ticker = rx.recv().unwrap();
@@ -249,6 +257,8 @@ mod tests {
 
     fn create_candle(high: f64) -> Candle {
         Candle {
+            exchange: "".to_string(),
+            symbol: "".to_string(),
             open_time: 0,
             low: 0.0,
             close: 0.0,

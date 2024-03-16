@@ -25,8 +25,10 @@ impl CandlesPort {
         self.client
             .batch_execute(
                 "
-            CREATE TABLE IF NOT EXISTS candles_bybit_btcusdt_1m (
+            CREATE TABLE IF NOT EXISTS candles_1m (
                 open_time TIMESTAMP NOT NULL,
+                exchange varchar NOT NULL,
+                symbol varchar NOT NULL,
                 open real NOT NULL,
                 close real NOT NULL,
                 high real NOT NULL,
@@ -40,12 +42,12 @@ impl CandlesPort {
     pub fn insert_candle(&mut self, x: &Candle) -> Result<(), String> {
         let open_time = x.open_time / 1000;
         let query = format!(
-            "INSERT INTO public.candles_bybit_btcusdt_1m
-                (open_time, open, close, low, high)
+            "INSERT INTO public.candles_1m
+                (open_time, exchange, symbol, open, close, low, high)
             VALUES {};",
             format!(
-                "(to_timestamp({})::timestamp, {}, {}, {}, {})",
-                open_time, x.open, x.close, x.low, x.high,
+                "(to_timestamp({})::timestamp, '{}', '{}', {}, {}, {}, {})",
+                open_time, x.exchange, x.symbol, x.open, x.close, x.low, x.high,
             ),
         );
         match self.client.batch_execute(query.as_str()) {
@@ -54,16 +56,21 @@ impl CandlesPort {
         }
     }
 
-    pub fn fetch_last_candles(&mut self, limit: i32) -> Vec<Candle> {
+    pub fn fetch_last_candles(
+        &mut self,
+        limit: i32,
+        exchange: &str,
+        symbol: &str,
+    ) -> Vec<Candle> {
         let mut out = vec![];
         let query = format!(
             "
-            select open_time, high, low, open, close
-            from public.candles_bybit_btcusdt_1m
+            select open_time, exchange, symbol, high, low, open, close
+            from public.candles_1m
             order by open_time desc
-            limit {};
-        ",
-            limit
+            where exchange = '{exchange}' and symbol = '{symbol}'
+            limit {limit};
+        "
         );
         for row in self.client.query(query.as_str(), &[]).unwrap() {
             // XXX: parse numeric here
@@ -73,10 +80,12 @@ impl CandlesPort {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_millis(),
-                high: row.get::<_, f32>(1) as f64,
-                low: row.get::<_, f32>(2) as f64,
-                open: row.get::<_, f32>(3) as f64,
-                close: row.get::<_, f32>(4) as f64,
+                exchange: row.get::<_, String>(1),
+                symbol: row.get::<_, String>(2),
+                high: row.get::<_, f32>(3) as f64,
+                low: row.get::<_, f32>(4) as f64,
+                open: row.get::<_, f32>(5) as f64,
+                close: row.get::<_, f32>(6) as f64,
             });
         }
         out

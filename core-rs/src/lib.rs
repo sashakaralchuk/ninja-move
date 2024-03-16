@@ -193,10 +193,13 @@ pub struct FlatTicker {
     pub ts: u128,
     pub data_symbol: String,
     pub data_last_price: f64,
+    pub exchange: String,
 }
 
 #[derive(Debug)]
 pub struct Candle {
+    pub exchange: String,
+    pub symbol: String,
     pub open_time: u128,
     pub open: f64,
     pub close: f64,
@@ -207,6 +210,8 @@ pub struct Candle {
 impl Candle {
     pub fn new_from_ticker(ticker: &FlatTicker) -> Self {
         Self {
+            exchange: ticker.exchange.clone(),
+            symbol: ticker.data_symbol.clone(),
             open_time: ticker.ts,
             open: ticker.data_last_price,
             close: ticker.data_last_price,

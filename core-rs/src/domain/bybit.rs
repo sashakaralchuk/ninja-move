@@ -26,6 +26,7 @@ impl RawTicker {
             ts: self.ts,
             data_symbol: self.data.symbol.clone(),
             data_last_price: self.data.lastPrice.parse::<f64>().unwrap(),
+            exchange: "bybit".to_string(),
         }
     }
 }
@@ -37,10 +38,9 @@ impl TradingWs {
         Self {}
     }
 
-    pub fn listen_tickers(on_message: impl Fn(FlatTicker)) {
+    pub fn listen_tickers(on_message: impl Fn(FlatTicker), symbol: &String) {
         let url_obj = Url::parse(URL_WS).unwrap();
         let (mut socket, _response) = connect(url_obj).unwrap();
-        let symbol = "BTCUSDT".to_string();
         let subscribe_text = format!(
             "{{\"op\": \"subscribe\", \"args\": [\"tickers.{}\"]}}",
             symbol,
