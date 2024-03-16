@@ -45,20 +45,27 @@ impl TwoTopIntersection {
     fn log_hist(
         port: &mut HistoryPort,
         cause: &str,
-        open_price: f64,
         threshold: f64,
-        last_price: f64,
+        order: &bybit::Order,
+        ticker: &FlatTicker,
     ) {
-        let profit_abs = threshold - open_price;
-        let profit_rel = profit_abs / open_price;
+        let profit_abs = threshold - order.open_price;
+        let profit_rel = profit_abs / order.open_price;
         let hist = HistoryRow::new(
-            cause, open_price, threshold, profit_abs, profit_rel, last_price,
+            cause,
+            &ticker.exchange,
+            &ticker.data_symbol,
+            order.open_price,
+            threshold,
+            profit_abs,
+            profit_rel,
+            ticker.data_last_price,
         );
         port.insert_hist(&hist).unwrap();
         log::debug!(
             "close order open_price={} trailing_threshold={} \
     profit_abs={:.2} profit_rel={:.4}",
-            open_price,
+            order.open_price,
             threshold,
             profit_abs,
             profit_rel,
@@ -67,7 +74,6 @@ impl TwoTopIntersection {
 }
 
 fn trade() {
-    // TODO: re-make history - add columns exchange symbol
     let symbol = "BTCUSDT".to_string();
     let symbol_receive = symbol.clone();
     let symbol_calc = symbol.clone();
@@ -148,9 +154,9 @@ fn trade() {
                     TwoTopIntersection::log_hist(
                         &mut history_port,
                         "reach-stop-loss",
-                        trade.open_price,
                         bottom_threshold,
-                        ticker.data_last_price,
+                        &trade,
+                        &ticker,
                     );
                     trading.close_market_order(&trade.order_id);
                     break;
@@ -173,9 +179,9 @@ fn trade() {
                     TwoTopIntersection::log_hist(
                         &mut history_port,
                         "reach-trailing-stop",
-                        trade.open_price,
                         trailing_threshold.unwrap(),
-                        ticker.data_last_price,
+                        &trade,
+                        &ticker,
                     );
                     trading.close_market_order(&trade.order_id);
                     break;
@@ -193,10 +199,8 @@ fn trade() {
 }
 
 fn create_tables() {
-    let mut port_candles = CandlesPort::new_and_connect();
-    let mut port_history = HistoryPort::new_and_connect();
-    port_candles.create_table();
-    port_history.create_table();
+    CandlesPort::new_and_connect().create_table();
+    HistoryPort::new_and_connect().create_table();
     log::info!("database tables created");
 }
 

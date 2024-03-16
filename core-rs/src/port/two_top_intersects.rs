@@ -67,8 +67,8 @@ impl CandlesPort {
             "
             select open_time, exchange, symbol, high, low, open, close
             from public.candles_1m
-            order by open_time desc
             where exchange = '{exchange}' and symbol = '{symbol}'
+            order by open_time desc
             limit {limit};
         "
         );
@@ -94,6 +94,8 @@ impl CandlesPort {
 
 pub struct HistoryRow {
     cause: String,
+    exchange: String,
+    symbol: String,
     created_at: u128,
     commit_hash: String,
     trailing_threshold: f64,
@@ -106,6 +108,8 @@ pub struct HistoryRow {
 impl HistoryRow {
     pub fn new(
         cause: &str,
+        exchange: &String,
+        symbol: &String,
         open_price: f64,
         trailing_threshold: f64,
         profit_abs: f64,
@@ -119,6 +123,8 @@ impl HistoryRow {
         let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
         Self {
             cause: cause.to_string(),
+            exchange: exchange.clone(),
+            symbol: symbol.clone(),
             created_at,
             commit_hash,
             trailing_threshold,
@@ -145,8 +151,10 @@ impl HistoryPort {
         self.client
             .batch_execute(
                 "
-            CREATE TABLE IF NOT EXISTS history_bybit_btcusdt_1m (
+            CREATE TABLE IF NOT EXISTS history_trades (
                 created_at TIMESTAMP NOT NULL,
+                exchange varchar NOT NULL,
+                symbol varchar NOT NULL,
                 commit_hash varchar NOT NULL,
                 cause varchar NOT NULL,
                 open_price real NOT NULL,
@@ -162,13 +170,15 @@ impl HistoryPort {
 
     pub fn insert_hist(&mut self, x: &HistoryRow) -> Result<(), String> {
         let query = format!(
-            "INSERT INTO public.history_bybit_btcusdt_1m
-                (created_at, commit_hash, cause, open_price, trailing_threshold, profit_abs, \
-                    profit_rel, last_price)
+            "INSERT INTO public.history_trades
+                (created_at, exchange, symbol, commit_hash, cause, open_price, \
+                    trailing_threshold, profit_abs, profit_rel, last_price)
             VALUES {};",
             format!(
-                "(to_timestamp({})::timestamp, '{}', '{}', {}, {}, {}, {}, {})",
+                "(to_timestamp({})::timestamp, '{}', '{}', '{}', '{}', {}, {}, {}, {}, {})",
                 x.created_at / 1000,
+                x.exchange,
+                x.symbol,
                 x.commit_hash,
                 x.cause,
                 x.open_price,
