@@ -29,6 +29,12 @@ run-two-top-instersects-listen-save-candles:
 test-2top-instersects:
 	cargo test --bin trade_2top_intersects
 
+test-bybit-domain:
+	${env_vars} cargo test domain::bybit::tests
+
+test:
+	${env_vars} cargo test
+
 use-logger:
 	cargo run --example use_logger
 

@@ -102,7 +102,9 @@ fn trade() {
         }
     };
     let trade_signals = move || {
-        let mut port = HistoryPort::new_and_connect();
+        let mut history_port = HistoryPort::new_and_connect();
+
+        let trading = bybit::TradingHttpDebug::new();
         loop {
             // XXX: use single message(one shot) channels
             let signal = {
@@ -124,8 +126,6 @@ fn trade() {
                 signal.high_value,
                 last_ticker.data_last_price
             );
-            // XXX: add trait for http
-            let trading = bybit::TradingHttpDebug::new();
             let trade = trading.create_market_order(&last_ticker);
             let n = 10;
             log::info!("wait {} tickers for price move", n);
@@ -142,13 +142,13 @@ fn trade() {
                     trade.open_price * (1.0 - stop_loss_rel_val);
                 if ticker.data_last_price <= bottom_threshold {
                     TwoTopIntersection::log_hist(
-                        &mut port,
+                        &mut history_port,
                         "reach-stop-loss",
                         trade.open_price,
                         bottom_threshold,
                         ticker.data_last_price,
                     );
-                    trading.close_order(&trade.order_id);
+                    trading.close_market_order(&trade.order_id);
                     break;
                 }
                 if ticker.data_last_price <= trade.open_price {
@@ -167,13 +167,13 @@ fn trade() {
                 }
                 if ticker.data_last_price < trailing_threshold.unwrap() {
                     TwoTopIntersection::log_hist(
-                        &mut port,
+                        &mut history_port,
                         "reach-trailing-stop",
                         trade.open_price,
                         trailing_threshold.unwrap(),
                         ticker.data_last_price,
                     );
-                    trading.close_order(&trade.order_id);
+                    trading.close_market_order(&trade.order_id);
                     break;
                 }
                 log::debug!("moving threshold to new pos {}", next_threshold);

@@ -1,18 +1,19 @@
-#[macro_use] extern crate prettytable;
+#[macro_use]
+extern crate prettytable;
 
-use std::ops::{Add, AddAssign};
-use std::thread;
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
+use std::ops::{Add, AddAssign};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{Timelike, Utc};
-use prettytable::{Table, format};
+use prettytable::{format, Table};
 
-use exchanges_arbitrage::{OrderBookCache, pool, Args};
+use exchanges_arbitrage::constants::{SYMBOLS_BINANCE, SYMBOLS_GATEIO};
+use exchanges_arbitrage::domain::{binance, gateio};
 use exchanges_arbitrage::repository::{monitoring, queue};
-use exchanges_arbitrage::constants::{SYMBOLS_GATEIO, SYMBOLS_BINANCE};
-use exchanges_arbitrage::domain::{gateio, binance};
+use exchanges_arbitrage::{pool, Args, OrderBookCache};
 
 struct PrecisionF64 {
     target: f64,
@@ -43,7 +44,7 @@ struct CachedWriteV1 {
     precision: PrecisionF64,
     repository: monitoring::RepositoryV2,
     last_prices: HashMap<String, Option<f64>>,
-    list_to_write: Vec::<monitoring::InsertParamV2>,
+    list_to_write: Vec<monitoring::InsertParamV2>,
 }
 
 impl CachedWriteV1 {
@@ -94,19 +95,22 @@ impl CachedWriteV1 {
         if (prev_price - next_price).abs() < self.precision.diff {
             return;
         }
-        let content = monitoring::InsertParam{
+        let content = monitoring::InsertParam {
             symbol: symbol_from_stream(&updated_stream),
             exchange: self.exchange.clone(),
             last_bid: self.precision.f64_to_u64(last_bid),
             last_ask: self.precision.f64_to_u64(last_ask),
         };
-        self.list_to_write.push(monitoring::InsertParamV2{content, timestamp});
+        self.list_to_write
+            .push(monitoring::InsertParamV2 { content, timestamp });
         log::debug!(
             "[{}] price updated! stream: {}, \
             last_bid: {}, last_ask: {}, \
             obj to write: {:?}",
-            self.exchange, updated_stream,
-            last_bid, last_ask,
+            self.exchange,
+            updated_stream,
+            last_bid,
+            last_ask,
             self.list_to_write.last().unwrap(),
         );
         self.last_prices.insert(updated_stream, Some(next_price));
@@ -115,7 +119,8 @@ impl CachedWriteV1 {
         }
         log::info!(
             "[{}][handle_write] write to table, len: {}",
-            self.exchange, self.list_to_write.len(),
+            self.exchange,
+            self.list_to_write.len(),
         );
         self.repository.insert_batch(&self.list_to_write).unwrap();
         self.list_to_write.clear();
@@ -135,8 +140,13 @@ impl CachedWriteV2 {
         repository: monitoring::RepositoryV2Ticker,
     ) -> Self {
         let threshold_to_write = 1000;
-        let list_to_write= Vec::<monitoring::InsertParamV2Ticker>::new();
-        Self { exchange, threshold_to_write, repository, list_to_write }
+        let list_to_write = Vec::<monitoring::InsertParamV2Ticker>::new();
+        Self {
+            exchange,
+            threshold_to_write,
+            repository,
+            list_to_write,
+        }
     }
 
     pub fn tick(&mut self, content: monitoring::InsertParamV2Ticker) {
@@ -146,7 +156,8 @@ impl CachedWriteV2 {
         }
         log::info!(
             "[{}][handle_write] write to table, len: {}",
-            self.exchange, self.list_to_write.len(),
+            self.exchange,
+            self.list_to_write.len(),
         );
         self.repository.insert_batch(&self.list_to_write).unwrap();
         self.list_to_write.clear();
@@ -164,7 +175,8 @@ pub fn monitor_v1_binance(
             Some(v) => v,
             None => SYMBOLS_BINANCE.len(),
         };
-        let mut out = SYMBOLS_BINANCE[0..amount].iter()
+        let mut out = SYMBOLS_BINANCE[0..amount]
+            .iter()
             .map(|symbol| format!("{}@depth@100ms", symbol.to_lowercase()))
             .collect::<Vec<String>>();
         out.sort();
@@ -172,9 +184,10 @@ pub fn monitor_v1_binance(
     };
 
     let caches = Arc::new(Mutex::new(
-        streams.iter()
+        streams
+            .iter()
             .map(|stream| (stream.clone(), OrderBookCache::new()))
-            .collect::<HashMap<String, OrderBookCache>>()
+            .collect::<HashMap<String, OrderBookCache>>(),
     ));
     let (tx, rx) = mpsc::channel();
 
@@ -185,18 +198,15 @@ pub fn monitor_v1_binance(
 
     let handle_listen = move || {
         let on_message = |msg_obj: binance::Depth| {
-            caches_listen.lock()
+            caches_listen
+                .lock()
                 .unwrap()
                 .get_mut(&msg_obj.stream.clone())
                 .unwrap()
-                .apply_orders(
-                    msg_obj.data.u,
-                    &msg_obj.data.b,
-                    &msg_obj.data.a,
-                );
+                .apply_orders(msg_obj.data.u, &msg_obj.data.b, &msg_obj.data.a);
             match tx.send((msg_obj.stream, msg_obj.data.E)) {
                 Ok(_) => {}
-                Err(e) => log::error!("[binance][listen] error: {}", e)
+                Err(e) => log::error!("[binance][listen] error: {}", e),
             }
         };
         binance::TradingWs::listen_depth(&streams, on_message);
@@ -215,11 +225,11 @@ pub fn monitor_v1_binance(
             "diff_relative",
         ]);
         for symbol in streams_show.iter() {
-            if let (Some(last_bid), Some(last_ask)) = (
-                cache[symbol].get_last_bid(),
-                cache[symbol].get_last_ask(),
-            ) {
-                let market_price = last_bid[0] + (last_ask[0] - last_bid[0]) / 2.0;
+            if let (Some(last_bid), Some(last_ask)) =
+                (cache[symbol].get_last_bid(), cache[symbol].get_last_ask())
+            {
+                let market_price =
+                    last_bid[0] + (last_ask[0] - last_bid[0]) / 2.0;
                 let diff_absolute = last_ask[0] - last_bid[0];
                 let diff_relative = diff_absolute / market_price;
                 table.add_row(row![
@@ -238,12 +248,14 @@ pub fn monitor_v1_binance(
         table.printstd();
     };
     let handle_write = move || {
-        let symbol_from_stream = |stream: &String| stream
-            .split("@")
-            .collect::<Vec<&str>>()
-            .first()
-            .unwrap()
-            .to_uppercase();
+        let symbol_from_stream = |stream: &String| {
+            stream
+                .split("@")
+                .collect::<Vec<&str>>()
+                .first()
+                .unwrap()
+                .to_uppercase()
+        };
         let mut cached_write = CachedWriteV1::new(
             String::from("binance"),
             monitoring::RepositoryV2::new_and_connect(),
@@ -252,7 +264,12 @@ pub fn monitor_v1_binance(
         loop {
             let (updated_stream, timestamp) = rx.recv().unwrap();
             let cache = &caches.lock().unwrap();
-            cached_write.tick(updated_stream, timestamp, cache, symbol_from_stream);
+            cached_write.tick(
+                updated_stream,
+                timestamp,
+                cache,
+                symbol_from_stream,
+            );
         }
     };
 
@@ -268,25 +285,25 @@ pub fn monitor_v1_binance(
 }
 
 /// Shows/writes gateio symbols spreads
-pub fn monitor_v1_gateio(
-    symbols_amount: Option<usize>,
-    write_needed: bool,
-) {
+pub fn monitor_v1_gateio(symbols_amount: Option<usize>, write_needed: bool) {
     let symbols: Vec<String> = {
         let amount = match symbols_amount {
             Some(v) => v,
             None => SYMBOLS_GATEIO.len(),
         };
-        let mut out = SYMBOLS_GATEIO[0..amount].iter()
+        let mut out = SYMBOLS_GATEIO[0..amount]
+            .iter()
             .map(|symbol| symbol.to_string())
             .collect::<Vec<String>>();
         out.sort();
         out
     };
     let caches = Arc::new(Mutex::new(
-        symbols.clone().iter()
+        symbols
+            .clone()
+            .iter()
             .map(|symbol| (symbol.to_string(), OrderBookCache::new()))
-            .collect::<HashMap<String, OrderBookCache>>()
+            .collect::<HashMap<String, OrderBookCache>>(),
     ));
     let (tx, rx) = mpsc::channel();
 
@@ -295,7 +312,8 @@ pub fn monitor_v1_gateio(
 
     let handle_listen = move || {
         let on_message = |msg_obj: gateio::Depth| {
-            caches_listen.lock()
+            caches_listen
+                .lock()
                 .unwrap()
                 .get_mut(&msg_obj.result.s)
                 .unwrap()
@@ -306,16 +324,15 @@ pub fn monitor_v1_gateio(
                 );
             match tx.send((msg_obj.result.s, msg_obj.result.t)) {
                 Ok(_) => {}
-                Err(e) => log::error!("[gateio][listen] error: {}", e)
+                Err(e) => log::error!("[gateio][listen] error: {}", e),
             }
         };
         gateio::TradingWs::listen_depth(&symbols, on_message);
     };
     let handle_write = move || {
         // XXX: do pause at the beginning to avoid fancy prices in table
-        let symbol_from_stream = |stream: &String| stream
-            .replace("_", "")
-            .to_uppercase();
+        let symbol_from_stream =
+            |stream: &String| stream.replace("_", "").to_uppercase();
         let mut cached_write = CachedWriteV1::new(
             String::from("gateio"),
             monitoring::RepositoryV2::new_and_connect(),
@@ -324,7 +341,12 @@ pub fn monitor_v1_gateio(
         loop {
             let (updated_stream, timestamp) = rx.recv().unwrap();
             let cache = &caches.lock().unwrap();
-            cached_write.tick(updated_stream, timestamp, cache, symbol_from_stream);
+            cached_write.tick(
+                updated_stream,
+                timestamp,
+                cache,
+                symbol_from_stream,
+            );
         }
     };
 
@@ -340,15 +362,19 @@ fn monitor_v1(args: &Args) {
     let args_binance = args.clone();
     let args_gateio = args.clone();
     pool(&vec![
-        thread::spawn(move || monitor_v1_binance(
-            args_binance.symbols_amount,
-            args_binance.write_needed,
-            args_binance.show_binance,
-        )),
-        thread::spawn(move || monitor_v1_gateio(
-            args_gateio.symbols_amount,
-            args_gateio.write_needed,
-        )),
+        thread::spawn(move || {
+            monitor_v1_binance(
+                args_binance.symbols_amount,
+                args_binance.write_needed,
+                args_binance.show_binance,
+            )
+        }),
+        thread::spawn(move || {
+            monitor_v1_gateio(
+                args_gateio.symbols_amount,
+                args_gateio.write_needed,
+            )
+        }),
     ]);
 }
 
@@ -395,9 +421,8 @@ fn monitor_v2_gateio() {
     let handle_listen = move || {
         let precision = PrecisionF64::default();
         let on_message = |ticker: gateio::Ticker| {
-            let symbol = ticker.result.currency_pair
-                .replace("_", "")
-                .to_uppercase();
+            let symbol =
+                ticker.result.currency_pair.replace("_", "").to_uppercase();
             let param = monitoring::InsertParamV2Ticker {
                 symbol,
                 exchange: "gateio".to_string(),
@@ -408,9 +433,7 @@ fn monitor_v2_gateio() {
             };
             tx.send(param).unwrap();
         };
-        let symbols = SYMBOLS_GATEIO.iter()
-            .map(|x| x.clone())
-            .collect::<Vec<&str>>();
+        let symbols = SYMBOLS_GATEIO.iter().cloned().collect::<Vec<&str>>();
         gateio::TradingWs::listen_mini_tickers(&symbols, on_message);
     };
     let handle_write = move || {
@@ -453,17 +476,21 @@ fn put_postgres_data_to_druid() {
             let exchange = row_target.get::<usize, String>(1);
             let last_bid = row_target.get::<usize, i32>(2) as u64;
             let last_ask = row_target.get::<usize, i32>(3) as u64;
-            let timestamp = row_target.get::<usize, SystemTime>(4)
+            let timestamp = row_target
+                .get::<usize, SystemTime>(4)
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            messages.push(serde_json::json!({
-                "symbol": symbol,
-                "exchange": exchange,
-                "last_bid": last_bid,
-                "last_ask": last_ask,
-                "timestamp": timestamp,
-            }).to_string());
+            messages.push(
+                serde_json::json!({
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "last_bid": last_bid,
+                    "last_ask": last_ask,
+                    "timestamp": timestamp,
+                })
+                .to_string(),
+            );
         }
         producer.send_all(topic, &messages).unwrap();
         repository.delete_raw(&symbol).unwrap()
@@ -476,9 +503,9 @@ fn generate_mat_views() {
     let (mut start, end) = repository.start_end_dates().unwrap();
     log::info!("start: {:?}, end: {:?}", start, end);
     let to_strict_millis = {
-        start.timestamp_millis() % 1000 +
-            (start.second() * 1000) as i64 +
-            (start.minute() * 1000 * 60)  as i64
+        start.timestamp_millis() % 1000
+            + (start.second() * 1000) as i64
+            + (start.minute() * 1000 * 60) as i64
     };
     start.add_assign(chrono::Duration::milliseconds(-to_strict_millis));
     while start.lt(&end) && {

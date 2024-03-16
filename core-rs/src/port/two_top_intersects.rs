@@ -104,7 +104,7 @@ impl HistoryRow {
         last_price: f64,
     ) -> Self {
         let created_at = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis();
         let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
