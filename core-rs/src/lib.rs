@@ -1,10 +1,11 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::thread;
 use std::collections::HashMap;
 use std::env;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub mod constants;
 pub mod domain;
+pub mod port;
 pub mod repository;
 
 pub fn timestamp_secs() -> f64 {
@@ -34,7 +35,11 @@ impl OrderBookCache {
     pub fn new() -> Self {
         let bids = HashMap::<String, f64>::new();
         let asks = HashMap::<String, f64>::new();
-        Self { bids, asks, last_update_id: 0 }
+        Self {
+            bids,
+            asks,
+            last_update_id: 0,
+        }
     }
 
     pub fn apply_orders(
@@ -44,7 +49,7 @@ impl OrderBookCache {
         asks: &Vec<[String; 2]>,
     ) {
         if u <= self.last_update_id {
-            return
+            return;
         }
         for bid in bids {
             let amount = bid[1].parse::<f64>().unwrap();
@@ -67,7 +72,9 @@ impl OrderBookCache {
         if self.bids.len() == 0 {
             return None;
         }
-        let mut bids: Vec<[f64; 2]> = self.bids.iter()
+        let mut bids: Vec<[f64; 2]> = self
+            .bids
+            .iter()
             .map(|(key, val)| [key.parse::<f64>().unwrap(), *val])
             .collect();
         bids.sort_by(|a, b| a[0].total_cmp(&b[0]));
@@ -78,7 +85,9 @@ impl OrderBookCache {
         if self.asks.len() == 0 {
             return None;
         }
-        let mut asks: Vec<[f64; 2]> = self.asks.iter()
+        let mut asks: Vec<[f64; 2]> = self
+            .asks
+            .iter()
             .map(|(key, val)| [key.parse::<f64>().unwrap(), *val])
             .collect();
         asks.sort_by(|a, b| a[0].total_cmp(&b[0]));
@@ -98,7 +107,6 @@ pub struct TelegramBotRepository {
     token: String,
     chat_id: String,
 }
-
 
 impl TelegramBotRepository {
     pub fn new_from_envs() -> Self {
@@ -132,9 +140,12 @@ impl TelegramBotRepository {
 
     pub fn notify_pretty(&self, message: &'static str, action: &'static str) {
         let now = chrono::prelude::Utc::now().to_string();
-        let message = serde_json::to_string_pretty(
-            &TelegramMessage { message, action, now: now.as_str() },
-        ).unwrap();
+        let message = serde_json::to_string_pretty(&TelegramMessage {
+            message,
+            action,
+            now: now.as_str(),
+        })
+        .unwrap();
         self.notify_markdown(message.as_str());
     }
 }
@@ -158,16 +169,86 @@ impl Args {
             match args[i].as_str() {
                 "--write" => write_needed = true,
                 "--show-binance" => show_binance = true,
-                "--symbols-amount" => symbols_amount = Some(
-                    args[i+1].parse::<usize>().unwrap(),
-                ),
-                "--command" => command = args[i+1].clone(),
-                _ => {},
+                "--symbols-amount" => {
+                    symbols_amount = Some(args[i + 1].parse::<usize>().unwrap())
+                }
+                "--command" => command = args[i + 1].clone(),
+                _ => {}
             }
         }
         if command.len() == 0 {
             panic!("--command must be passed");
         }
-        Self { write_needed, show_binance, symbols_amount, command }
+        Self {
+            write_needed,
+            show_binance,
+            symbols_amount,
+            command,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FlatTicker {
+    pub ts: u128,
+    pub data_symbol: String,
+    pub data_last_price: f64,
+}
+
+#[derive(Debug)]
+pub struct Candle {
+    pub open_time: u128,
+    pub open: f64,
+    pub close: f64,
+    pub high: f64,
+    pub low: f64,
+}
+
+impl Candle {
+    pub fn new_from_ticker(ticker: &FlatTicker) -> Self {
+        Self {
+            open_time: ticker.ts,
+            open: ticker.data_last_price,
+            close: ticker.data_last_price,
+            high: ticker.data_last_price,
+            low: ticker.data_last_price,
+        }
+    }
+
+    pub fn apply_ticker(&mut self, ticker: &FlatTicker) {
+        self.close = ticker.data_last_price;
+        self.high = f64::max(self.high, self.close);
+        self.low = f64::max(self.low, self.close);
+    }
+
+    pub fn expired(&self) -> bool {
+        let now_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let current_start_min = now_millis / 60_000;
+        let candle_start_min = self.open_time / 60_000;
+        current_start_min > candle_start_min
+    }
+
+    /// Waits for beginning of the next candle
+    pub fn wait_for_next(
+        rx: &std::sync::mpsc::Receiver<FlatTicker>,
+    ) -> FlatTicker {
+        let candle_start_time_millis = ((std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            / 60_000)
+            + 1)
+            * 60_000;
+        log::info!("wait for the next minute beginning");
+        loop {
+            let ticker = rx.recv().unwrap();
+            if ticker.ts >= candle_start_time_millis {
+                log::info!("first found candle timestamp is {}", ticker.ts);
+                break ticker;
+            }
+        }
     }
 }

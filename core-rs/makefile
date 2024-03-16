@@ -1,4 +1,5 @@
 env_vars=${shell cat .env | grep -v "\#" | xargs}
+commit_hash=${shell git rev-parse --short HEAD}
 
 monitor-v1:
 	${env_vars} cargo run --bin monitor -- --command v1 --write
@@ -13,6 +14,20 @@ generate-mat-views:
 
 trade-limit-market:
 	${env_vars} cargo run --bin limit_market_v1
+
+run-two-top-instersects-trade:
+	COMMIT_HASH_STR=${commit_hash} \
+	${env_vars} \
+	cargo run --bin two_top_intersects -- --command trade
+
+run-two-top-instersects-create-tables:
+	${env_vars} cargo run --bin two_top_intersects -- --command create-tables
+
+run-two-top-instersects-listen-save-candles:
+	${env_vars} cargo run --bin two_top_intersects -- --command listen-save-candles
+
+test-2top-instersects:
+	cargo test --bin trade_2top_intersects
 
 use-logger:
 	cargo run --example use_logger

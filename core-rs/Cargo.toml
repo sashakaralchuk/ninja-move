@@ -33,6 +33,7 @@ futures = "0.3"
 tokio = { version = "1.29.1", features = ["full"] }
 log4rs = "1.2.0"
 byte-unit = "4.0.19"
+uuid = { version = "1.7.0", features = ["v4"] }
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
