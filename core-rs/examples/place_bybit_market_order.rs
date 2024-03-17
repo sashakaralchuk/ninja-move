@@ -1,4 +1,4 @@
-use exchanges_arbitrage::domain::bybit::TradingHttp;
+use exchanges_arbitrage::domain::bybit::{TradingHttp, TradingHttpTrait};
 
 fn main() {
     let trading = TradingHttp::new_from_envs();

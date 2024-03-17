@@ -26,6 +26,9 @@ run-two-top-instersects-create-tables:
 run-two-top-instersects-listen-save-candles:
 	${env_vars} cargo run --bin two_top_intersects -- --command listen-save-candles
 
+run-example-place-bybit-market-order:
+	${env_vars} cargo run --example place_bybit_market_order
+
 test-2top-instersects:
 	cargo test --bin trade_2top_intersects
 

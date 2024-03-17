@@ -58,38 +58,45 @@ impl TradingWs {
     }
 }
 
-pub struct Order {
-    pub order_id: String,
-    pub open_price: f64,
+pub struct BybitOrder {
+    pub avg_fill_price: f64,
+}
+
+pub trait TradingHttpTrait {
+    fn new_from_envs() -> Self;
+    fn fetch_balance(&self) -> Result<BybitBalance, &str>;
+    fn place_market_order<'a>(
+        &self,
+        qty_quote: f64,
+        symbol: &str,
+        side: &str,
+    ) -> Result<BybitOrder, &'a str>;
 }
 
 pub struct TradingHttpDebug {}
 
-impl TradingHttpDebug {
-    pub fn new() -> Self {
+impl TradingHttpTrait for TradingHttpDebug {
+    fn new_from_envs() -> Self {
         Self {}
     }
 
-    pub fn create_market_order(&self, ticker: &FlatTicker) -> Order {
-        let open_price = ticker.data_last_price;
-        let order_id = uuid::Uuid::new_v4().to_string();
-        log::debug!(
-            "create_market_order {} created on price {}",
-            order_id,
-            open_price
-        );
-        Order {
-            open_price,
-            order_id,
-        }
+    fn fetch_balance(&self) -> Result<BybitBalance, &str> {
+        Ok(BybitBalance {
+            btc: 0.0,
+            usdc: 0.0,
+        })
     }
 
-    pub fn close_market_order(&self, order_id: &String) {
-        log::debug!("close_order {}", order_id);
-    }
-
-    pub fn amend_order(&self, order_id: &String, trailing_threshlod: f64) {
-        log::debug!("amend_order {} to price {}", order_id, trailing_threshlod);
+    fn place_market_order<'a>(
+        &self,
+        qty_quote: f64,
+        symbol: &str,
+        side: &str,
+    ) -> Result<BybitOrder, &'a str> {
+        log::debug!("place_market_order ({},{},{})", symbol, side, qty_quote);
+        Ok(BybitOrder {
+            avg_fill_price: 0.0,
+        })
     }
 }
 
@@ -114,6 +121,34 @@ struct ResBalance {
     result: ResBalanceResult,
 }
 
+#[allow(non_snake_case)]
+#[derive(serde::Deserialize, Debug)]
+struct ResOrdersHistoryResultItem {
+    orderId: String,
+    avgPrice: String,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ResOrdersHistoryResult {
+    list: Vec<ResOrdersHistoryResultItem>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ResOrdersHistory {
+    result: ResOrdersHistoryResult,
+}
+
+#[allow(non_snake_case)]
+#[derive(serde::Deserialize, Debug)]
+struct ResPlaceOrderResult {
+    orderId: String,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ResPlaceOrder {
+    result: ResPlaceOrderResult,
+}
+
 #[derive(Debug)]
 pub struct BybitBalance {
     pub btc: f64,
@@ -127,7 +162,96 @@ pub struct TradingHttp {
 }
 
 impl TradingHttp {
-    pub fn new_from_envs() -> Self {
+    fn gen_request(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        signature: String,
+        timestamp: String,
+        body: Option<String>,
+    ) -> reqwest::blocking::RequestBuilder {
+        let url_base = "https://api.bybit.com";
+        let url = format!("{}{}", url_base, path);
+        let client = reqwest::blocking::Client::new();
+        let mut req = match method {
+            HttpMethod::Get => client.get(url),
+            HttpMethod::Post => client.post(url),
+        };
+        req = match body {
+            Some(v) => req.body(v),
+            None => req,
+        };
+        req.header("X-BAPI-API-KEY", self.api_key.as_str())
+            .header("X-BAPI-SIGN", signature)
+            .header("X-BAPI-SIGN-TYPE", "2")
+            .header("X-BAPI-TIMESTAMP", timestamp.as_str())
+            .header("X-BAPI-RECV-WINDOW", self.recv_window.as_str())
+            .header("Content-Type", "application/json")
+    }
+
+    fn gen_signature(
+        &self,
+        timestamp: &String,
+        payload_str: &String,
+    ) -> String {
+        let param_str = format!(
+            "{}{}{}{}",
+            timestamp, self.api_key, self.recv_window, payload_str
+        );
+        let secret = self.api_secret.as_bytes();
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret).unwrap();
+        mac.update(param_str.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    fn fetch_order(&self, order_id: &str) -> Result<BybitOrder, &str> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+        let signature = self.gen_signature(&timestamp, &format!(""));
+        let res = self
+            .gen_request(
+                HttpMethod::Get,
+                "/spot/v3/private/history-orders",
+                signature,
+                timestamp,
+                None,
+            )
+            .send();
+        match res {
+            Ok(v) => {
+                let status_code = v.status().as_u16();
+                if status_code != 200 {
+                    return Err("wrong get order status");
+                }
+                let body = match serde_json::from_str::<ResOrdersHistory>(
+                    &v.text().unwrap(),
+                ) {
+                    Ok(v) => v,
+                    Err(_) => return Err("couldnt parse balances body"),
+                };
+                for order_raw in body.result.list.iter() {
+                    if order_raw.orderId == order_id {
+                        let o = BybitOrder {
+                            avg_fill_price: order_raw
+                                .avgPrice
+                                .parse::<f64>()
+                                .unwrap(),
+                        };
+                        return Ok(o);
+                    }
+                }
+                return Err("order have not found");
+            }
+            Err(_) => return Err("order get error"),
+        }
+    }
+}
+
+impl TradingHttpTrait for TradingHttp {
+    fn new_from_envs() -> Self {
         let api_key = std::env::var("BYBIT_API_KEY").unwrap();
         let api_secret = std::env::var("BYBIT_API_SECRET").unwrap();
         let recv_window = String::from("5000");
@@ -138,7 +262,7 @@ impl TradingHttp {
         }
     }
 
-    pub fn fetch_balance(&self) -> Result<BybitBalance, &str> {
+    fn fetch_balance(&self) -> Result<BybitBalance, &str> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -186,12 +310,12 @@ impl TradingHttp {
         }
     }
 
-    pub fn place_market_order(
+    fn place_market_order<'a>(
         &self,
         qty_quote: f64,
         symbol: &str,
         side: &str,
-    ) -> Result<(), &str> {
+    ) -> Result<BybitOrder, &'a str> {
         let payload = serde_json::json!({
             "symbol": symbol,
             "orderType": "Market",
@@ -215,51 +339,30 @@ impl TradingHttp {
             )
             .send();
         match res {
-            Ok(_) => return Ok(()),
+            Ok(v) => {
+                let status_code = v.status().as_u16();
+                if status_code != 200 {
+                    return Err("wrong place market order status");
+                }
+                let body_raw = v.text().unwrap();
+                let body =
+                    match serde_json::from_str::<ResPlaceOrder>(&body_raw) {
+                        Ok(v) => v,
+                        Err(_) => return Err("couldnt parse balances body"),
+                    };
+                log::debug!("backoff waiting for order");
+                for _ in 0..5 {
+                    match self.fetch_order(body.result.orderId.as_str()) {
+                        Ok(v) => return Ok(v),
+                        Err(_) => std::thread::sleep(
+                            std::time::Duration::from_millis(100),
+                        ),
+                    };
+                }
+                return Err("backoff order havent successed");
+            }
             Err(_) => return Err("order place response error"),
         }
-    }
-
-    fn gen_request(
-        &self,
-        method: HttpMethod,
-        path: &str,
-        signature: String,
-        timestamp: String,
-        body: Option<String>,
-    ) -> reqwest::blocking::RequestBuilder {
-        let url_base = "https://api.bybit.com";
-        let url = format!("{}{}", url_base, path);
-        let client = reqwest::blocking::Client::new();
-        let mut req = match method {
-            HttpMethod::Get => client.get(url),
-            HttpMethod::Post => client.post(url),
-        };
-        req = match body {
-            Some(v) => req.body(v),
-            None => req,
-        };
-        req.header("X-BAPI-API-KEY", self.api_key.as_str())
-            .header("X-BAPI-SIGN", signature)
-            .header("X-BAPI-SIGN-TYPE", "2")
-            .header("X-BAPI-TIMESTAMP", timestamp.as_str())
-            .header("X-BAPI-RECV-WINDOW", self.recv_window.as_str())
-            .header("Content-Type", "application/json")
-    }
-
-    fn gen_signature(
-        &self,
-        timestamp: &String,
-        payload_str: &String,
-    ) -> String {
-        let param_str = format!(
-            "{}{}{}{}",
-            timestamp, self.api_key, self.recv_window, payload_str
-        );
-        let secret = self.api_secret.as_bytes();
-        let mut mac = Hmac::<Sha256>::new_from_slice(secret).unwrap();
-        mac.update(param_str.as_bytes());
-        hex::encode(mac.finalize().into_bytes())
     }
 }
 

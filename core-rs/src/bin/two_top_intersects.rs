@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::thread;
 
-use exchanges_arbitrage::domain::bybit;
+use exchanges_arbitrage::domain::bybit::{self, TradingHttpTrait};
 use exchanges_arbitrage::port::two_top_intersects::{
     CandlesPort, HistoryPort, HistoryRow,
 };
@@ -46,16 +46,16 @@ impl TwoTopIntersection {
         port: &mut HistoryPort,
         cause: &str,
         threshold: f64,
-        order: &bybit::Order,
+        order: &bybit::BybitOrder,
         ticker: &FlatTicker,
     ) {
-        let profit_abs = threshold - order.open_price;
-        let profit_rel = profit_abs / order.open_price;
+        let profit_abs = threshold - order.avg_fill_price;
+        let profit_rel = profit_abs / order.avg_fill_price;
         let hist = HistoryRow::new(
             cause,
             &ticker.exchange,
             &ticker.data_symbol,
-            order.open_price,
+            order.avg_fill_price,
             threshold,
             profit_abs,
             profit_rel,
@@ -65,7 +65,7 @@ impl TwoTopIntersection {
         log::debug!(
             "close order open_price={} trailing_threshold={} \
     profit_abs={:.2} profit_rel={:.4}",
-            order.open_price,
+            order.avg_fill_price,
             threshold,
             profit_abs,
             profit_rel,
@@ -74,9 +74,10 @@ impl TwoTopIntersection {
 }
 
 fn trade() {
-    let symbol = "BTCUSDT".to_string();
+    let symbol = "BTCUSDC".to_string();
     let symbol_receive = symbol.clone();
     let symbol_calc = symbol.clone();
+    let symbol_trade = symbol.clone();
     let (tx_tickers_calc_signals, rx_tickers_calc_signals) = mpsc::channel();
     let (tx_tickers_trade_signals, rx_tickers_trade_signals) = mpsc::channel();
     let (tx_calc_trade_signals, rx_calc_trade_signals) = mpsc::channel();
@@ -114,7 +115,7 @@ fn trade() {
         };
     let trade_signals = move || {
         let mut history_port = HistoryPort::new_and_connect();
-        let trading = bybit::TradingHttpDebug::new();
+        let trading = bybit::TradingHttpDebug::new_from_envs();
         loop {
             // XXX: use single message(one shot) channels
             let signal = {
@@ -136,7 +137,9 @@ fn trade() {
                 signal.high_value,
                 last_ticker.data_last_price
             );
-            let trade = trading.create_market_order(&last_ticker);
+            let order = trading
+                .place_market_order(0.0, symbol_trade.as_str(), "Buy")
+                .unwrap();
             let n = 10;
             log::info!("wait {} tickers for price move", n);
             // TODO: think about how and when to start looking for closing an order
@@ -149,24 +152,26 @@ fn trade() {
             loop {
                 let ticker = rx_tickers_trade_signals.recv().unwrap();
                 let bottom_threshold =
-                    trade.open_price * (1.0 - stop_loss_rel_val);
+                    order.avg_fill_price * (1.0 - stop_loss_rel_val);
                 if ticker.data_last_price <= bottom_threshold {
                     TwoTopIntersection::log_hist(
                         &mut history_port,
                         "reach-stop-loss",
                         bottom_threshold,
-                        &trade,
+                        &order,
                         &ticker,
                     );
-                    trading.close_market_order(&trade.order_id);
+                    trading
+                        .place_market_order(0.0, symbol_trade.as_str(), "Sell")
+                        .unwrap();
                     break;
                 }
-                if ticker.data_last_price <= trade.open_price {
+                if ticker.data_last_price <= order.avg_fill_price {
                     continue;
                 }
                 let next_threshold = f64::max(
-                    trade.open_price
-                        + (ticker.data_last_price - trade.open_price)
+                    order.avg_fill_price
+                        + (ticker.data_last_price - order.avg_fill_price)
                             * trailing_rel_val,
                     trailing_threshold.unwrap_or(0.0),
                 );
@@ -180,10 +185,12 @@ fn trade() {
                         &mut history_port,
                         "reach-trailing-stop",
                         trailing_threshold.unwrap(),
-                        &trade,
+                        &order,
                         &ticker,
                     );
-                    trading.close_market_order(&trade.order_id);
+                    trading
+                        .place_market_order(0.0, symbol_trade.as_str(), "Sell")
+                        .unwrap();
                     break;
                 }
                 log::debug!("moving threshold to new pos {}", next_threshold);
@@ -209,7 +216,7 @@ fn listen_save_candles() {
     //      p.s. error "expected a closure that implements
     //      the `Fn` trait, but this closure only implements
     //      `FnMut`" must be handled
-    let symbol = "BTCUSDT".to_string();
+    let symbol = "BTCUSDC".to_string();
     let symbol_receive = symbol.clone();
     let symbol_calc = symbol.clone();
     let (tx, rx) = mpsc::channel();
