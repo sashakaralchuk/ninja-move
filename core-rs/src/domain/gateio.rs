@@ -1,12 +1,12 @@
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::collections::HashMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_tungstenite::tokio::connect_async;
 use futures::prelude::*;
-use tungstenite::{connect, Message};
-use url::Url;
-use sha2::{Sha512, Digest};
 use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha512};
+use tungstenite::connect;
+use url::Url;
 
 use crate::timestamp_secs;
 
@@ -64,8 +64,7 @@ impl std::fmt::Display for TradingError {
         write!(
             f,
             "TradingError, message: {}, status_code: {}",
-            self.message,
-            self.status_code,
+            self.message, self.status_code,
         )
     }
 }
@@ -121,14 +120,10 @@ impl Signer {
         event: &'static str,
         timestamp: &u64,
     ) -> (String, String) {
-        let mut mac = Hmac::<Sha512>::new_from_slice(self.secret.as_bytes())
-            .unwrap();
-        let payload = format!(
-            "channel={}&event={}&time={}",
-            channel,
-            event,
-            timestamp,
-        );
+        let mut mac =
+            Hmac::<Sha512>::new_from_slice(self.secret.as_bytes()).unwrap();
+        let payload =
+            format!("channel={}&event={}&time={}", channel, event, timestamp,);
         mac.update(payload.as_bytes());
         let signature = hex::encode(mac.finalize().into_bytes());
         (self.key.clone(), signature)
@@ -159,10 +154,10 @@ impl TradingHttp {
             "type": "limit",
             "account": "spot",
             "price": price.to_string(),
-        }).to_string();
-        let (signature, timestamp) = self.signer.sign_http(
-            "POST", path, &"".to_string(), &body,
-        );
+        })
+        .to_string();
+        let (signature, timestamp) =
+            self.signer.sign_http("POST", path, &"".to_string(), &body);
 
         let request_start = timestamp_secs();
         let response = reqwest::blocking::Client::new()
@@ -185,9 +180,13 @@ impl TradingHttp {
                         "wrong status_code, error: {:?}",
                         response_body,
                     );
-                    return Err(Box::new(TradingError{message, status_code}))
+                    return Err(Box::new(TradingError {
+                        message,
+                        status_code,
+                    }));
                 }
-                let order_id = response_body["id"].as_str().unwrap().to_string();
+                let order_id =
+                    response_body["id"].as_str().unwrap().to_string();
                 log::info!(
                     "limit order made, order_id: {}, \
                     status_code: {}, duration(s): {:.2}",
@@ -195,9 +194,9 @@ impl TradingHttp {
                     status_code,
                     request_end - request_start,
                 );
-                return Ok(order_id)
+                return Ok(order_id);
             }
-            Err(error) => return Err(Box::new(error))
+            Err(error) => return Err(Box::new(error)),
         }
     }
 
@@ -210,9 +209,9 @@ impl TradingHttp {
         let path = format!("/api/v4/spot/orders/{}", order_id);
         let body = serde_json::json!({"price": price.to_string()}).to_string();
         let query_str = format!("currency_pair={}", symbol);
-        let (signature, timestamp) = self.signer.sign_http(
-            "PATCH", path.as_str(), &query_str, &body,
-        );
+        let (signature, timestamp) =
+            self.signer
+                .sign_http("PATCH", path.as_str(), &query_str, &body);
 
         let request_start = timestamp_secs();
         let response = reqwest::blocking::Client::new()
@@ -236,7 +235,10 @@ impl TradingHttp {
                         "wrong status_code, error: {:?}",
                         response_body,
                     );
-                    return Err(Box::new(TradingError{message, status_code}))
+                    return Err(Box::new(TradingError {
+                        message,
+                        status_code,
+                    }));
                 }
                 log::info!(
                     "amend of order made, order_id: {}, \
@@ -245,9 +247,9 @@ impl TradingHttp {
                     status_code,
                     request_end - request_start,
                 );
-                return Ok(())
+                return Ok(());
             }
-            Err(error) => return Err(Box::new(error))
+            Err(error) => return Err(Box::new(error)),
         }
     }
 
@@ -255,7 +257,10 @@ impl TradingHttp {
         let accounts = {
             let path = "/api/v4/spot/accounts";
             let (signature, timestamp) = self.signer.sign_http(
-                "GET", path, &"".to_string(), &"".to_string(),
+                "GET",
+                path,
+                &"".to_string(),
+                &"".to_string(),
             );
             let response = reqwest::blocking::Client::new()
                 .get(&format!("{}{}", URL_HTTP, path))
@@ -265,22 +270,27 @@ impl TradingHttp {
                 .header("Timestamp", &timestamp.to_string())
                 .header("SIGN", &signature)
                 .send();
-            response.unwrap()
+            response
+                .unwrap()
                 .json::<serde_json::Value>()
                 .unwrap()
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|x| (
-                    x["currency"].as_str().unwrap()
-                        .to_string(),
-                    x["available"].as_str().unwrap()
-                        .parse::<f64>()
-                        .unwrap(),
-                ))
+                .map(|x| {
+                    (
+                        x["currency"].as_str().unwrap().to_string(),
+                        x["available"]
+                            .as_str()
+                            .unwrap()
+                            .parse::<f64>()
+                            .unwrap(),
+                    )
+                })
                 .collect::<HashMap<String, f64>>()
         };
-        let tokens_to_check = params.iter()
+        let tokens_to_check = params
+            .iter()
             .map(|(token, amount)| (token.to_string(), amount.clone()))
             .collect::<HashMap<String, f64>>();
         for token in tokens_to_check.keys() {
@@ -327,16 +337,18 @@ impl TradingWs {
         Self { signer }
     }
 
-    pub fn listen_orders<'a>(&self, symbol: &'a str, on_message: impl Fn(String)) {
+    pub fn listen_orders<'a>(
+        &self,
+        symbol: &'a str,
+        on_message: impl Fn(String),
+    ) {
         let channel = "spot.orders";
         let event = "subscribe";
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let (key, signature) = self.signer.sign_ws(
-            channel, event, &timestamp,
-        );
+        let (key, signature) = self.signer.sign_ws(channel, event, &timestamp);
         let subscribe_text = serde_json::json!({
             "time": timestamp,
             "channel": channel,
@@ -347,17 +359,18 @@ impl TradingWs {
                 "KEY": key,
                 "SIGN": &signature,
             },
-        }).to_string();
-
+        })
+        .to_string();
         let listen = async {
             let (stream, _) = connect_async(URL_WS).await.unwrap();
             let (mut write, mut read) = stream.split();
-
-            write.send(Message::text(subscribe_text)).await.unwrap();
-
+            let m =
+                async_tungstenite::tungstenite::Message::text(subscribe_text);
+            write.send(m).await.unwrap();
             let response = serde_json::from_str::<WsSubscribeResponse>(
                 read.next().await.unwrap().unwrap().to_string().as_str(),
-            ).unwrap();
+            )
+            .unwrap();
             if response.result.status.as_str() != "success" {
                 log::error!("subscribe has failed, response: {:?}", response);
                 return;
@@ -371,7 +384,9 @@ impl TradingWs {
             let loop_pong = async {
                 loop {
                     tokio::time::sleep(Duration::from_secs(5)).await;
-                    write.send(Message::Pong(vec![])).await.unwrap();
+                    let m =
+                        async_tungstenite::tungstenite::Message::Pong(vec![]);
+                    write.send(m).await.unwrap();
                 }
             };
 
@@ -379,9 +394,7 @@ impl TradingWs {
         };
 
         log::info!("start busy loop listening account orders");
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(listen);
+        tokio::runtime::Runtime::new().unwrap().block_on(listen);
     }
 
     pub fn listen_depth(symbols: &Vec<String>, on_message: impl Fn(Depth)) {
@@ -396,8 +409,11 @@ impl TradingWs {
                 "channel": "spot.order_book_update",
                 "event": "subscribe",
                 "payload": [symbol.as_str(), "100ms"],
-            }).to_string();
-            socket.write_message(Message::Text(subscribe_text)).unwrap();
+            })
+            .to_string();
+            socket
+                .write_message(tungstenite::Message::Text(subscribe_text))
+                .unwrap();
         }
         log::info!("start busy loop for {} symbols", symbols.len());
         loop {
@@ -405,12 +421,15 @@ impl TradingWs {
             let msg_text = msg.to_text().unwrap();
             match serde_json::from_str::<Depth>(msg_text) {
                 Ok(msg_obj) => on_message(msg_obj),
-                Err(_) => {},
+                Err(_) => {}
             }
         }
     }
 
-    pub fn listen_mini_tickers(symbols: &Vec<&str>, on_message: impl Fn(Ticker)) {
+    pub fn listen_mini_tickers(
+        symbols: &Vec<&str>,
+        on_message: impl Fn(Ticker),
+    ) {
         let url_obj = Url::parse(URL_WS).unwrap();
         let (mut socket, _response) = connect(url_obj).unwrap();
         let subscribe_text = serde_json::json!({
@@ -421,15 +440,18 @@ impl TradingWs {
             "channel": "spot.tickers",
             "event": "subscribe",
             "payload": symbols,
-        }).to_string();
-        socket.write_message(Message::Text(subscribe_text)).unwrap();
+        })
+        .to_string();
+        socket
+            .write_message(tungstenite::Message::Text(subscribe_text))
+            .unwrap();
         log::info!("start busy loop for {} tickers", symbols.len());
         loop {
             let msg = socket.read_message().unwrap();
             let msg_text = msg.to_text().unwrap();
             match serde_json::from_str::<Ticker>(msg_text) {
                 Ok(msg_obj) => on_message(msg_obj),
-                Err(_) => {},
+                Err(_) => {}
             }
         }
     }
@@ -437,8 +459,8 @@ impl TradingWs {
 
 #[cfg(test)]
 mod tests {
-    use sha2::{Sha512, Digest};
     use hmac::{Hmac, Mac};
+    use sha2::{Digest, Sha512};
 
     #[test]
     fn hash_hello_world() {
@@ -471,7 +493,13 @@ mod tests {
     #[test]
     fn hex_to_str_and_vise_versa() {
         let s = "6668ed2f7d016c5f12d7808fc4f2d1dc4851622d7f15616de947a823b3ee67d761b953f09560da301f832902020dd1c64f496df37eb7ac4fd2feeeb67d77ba9b";
-        let s_bytes_expected: [u8; 64] = [102, 104, 237, 47, 125, 1, 108, 95, 18, 215, 128, 143, 196, 242, 209, 220, 72, 81, 98, 45, 127, 21, 97, 109, 233, 71, 168, 35, 179, 238, 103, 215, 97, 185, 83, 240, 149, 96, 218, 48, 31, 131, 41, 2, 2, 13, 209, 198, 79, 73, 109, 243, 126, 183, 172, 79, 210, 254, 238, 182, 125, 119, 186, 155];
+        let s_bytes_expected: [u8; 64] = [
+            102, 104, 237, 47, 125, 1, 108, 95, 18, 215, 128, 143, 196, 242,
+            209, 220, 72, 81, 98, 45, 127, 21, 97, 109, 233, 71, 168, 35, 179,
+            238, 103, 215, 97, 185, 83, 240, 149, 96, 218, 48, 31, 131, 41, 2,
+            2, 13, 209, 198, 79, 73, 109, 243, 126, 183, 172, 79, 210, 254,
+            238, 182, 125, 119, 186, 155,
+        ];
 
         assert_eq!(hex::decode(s).unwrap(), s_bytes_expected[..]);
         assert_eq!(hex::encode(s_bytes_expected), s);
@@ -483,7 +511,8 @@ mod tests {
         let key = "hello";
         let data = "world";
         let signature = {
-            let mut mac = Hmac::<Sha512>::new_from_slice(key.as_bytes()).unwrap();
+            let mut mac =
+                Hmac::<Sha512>::new_from_slice(key.as_bytes()).unwrap();
             mac.update(data.as_bytes());
             hex::encode(mac.finalize().into_bytes())
         };
@@ -509,7 +538,8 @@ mod tests {
             method, path, "", hashed_payload, timestamp,
         );
         let signature = {
-            let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
+            let mut mac =
+                Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
             mac.update(payload.as_bytes());
             hex::encode(mac.finalize().into_bytes())
         };
@@ -526,8 +556,12 @@ mod tests {
         let event = "";
         let timestamp = 1690384535;
         let signature = {
-            let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
-            let payload = format!("channel={}&event={}&time={}", channel, event, timestamp);
+            let mut mac =
+                Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
+            let payload = format!(
+                "channel={}&event={}&time={}",
+                channel, event, timestamp
+            );
             mac.update(payload.as_bytes());
             hex::encode(mac.finalize().into_bytes())
         };
