@@ -35,6 +35,9 @@ test-2top-instersects:
 test-bybit-domain:
 	${env_vars} cargo test domain::bybit::tests
 
+run-trade-emas:
+	${env_vars} cargo run --bin trade_emas -- --command draw-graph
+
 test:
 	${env_vars} cargo test
 
