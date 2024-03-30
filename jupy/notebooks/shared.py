@@ -68,6 +68,7 @@ def read_binance_klines() -> pd.DataFrame:
     return (pd.concat(dfs, ignore_index=True)
         .assign(date=lambda x: x.open_time.apply(lambda x: dt.datetime.fromtimestamp(x/1000)))
         .set_index('date')
+        .sort_index()
     )
 
 
