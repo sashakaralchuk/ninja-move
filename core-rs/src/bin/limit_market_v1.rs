@@ -145,7 +145,8 @@ fn perform() {
                 MessageKind::GateioOrderFilled => {
                     trading_binance.create_market_order();
                     let message = "limit trade on gateio filled";
-                    TelegramBotPort::new_from_envs().notify_pretty("limit-market-v1", message);
+                    TelegramBotPort::new_from_envs()
+                        .notify_pretty("limit-market-v1".to_string(), message.to_string());
                     return;
                 }
             }
@@ -179,7 +180,8 @@ fn pool_env() {
         Ok(_) => {}
         Err(_) => {}
     }
-    TelegramBotPort::new_from_envs().notify_pretty("limit-market-v1", "finished");
+    TelegramBotPort::new_from_envs()
+        .notify_pretty("limit-market-v1".to_string(), "finished".to_string());
 }
 
 fn main() {

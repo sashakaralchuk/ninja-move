@@ -133,11 +133,11 @@ impl TelegramBotPort {
         self.notify(message_formatted.as_str(), Some("Markdown"));
     }
 
-    pub fn notify_pretty(&self, message: &'static str, action: &'static str) {
+    pub fn notify_pretty(&self, message: String, action: String) {
         let now = chrono::prelude::Utc::now().to_string();
         let message = serde_json::to_string_pretty(&TelegramMessage {
-            message,
-            action,
+            message: &message,
+            action: &action,
             now: now.as_str(),
         })
         .unwrap();

@@ -3,7 +3,7 @@ use std::thread;
 
 use exchanges_arbitrage::domain::bybit::{self, TradingHttpTrait};
 use exchanges_arbitrage::port::two_top_intersects::{CandlesPort, HistoryPort, HistoryRow};
-use exchanges_arbitrage::{pool, Args, Candle, FlatTicker};
+use exchanges_arbitrage::{pool, Args, Candle, FlatTicker, TelegramBotPort};
 
 #[derive(Debug)]
 struct TwoTopSignal {
@@ -18,19 +18,25 @@ enum TwoTopStrategy {
 }
 
 struct TwoTopIntersection<'a> {
-    history_port: Option<&'a mut HistoryPort>,
     strategy: TwoTopStrategy,
     high_values: Vec<f64>,
+    history_port: Option<&'a mut HistoryPort>,
+    telegram_port: Option<&'a TelegramBotPort>,
 }
 
 impl<'a> TwoTopIntersection<'a> {
-    fn new(strategy: TwoTopStrategy, history_port: Option<&'a mut HistoryPort>) -> Self {
+    fn new(
+        strategy: TwoTopStrategy,
+        history_port: Option<&'a mut HistoryPort>,
+        telegram_port: Option<&'a TelegramBotPort>,
+    ) -> Self {
         // XXX: implement aka ring buffer here
         let high_values = Vec::new();
         Self {
             strategy,
             high_values,
             history_port,
+            telegram_port,
         }
     }
 
@@ -89,13 +95,14 @@ impl<'a> TwoTopIntersection<'a> {
             .unwrap()
             .insert_hist(&hist)
             .unwrap();
-        log::debug!(
+        let m = format!(
             "close order open_price={} trailing_threshold={} profit_abs={:.2} profit_rel={:.4}",
-            order.avg_fill_price,
-            threshold,
-            profit_abs,
-            profit_rel,
+            order.avg_fill_price, threshold, profit_abs, profit_rel,
         );
+        self.telegram_port
+            .unwrap()
+            .notify_pretty(m.clone(), strategy_str.to_string());
+        log::debug!("{}", m);
     }
 }
 
@@ -170,7 +177,6 @@ impl TrailingThreshold {
 
 fn trade() {
     // TODO: run with spread
-    // TODO: add telegram notifications
     let symbol = "BTCUSDC".to_string();
     let symbol_receive = symbol.clone();
     let symbol_calc = symbol.clone();
@@ -189,7 +195,7 @@ fn trade() {
         bybit::TradingWs::listen_tickers(on_message, &symbol_receive);
     };
     let calc_signals = move || {
-        let mut two_top_intersection = TwoTopIntersection::new(two_top_strategy_calc, None);
+        let mut two_top_intersection = TwoTopIntersection::new(two_top_strategy_calc, None, None);
         let prev_candles =
             CandlesPort::new_and_connect().fetch_last_candles(200, "bybit", symbol_calc.as_str());
         for candle in prev_candles.iter() {
@@ -214,8 +220,12 @@ fn trade() {
     };
     let trade_signals = move || {
         let mut history_port = HistoryPort::new_and_connect();
-        let mut two_top_intersection =
-            TwoTopIntersection::new(two_top_strategy_trade, Some(&mut history_port));
+        let telegram_port = TelegramBotPort::new_from_envs();
+        let mut two_top_intersection = TwoTopIntersection::new(
+            two_top_strategy_trade,
+            Some(&mut history_port),
+            Some(&telegram_port),
+        );
         let trading = bybit::TradingHttpDebug::new_from_envs();
         loop {
             let signal = {
@@ -376,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_2top_intersects_default_positive_behaviour() {
-        let mut two_top_intersection = TwoTopIntersection::new(TwoTopStrategy::Default, None);
+        let mut two_top_intersection = TwoTopIntersection::new(TwoTopStrategy::Default, None, None);
         two_top_intersection.apply_candle(&create_candle(70_000_f64));
         two_top_intersection.apply_candle(&create_candle(71_000_f64));
         assert_eq!(l_to_str(&two_top_intersection.high_values), "71000");
