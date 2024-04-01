@@ -6,24 +6,31 @@
 /// Requirements
 /// 1. 20 USDT on gateio
 /// 2. equal amount of token on binance
-
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-use exchanges_arbitrage::{OrderBookCache, pool, TelegramBotRepository};
-use exchanges_arbitrage::domain::{gateio, binance};
+use exchanges_arbitrage::domain::{binance, gateio};
+use exchanges_arbitrage::{pool, OrderBookCache, TelegramBotPort};
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct BinancePriceUpdate {market_price: f64}
+struct BinancePriceUpdate {
+    market_price: f64,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct GateioOrderFilled {}
 
 #[derive(serde::Serialize, serde::Deserialize)]
-enum MessageKind {BinancePriceUpdate, GateioOrderFilled}
+enum MessageKind {
+    BinancePriceUpdate,
+    GateioOrderFilled,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct ChannelMessage {kind: MessageKind, content: String}
+struct ChannelMessage {
+    kind: MessageKind,
+    content: String,
+}
 
 fn perform() {
     let symbol_binance = std::env::var("SYMBOL_BINANCE").unwrap();
@@ -37,7 +44,9 @@ fn perform() {
         .parse::<f64>()
         .unwrap();
 
-    fn gen_signer() -> gateio::Signer { gateio::Signer::new_from_envs() }
+    fn gen_signer() -> gateio::Signer {
+        gateio::Signer::new_from_envs()
+    }
 
     let trading_http_gateio = gateio::TradingHttp::new(gen_signer());
     let trading_ws_gateio = gateio::TradingWs::new(gen_signer());
@@ -45,13 +54,15 @@ fn perform() {
 
     let ticker_price_gateio = trading_http_gateio.ticker_price(symbol_gateio.as_str());
 
-    trading_http_gateio.assert_balance(&vec![
-        ("USDT", ticker_price_gateio * asset_amount),
-    ]);
+    trading_http_gateio.assert_balance(&vec![("USDT", ticker_price_gateio * asset_amount)]);
     trading_binance.assert_balance(&vec![("ARB", asset_amount)]);
-    let order_id_gateio = trading_http_gateio.create_limit_order(
-        symbol_gateio.as_str(), asset_amount, ticker_price_gateio * 0.75,
-    ).unwrap();
+    let order_id_gateio = trading_http_gateio
+        .create_limit_order(
+            symbol_gateio.as_str(),
+            asset_amount,
+            ticker_price_gateio * 0.75,
+        )
+        .unwrap();
     let order_id_gateio_observe = order_id_gateio.clone();
     let symbol_gateio_trading = symbol_gateio.clone();
 
@@ -66,31 +77,25 @@ fn perform() {
         let on_message = |m: binance::Depth| {
             let mut order_book = order_book_arc.lock().unwrap();
             order_book.apply_orders(m.data.u, &m.data.b, &m.data.a);
-            if let (Some(last_bid), Some(last_ask)) = (
-                order_book.get_last_bid(),
-                order_book.get_last_ask(),
-            ) {
+            if let (Some(last_bid), Some(last_ask)) =
+                (order_book.get_last_bid(), order_book.get_last_ask())
+            {
                 let market_price = last_bid[0] + (last_ask[0] - last_bid[0]) / 2_f64;
                 let mut last_market_price = last_market_price.lock().unwrap();
                 if *last_market_price == market_price {
                     return;
                 }
                 *last_market_price = market_price;
-                let message_content = serde_json
-                    ::json!(BinancePriceUpdate{market_price})
-                    .to_string();
-                let message = serde_json
-                    ::json!(ChannelMessage{
-                        kind: MessageKind::BinancePriceUpdate,
-                        content: message_content,
-                    })
-                    .to_string();
+                let message_content =
+                    serde_json::json!(BinancePriceUpdate { market_price }).to_string();
+                let message = serde_json::json!(ChannelMessage {
+                    kind: MessageKind::BinancePriceUpdate,
+                    content: message_content,
+                })
+                .to_string();
                 match tx_binance.send(message) {
                     Ok(_) => {}
-                    Err(error) => log::error!(
-                        "[t_binance] tx_binance send error: {}",
-                        error,
-                    )
+                    Err(error) => log::error!("[t_binance] tx_binance send error: {}", error,),
                 }
             }
         };
@@ -99,26 +104,22 @@ fn perform() {
 
     let t_gateio = thread::spawn(move || {
         let on_message = |msg_str: String| {
-            let message = serde_json::from_str
-                ::<gateio::Order>(&msg_str)
-                .unwrap();
+            let message = serde_json::from_str::<gateio::Order>(&msg_str).unwrap();
             let event = &message.result[0];
-            let send = event.id == order_id_gateio_observe &&
-                event.event == "finish" &&
-                event.finish_as == "filled";
+            let send = event.id == order_id_gateio_observe
+                && event.event == "finish"
+                && event.finish_as == "filled";
             if !send {
                 return;
             }
-            let message_to_send = serde_json::json!(ChannelMessage{
+            let message_to_send = serde_json::json!(ChannelMessage {
                 kind: MessageKind::GateioOrderFilled,
                 content: String::from(""),
-            }).to_string();
+            })
+            .to_string();
             match tx_gateio.send(message_to_send) {
                 Ok(_) => log::info!("[t_gateio] filled order sent"),
-                Err(error) => log::error!(
-                    "[t_gateio] tx_gateio send error: {}",
-                    error,
-                )
+                Err(error) => log::error!("[t_gateio] tx_gateio send error: {}", error,),
             }
         };
         trading_ws_gateio.listen_orders(symbol_gateio.as_str(), on_message);
@@ -136,9 +137,7 @@ fn perform() {
         let mut last_binance_update = None;
         for msg_str in messages {
             log::debug!("[t_trading] msg_str: {}", msg_str);
-            let msg_obj = serde_json::from_str
-                ::<ChannelMessage>(&msg_str)
-                .unwrap();
+            let msg_obj = serde_json::from_str::<ChannelMessage>(&msg_str).unwrap();
             match msg_obj.kind {
                 MessageKind::BinancePriceUpdate => {
                     last_binance_update = Some(msg_obj.content);
@@ -146,15 +145,13 @@ fn perform() {
                 MessageKind::GateioOrderFilled => {
                     trading_binance.create_market_order();
                     let message = "limit trade on gateio filled";
-                    TelegramBotRepository::new_from_envs()
-                        .notify_pretty("limit-market-v1", message);
+                    TelegramBotPort::new_from_envs().notify_pretty("limit-market-v1", message);
                     return;
                 }
             }
         }
-        let price_update = serde_json::from_str
-            ::<BinancePriceUpdate>(&last_binance_update.unwrap())
-            .unwrap();
+        let price_update =
+            serde_json::from_str::<BinancePriceUpdate>(&last_binance_update.unwrap()).unwrap();
         let next_limit_price = price_update.market_price * (1.0 - spread_percent);
         log::info!(
             "[t_trading] price update, \
@@ -163,14 +160,13 @@ fn perform() {
             next_limit_price,
         );
         let amend = trading_http_gateio.amend_order(
-            symbol_gateio_trading.as_str(), &order_id_gateio, next_limit_price,
+            symbol_gateio_trading.as_str(),
+            &order_id_gateio,
+            next_limit_price,
         );
         match amend {
             Ok(_) => {}
-            Err(error) => log::warn!(
-                "[t_trading] amend error: {}",
-                error,
-            )
+            Err(error) => log::warn!("[t_trading] amend error: {}", error,),
         }
     });
 
@@ -179,9 +175,11 @@ fn perform() {
 
 fn pool_env() {
     let t = thread::spawn(move || perform());
-    match t.join() { Ok(_) => {}, Err(_) => {} }
-    TelegramBotRepository::new_from_envs()
-        .notify_pretty("limit-market-v1", "finished");
+    match t.join() {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+    TelegramBotPort::new_from_envs().notify_pretty("limit-market-v1", "finished");
 }
 
 fn main() {

@@ -42,12 +42,7 @@ impl OrderBookCache {
         }
     }
 
-    pub fn apply_orders(
-        &mut self,
-        u: u64,
-        bids: &Vec<[String; 2]>,
-        asks: &Vec<[String; 2]>,
-    ) {
+    pub fn apply_orders(&mut self, u: u64, bids: &Vec<[String; 2]>, asks: &Vec<[String; 2]>) {
         if u <= self.last_update_id {
             return;
         }
@@ -103,12 +98,12 @@ struct TelegramMessage<'a> {
     now: &'a str,
 }
 
-pub struct TelegramBotRepository {
+pub struct TelegramBotPort {
     token: String,
     chat_id: String,
 }
 
-impl TelegramBotRepository {
+impl TelegramBotPort {
     pub fn new_from_envs() -> Self {
         let token = env::var("TELEGRAM_BOT_API_KEY").unwrap();
         let chat_id = env::var("TELEGRAM_BOT_CHAT_ID").unwrap();
@@ -169,9 +164,7 @@ impl Args {
             match args[i].as_str() {
                 "--write" => write_needed = true,
                 "--show-binance" => show_binance = true,
-                "--symbols-amount" => {
-                    symbols_amount = Some(args[i + 1].parse::<usize>().unwrap())
-                }
+                "--symbols-amount" => symbols_amount = Some(args[i + 1].parse::<usize>().unwrap()),
                 "--command" => command = args[i + 1].clone(),
                 _ => {}
             }
@@ -237,9 +230,7 @@ impl Candle {
     }
 
     /// Waits for beginning of the next candle
-    pub fn wait_for_next(
-        rx: &std::sync::mpsc::Receiver<FlatTicker>,
-    ) -> FlatTicker {
+    pub fn wait_for_next(rx: &std::sync::mpsc::Receiver<FlatTicker>) -> FlatTicker {
         let candle_start_time_millis = ((std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

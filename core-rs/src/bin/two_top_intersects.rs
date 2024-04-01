@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn test_2top_intersects_expected_behaviour() {
+    fn test_2top_intersects_default_positive_behaviour() {
         let mut two_top_intersection = TwoTopIntersection::new(TwoTopStrategy::Default, None);
         two_top_intersection.apply_candle(&create_candle(70_000_f64));
         two_top_intersection.apply_candle(&create_candle(71_000_f64));
