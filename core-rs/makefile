@@ -30,7 +30,7 @@ run-example-place-bybit-market-order:
 	${env_vars} cargo run --example place_bybit_market_order
 
 test-2top-instersects:
-	cargo test --bin trade_2top_intersects
+	cargo test --bin two_top_intersects
 
 test-bybit-domain:
 	${env_vars} cargo test domain::bybit::tests

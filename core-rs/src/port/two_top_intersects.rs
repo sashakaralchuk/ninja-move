@@ -3,8 +3,14 @@ use postgres::{Client, NoTls};
 use std::env;
 
 fn connect_to_postgres() -> Client {
-    let conn_str = env::var("POSTGRES_DRIVER_STR").unwrap();
-    match Client::connect(&conn_str.as_str(), NoTls) {
+    match Client::configure()
+        .host(env::var("POSTGRES_HOST").unwrap().as_str())
+        .port(env::var("POSTGRES_PORT").unwrap().parse::<u16>().unwrap())
+        .user(env::var("POSTGRES_USER").unwrap().as_str())
+        .password(env::var("POSTGRES_PASSWORD").unwrap().as_str())
+        .dbname(env::var("POSTGRES_DBNAME").unwrap().as_str())
+        .connect(NoTls)
+    {
         Ok(client) => client,
         Err(error) => panic!("postgres connection error: {}", error),
     }
@@ -56,12 +62,7 @@ impl CandlesPort {
         }
     }
 
-    pub fn fetch_last_candles(
-        &mut self,
-        limit: i32,
-        exchange: &str,
-        symbol: &str,
-    ) -> Vec<Candle> {
+    pub fn fetch_last_candles(&mut self, limit: i32, exchange: &str, symbol: &str) -> Vec<Candle> {
         let mut out = vec![];
         let query = format!(
             "
@@ -93,6 +94,7 @@ impl CandlesPort {
 }
 
 pub struct HistoryRow {
+    strategy: String,
     cause: String,
     exchange: String,
     symbol: String,
@@ -107,6 +109,7 @@ pub struct HistoryRow {
 
 impl HistoryRow {
     pub fn new(
+        strategy: &str,
         cause: &str,
         exchange: &String,
         symbol: &String,
@@ -122,6 +125,7 @@ impl HistoryRow {
             .as_millis();
         let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
         Self {
+            strategy: strategy.to_string(),
             cause: cause.to_string(),
             exchange: exchange.clone(),
             symbol: symbol.clone(),
@@ -156,6 +160,7 @@ impl HistoryPort {
                 exchange varchar NOT NULL,
                 symbol varchar NOT NULL,
                 commit_hash varchar NOT NULL,
+                strategy varchar NOT NULL,
                 cause varchar NOT NULL,
                 open_price real NOT NULL,
                 trailing_threshold real NOT NULL,
@@ -171,15 +176,16 @@ impl HistoryPort {
     pub fn insert_hist(&mut self, x: &HistoryRow) -> Result<(), String> {
         let query = format!(
             "INSERT INTO public.history_trades
-                (created_at, exchange, symbol, commit_hash, cause, open_price, \
+                (created_at, exchange, symbol, commit_hash, strategy, cause, open_price, \
                     trailing_threshold, profit_abs, profit_rel, last_price)
             VALUES {};",
             format!(
-                "(to_timestamp({})::timestamp, '{}', '{}', '{}', '{}', {}, {}, {}, {}, {})",
+                "(to_timestamp({})::timestamp, '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {}, {})",
                 x.created_at / 1000,
                 x.exchange,
                 x.symbol,
                 x.commit_hash,
+                x.strategy,
                 x.cause,
                 x.open_price,
                 x.trailing_threshold,

@@ -189,11 +189,7 @@ impl TradingHttp {
             .header("Content-Type", "application/json")
     }
 
-    fn gen_signature(
-        &self,
-        timestamp: &String,
-        payload_str: &String,
-    ) -> String {
+    fn gen_signature(&self, timestamp: &String, payload_str: &String) -> String {
         let param_str = format!(
             "{}{}{}{}",
             timestamp, self.api_key, self.recv_window, payload_str
@@ -226,19 +222,14 @@ impl TradingHttp {
                 if status_code != 200 {
                     return Err("wrong get order status");
                 }
-                let body = match serde_json::from_str::<ResOrdersHistory>(
-                    &v.text().unwrap(),
-                ) {
+                let body = match serde_json::from_str::<ResOrdersHistory>(&v.text().unwrap()) {
                     Ok(v) => v,
                     Err(_) => return Err("couldnt parse balances body"),
                 };
                 for order_raw in body.result.list.iter() {
                     if order_raw.orderId == order_id {
                         let o = BybitOrder {
-                            avg_fill_price: order_raw
-                                .avgPrice
-                                .parse::<f64>()
-                                .unwrap(),
+                            avg_fill_price: order_raw.avgPrice.parse::<f64>().unwrap(),
                         };
                         return Ok(o);
                     }
@@ -345,18 +336,15 @@ impl TradingHttpTrait for TradingHttp {
                     return Err("wrong place market order status");
                 }
                 let body_raw = v.text().unwrap();
-                let body =
-                    match serde_json::from_str::<ResPlaceOrder>(&body_raw) {
-                        Ok(v) => v,
-                        Err(_) => return Err("couldnt parse balances body"),
-                    };
+                let body = match serde_json::from_str::<ResPlaceOrder>(&body_raw) {
+                    Ok(v) => v,
+                    Err(_) => return Err("couldnt parse balances body"),
+                };
                 log::debug!("backoff waiting for order");
                 for _ in 0..5 {
                     match self.fetch_order(body.result.orderId.as_str()) {
                         Ok(v) => return Ok(v),
-                        Err(_) => std::thread::sleep(
-                            std::time::Duration::from_millis(100),
-                        ),
+                        Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
                     };
                 }
                 return Err("backoff order havent successed");
@@ -378,8 +366,7 @@ mod tests {
         let recv_window = "5000";
         let timestamp = "1710588837615";
         let payload = "";
-        let param_str =
-            format!("{}{}{}{}", timestamp, api_key, recv_window, payload);
+        let param_str = format!("{}{}{}{}", timestamp, api_key, recv_window, payload);
         assert_eq!(param_str, "1710588837615HlXHFplHqUg0JAFmtt5000");
         let signature = {
             let secret = api_secret.as_bytes();
@@ -404,8 +391,7 @@ mod tests {
             "{{\"symbol\": \"BTCUSDC\", \"orderType\": \"Market\", \"side\": \"Buy\", \"orderQty\": \"{}\"}}",
             qty,
         );
-        let param_str =
-            format!("{}{}{}{}", timestamp, api_key, recv_window, payload_str);
+        let param_str = format!("{}{}{}{}", timestamp, api_key, recv_window, payload_str);
         assert_eq!(
             param_str.split("{").collect::<Vec<&str>>()[0],
             "1710588837615HlXHFplHqUg0JAFmtt5000"

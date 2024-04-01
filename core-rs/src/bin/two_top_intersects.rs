@@ -2,9 +2,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use exchanges_arbitrage::domain::bybit::{self, TradingHttpTrait};
-use exchanges_arbitrage::port::two_top_intersects::{
-    CandlesPort, HistoryPort, HistoryRow,
-};
+use exchanges_arbitrage::port::two_top_intersects::{CandlesPort, HistoryPort, HistoryRow};
 use exchanges_arbitrage::{pool, Args, Candle, FlatTicker};
 
 #[derive(Debug)]
@@ -12,37 +10,55 @@ struct TwoTopSignal {
     high_value: f64,
 }
 
+#[derive(Clone)]
+enum TwoTopStrategy {
+    Default,
+    WithSpread,
+}
+
 struct TwoTopIntersection {
+    strategy: TwoTopStrategy,
     high_values: Vec<f64>,
 }
 
 impl TwoTopIntersection {
-    fn new() -> Self {
+    fn new(strategy: TwoTopStrategy) -> Self {
         // XXX: implement aka ring buffer here
         let high_values = Vec::new();
-        Self { high_values }
+        Self {
+            strategy,
+            high_values,
+        }
     }
 
     fn apply_candle(&mut self, candle: &Candle) {
-        while !self.high_values.is_empty()
-            && self.high_values.last().unwrap() < &candle.high
-        {
+        while !self.high_values.is_empty() && self.high_values.last().unwrap() < &candle.high {
             self.high_values.pop();
         }
         self.high_values.push(candle.high);
     }
 
     fn fire(&mut self, ticker_price: f64) -> Option<TwoTopSignal> {
-        if !self.high_values.is_empty()
-            && ticker_price > *self.high_values.last().unwrap()
-        {
+        match self.strategy {
+            TwoTopStrategy::Default => self.fire_default(ticker_price),
+            TwoTopStrategy::WithSpread => self.fire_with_spread(ticker_price),
+        }
+    }
+
+    fn fire_default(&mut self, ticker_price: f64) -> Option<TwoTopSignal> {
+        if !self.high_values.is_empty() && ticker_price > *self.high_values.last().unwrap() {
             let high_value = self.high_values.pop().unwrap();
             return Some(TwoTopSignal { high_value });
         }
         None
     }
 
+    fn fire_with_spread(&mut self, _ticker_price: f64) -> Option<TwoTopSignal> {
+        unimplemented!()
+    }
+
     fn log_hist(
+        &self,
         port: &mut HistoryPort,
         cause: &str,
         threshold: f64,
@@ -51,7 +67,12 @@ impl TwoTopIntersection {
     ) {
         let profit_abs = threshold - order.avg_fill_price;
         let profit_rel = profit_abs / order.avg_fill_price;
+        let strategy_str = match self.strategy {
+            TwoTopStrategy::Default => "two-top-intersection-default",
+            TwoTopStrategy::WithSpread => "two-top-intersection-with-spread",
+        };
         let hist = HistoryRow::new(
+            strategy_str,
             cause,
             &ticker.exchange,
             &ticker.data_symbol,
@@ -73,11 +94,93 @@ impl TwoTopIntersection {
     }
 }
 
+enum Reason {
+    Continue,
+    ReachStopLoss,
+    ReachThrailingStop,
+}
+
+struct DecisionOut {
+    reason: Reason,
+    bottom_threshold: f64,
+    trailing_threshold: f64,
+}
+
+impl DecisionOut {
+    fn new(reason: Reason, bottom_threshold: f64, trailing_threshold: f64) -> Self {
+        Self {
+            reason,
+            bottom_threshold,
+            trailing_threshold,
+        }
+    }
+}
+
+struct TrailingThreshold {
+    start_price: f64,
+    trailing_threshold: Option<f64>,
+}
+
+// FIXME: put rx to struct
+impl TrailingThreshold {
+    fn new_and_wait_n_ticks(rx: &std::sync::mpsc::Receiver<FlatTicker>, start_price: f64) -> Self {
+        let n = 10;
+        log::info!("wait {} tickers for price move", n);
+        // TODO: think about how and when to start looking for closing an order
+        for _ in 0..n {
+            rx.recv().unwrap();
+        }
+        Self {
+            trailing_threshold: None,
+            start_price,
+        }
+    }
+
+    fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> DecisionOut {
+        let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
+        let trailing_rel_val = 0.5;
+        let bottom_threshold = self.start_price * (1.0 - stop_loss_rel_val);
+        if ticker.data_last_price <= bottom_threshold {
+            return DecisionOut::new(Reason::ReachStopLoss, bottom_threshold, 0.0);
+        }
+        if ticker.data_last_price <= self.start_price {
+            return DecisionOut::new(Reason::Continue, 0.0, 0.0);
+        }
+        let next_threshold =
+            self.start_price + (ticker.data_last_price - self.start_price) * trailing_rel_val;
+        if self.trailing_threshold.is_none() {
+            log::debug!("initialize threshold with {}", next_threshold);
+            self.trailing_threshold = Some(next_threshold);
+            return DecisionOut::new(Reason::Continue, 0.0, 0.0);
+        }
+        if ticker.data_last_price < self.trailing_threshold.unwrap() {
+            return DecisionOut::new(
+                Reason::ReachThrailingStop,
+                0.0,
+                self.trailing_threshold.unwrap(),
+            );
+        }
+        log::debug!(
+            "moving threshold to new pos {}, start_price={}",
+            next_threshold,
+            self.start_price
+        );
+        self.trailing_threshold = Some(next_threshold);
+        return DecisionOut::new(Reason::Continue, 0.0, 0.0);
+    }
+}
+
 fn trade() {
+    // TODO: run prev strategy
+    // TODO: run with spread
+    // TODO: add telegram notifications
     let symbol = "BTCUSDC".to_string();
     let symbol_receive = symbol.clone();
     let symbol_calc = symbol.clone();
     let symbol_trade = symbol.clone();
+    let two_top_strategy = TwoTopStrategy::Default;
+    let two_top_strategy_calc = two_top_strategy.clone();
+    let two_top_strategy_trade = two_top_strategy.clone();
     let (tx_tickers_calc_signals, rx_tickers_calc_signals) = mpsc::channel();
     let (tx_tickers_trade_signals, rx_tickers_trade_signals) = mpsc::channel();
     let (tx_calc_trade_signals, rx_calc_trade_signals) = mpsc::channel();
@@ -88,32 +191,32 @@ fn trade() {
         };
         bybit::TradingWs::listen_tickers(on_message, &symbol_receive);
     };
-    let calc_signals =
-        move || {
-            let mut two_top_intersection = TwoTopIntersection::new();
-            let prev_candles = CandlesPort::new_and_connect()
-                .fetch_last_candles(200, "bybit", symbol_calc.as_str());
-            for candle in prev_candles.iter() {
-                two_top_intersection.apply_candle(&candle)
+    let calc_signals = move || {
+        let mut two_top_intersection = TwoTopIntersection::new(two_top_strategy_calc);
+        let prev_candles =
+            CandlesPort::new_and_connect().fetch_last_candles(200, "bybit", symbol_calc.as_str());
+        for candle in prev_candles.iter() {
+            two_top_intersection.apply_candle(&candle)
+        }
+        let start_ticker = Candle::wait_for_next(&rx_tickers_calc_signals);
+        let mut current_candle = Candle::new_from_ticker(&start_ticker);
+        loop {
+            let ticker = rx_tickers_calc_signals.recv().unwrap();
+            if current_candle.expired() {
+                log::debug!("candle expired {:?}", current_candle);
+                two_top_intersection.apply_candle(&current_candle);
+                current_candle = Candle::new_from_ticker(&ticker);
+            } else {
+                current_candle.apply_ticker(&ticker)
             }
-            let start_ticker = Candle::wait_for_next(&rx_tickers_calc_signals);
-            let mut current_candle = Candle::new_from_ticker(&start_ticker);
-            loop {
-                let ticker = rx_tickers_calc_signals.recv().unwrap();
-                if current_candle.expired() {
-                    log::debug!("candle expired {:?}", current_candle);
-                    two_top_intersection.apply_candle(&current_candle);
-                    current_candle = Candle::new_from_ticker(&ticker);
-                } else {
-                    current_candle.apply_ticker(&ticker)
-                }
-                match two_top_intersection.fire(ticker.data_last_price) {
-                    Some(signal) => tx_calc_trade_signals.send(signal).unwrap(),
-                    None => {}
-                }
+            match two_top_intersection.fire(ticker.data_last_price) {
+                Some(signal) => tx_calc_trade_signals.send(signal).unwrap(),
+                None => {}
             }
-        };
+        }
+    };
     let trade_signals = move || {
+        let two_top_intersection = TwoTopIntersection::new(two_top_strategy_trade);
         let mut history_port = HistoryPort::new_and_connect();
         let trading = bybit::TradingHttpDebug::new_from_envs();
         loop {
@@ -137,64 +240,50 @@ fn trade() {
                 signal.high_value,
                 last_ticker.data_last_price
             );
-            let order = trading
-                .place_market_order(0.0, symbol_trade.as_str(), "Buy")
-                .unwrap();
-            let n = 10;
-            log::info!("wait {} tickers for price move", n);
-            // TODO: think about how and when to start looking for closing an order
-            for _ in 0..n {
-                rx_tickers_trade_signals.recv().unwrap();
-            }
-            let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
-            let trailing_rel_val = 0.5;
-            let mut trailing_threshold = None;
+            let order = {
+                let mut o = trading
+                    .place_market_order(0.0, symbol_trade.as_str(), "Buy")
+                    .unwrap();
+                // NOTE: debut-purpose
+                o.avg_fill_price = last_ticker.data_last_price;
+                o
+            };
+            let mut threshold = TrailingThreshold::new_and_wait_n_ticks(
+                &rx_tickers_trade_signals,
+                order.avg_fill_price,
+            );
             loop {
                 let ticker = rx_tickers_trade_signals.recv().unwrap();
-                let bottom_threshold =
-                    order.avg_fill_price * (1.0 - stop_loss_rel_val);
-                if ticker.data_last_price <= bottom_threshold {
-                    TwoTopIntersection::log_hist(
-                        &mut history_port,
-                        "reach-stop-loss",
-                        bottom_threshold,
-                        &order,
-                        &ticker,
-                    );
-                    trading
-                        .place_market_order(0.0, symbol_trade.as_str(), "Sell")
-                        .unwrap();
-                    break;
+                let decision_out = threshold.apply_and_make_decision(&ticker);
+                match decision_out.reason {
+                    Reason::ReachStopLoss => {
+                        two_top_intersection.log_hist(
+                            &mut history_port,
+                            "reach-stop-loss",
+                            decision_out.bottom_threshold,
+                            &order,
+                            &ticker,
+                        );
+                        trading
+                            .place_market_order(0.0, symbol_trade.as_str(), "Sell")
+                            .unwrap();
+                        break;
+                    }
+                    Reason::ReachThrailingStop => {
+                        two_top_intersection.log_hist(
+                            &mut history_port,
+                            "reach-trailing-stop",
+                            decision_out.trailing_threshold,
+                            &order,
+                            &ticker,
+                        );
+                        trading
+                            .place_market_order(0.0, symbol_trade.as_str(), "Sell")
+                            .unwrap();
+                        break;
+                    }
+                    _ => {}
                 }
-                if ticker.data_last_price <= order.avg_fill_price {
-                    continue;
-                }
-                let next_threshold = f64::max(
-                    order.avg_fill_price
-                        + (ticker.data_last_price - order.avg_fill_price)
-                            * trailing_rel_val,
-                    trailing_threshold.unwrap_or(0.0),
-                );
-                if trailing_threshold.is_none() {
-                    log::debug!("initialize threshold with {}", next_threshold);
-                    trailing_threshold = Some(next_threshold);
-                    continue;
-                }
-                if ticker.data_last_price < trailing_threshold.unwrap() {
-                    TwoTopIntersection::log_hist(
-                        &mut history_port,
-                        "reach-trailing-stop",
-                        trailing_threshold.unwrap(),
-                        &order,
-                        &ticker,
-                    );
-                    trading
-                        .place_market_order(0.0, symbol_trade.as_str(), "Sell")
-                        .unwrap();
-                    break;
-                }
-                log::debug!("moving threshold to new pos {}", next_threshold);
-                trailing_threshold = Some(next_threshold);
             }
         }
     };
@@ -264,7 +353,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Candle, TwoTopIntersection};
+    use super::{Candle, TwoTopIntersection, TwoTopStrategy};
 
     fn create_candle(high: f64) -> Candle {
         Candle {
@@ -287,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_2top_intersects_expected_behaviour() {
-        let mut two_top_intersection = TwoTopIntersection::new();
+        let mut two_top_intersection = TwoTopIntersection::new(TwoTopStrategy::Default);
         two_top_intersection.apply_candle(&create_candle(70_000_f64));
         two_top_intersection.apply_candle(&create_candle(71_000_f64));
         assert_eq!(l_to_str(&two_top_intersection.high_values), "71000");
