@@ -10,6 +10,7 @@ struct TwoTopSignal {
     high_value: f64,
 }
 
+// FIXME: add test for WithSpread
 #[derive(Clone)]
 enum TwoTopStrategy {
     Default,
@@ -121,15 +122,8 @@ struct TrailingThreshold {
     trailing_threshold: Option<f64>,
 }
 
-// FIXME: put rx to struct
 impl TrailingThreshold {
-    fn new_and_wait_n_ticks(rx: &std::sync::mpsc::Receiver<FlatTicker>, start_price: f64) -> Self {
-        let n = 10;
-        log::info!("wait {} tickers for price move", n);
-        // TODO: think about how and when to start looking for closing an order
-        for _ in 0..n {
-            rx.recv().unwrap();
-        }
+    fn new(start_price: f64) -> Self {
         Self {
             trailing_threshold: None,
             start_price,
@@ -171,7 +165,6 @@ impl TrailingThreshold {
 }
 
 fn trade() {
-    // TODO: run prev strategy
     // TODO: run with spread
     // TODO: add telegram notifications
     let symbol = "BTCUSDC".to_string();
@@ -244,14 +237,19 @@ fn trade() {
                 let mut o = trading
                     .place_market_order(0.0, symbol_trade.as_str(), "Buy")
                     .unwrap();
-                // NOTE: debut-purpose
+                // NOTE: debug-purpose
                 o.avg_fill_price = last_ticker.data_last_price;
                 o
             };
-            let mut threshold = TrailingThreshold::new_and_wait_n_ticks(
-                &rx_tickers_trade_signals,
-                order.avg_fill_price,
-            );
+            {
+                let n = 10;
+                log::info!("wait {} tickers for price move", n);
+                // TODO: think about how and when to start looking for closing an order
+                for _ in 0..n {
+                    rx_tickers_trade_signals.recv().unwrap();
+                }
+            };
+            let mut threshold = TrailingThreshold::new(order.avg_fill_price);
             loop {
                 let ticker = rx_tickers_trade_signals.recv().unwrap();
                 let decision_out = threshold.apply_and_make_decision(&ticker);
