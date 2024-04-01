@@ -17,18 +17,20 @@ enum TwoTopStrategy {
     WithSpread,
 }
 
-struct TwoTopIntersection {
+struct TwoTopIntersection<'a> {
+    history_port: Option<&'a mut HistoryPort>,
     strategy: TwoTopStrategy,
     high_values: Vec<f64>,
 }
 
-impl TwoTopIntersection {
-    fn new(strategy: TwoTopStrategy) -> Self {
+impl<'a> TwoTopIntersection<'a> {
+    fn new(strategy: TwoTopStrategy, history_port: Option<&'a mut HistoryPort>) -> Self {
         // XXX: implement aka ring buffer here
         let high_values = Vec::new();
         Self {
             strategy,
             high_values,
+            history_port,
         }
     }
 
@@ -59,8 +61,7 @@ impl TwoTopIntersection {
     }
 
     fn log_hist(
-        &self,
-        port: &mut HistoryPort,
+        &mut self,
         cause: &str,
         threshold: f64,
         order: &bybit::BybitOrder,
@@ -83,10 +84,13 @@ impl TwoTopIntersection {
             profit_rel,
             ticker.data_last_price,
         );
-        port.insert_hist(&hist).unwrap();
+        self.history_port
+            .as_mut()
+            .unwrap()
+            .insert_hist(&hist)
+            .unwrap();
         log::debug!(
-            "close order open_price={} trailing_threshold={} \
-    profit_abs={:.2} profit_rel={:.4}",
+            "close order open_price={} trailing_threshold={} profit_abs={:.2} profit_rel={:.4}",
             order.avg_fill_price,
             threshold,
             profit_abs,
@@ -185,7 +189,7 @@ fn trade() {
         bybit::TradingWs::listen_tickers(on_message, &symbol_receive);
     };
     let calc_signals = move || {
-        let mut two_top_intersection = TwoTopIntersection::new(two_top_strategy_calc);
+        let mut two_top_intersection = TwoTopIntersection::new(two_top_strategy_calc, None);
         let prev_candles =
             CandlesPort::new_and_connect().fetch_last_candles(200, "bybit", symbol_calc.as_str());
         for candle in prev_candles.iter() {
@@ -209,11 +213,11 @@ fn trade() {
         }
     };
     let trade_signals = move || {
-        let two_top_intersection = TwoTopIntersection::new(two_top_strategy_trade);
         let mut history_port = HistoryPort::new_and_connect();
+        let mut two_top_intersection =
+            TwoTopIntersection::new(two_top_strategy_trade, Some(&mut history_port));
         let trading = bybit::TradingHttpDebug::new_from_envs();
         loop {
-            // XXX: use single message(one shot) channels
             let signal = {
                 let mut signal = None;
                 while let Ok(t) = rx_calc_trade_signals.try_recv() {
@@ -256,7 +260,6 @@ fn trade() {
                 match decision_out.reason {
                     Reason::ReachStopLoss => {
                         two_top_intersection.log_hist(
-                            &mut history_port,
                             "reach-stop-loss",
                             decision_out.bottom_threshold,
                             &order,
@@ -269,7 +272,6 @@ fn trade() {
                     }
                     Reason::ReachThrailingStop => {
                         two_top_intersection.log_hist(
-                            &mut history_port,
                             "reach-trailing-stop",
                             decision_out.trailing_threshold,
                             &order,
@@ -374,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_2top_intersects_expected_behaviour() {
-        let mut two_top_intersection = TwoTopIntersection::new(TwoTopStrategy::Default);
+        let mut two_top_intersection = TwoTopIntersection::new(TwoTopStrategy::Default, None);
         two_top_intersection.apply_candle(&create_candle(70_000_f64));
         two_top_intersection.apply_candle(&create_candle(71_000_f64));
         assert_eq!(l_to_str(&two_top_intersection.high_values), "71000");
