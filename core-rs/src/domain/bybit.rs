@@ -361,13 +361,13 @@ mod tests {
 
     #[test]
     fn test_bybit_fetch_balances_signature() {
-        let api_key = std::env::var("BYBIT_API_KEY").unwrap();
-        let api_secret = std::env::var("BYBIT_API_SECRET").unwrap();
+        let api_key = "lala44";
+        let api_secret = "lala77";
         let recv_window = "5000";
         let timestamp = "1710588837615";
         let payload = "";
         let param_str = format!("{}{}{}{}", timestamp, api_key, recv_window, payload);
-        assert_eq!(param_str, "1710588837615HlXHFplHqUg0JAFmtt5000");
+        assert_eq!(param_str, "1710588837615lala445000");
         let signature = {
             let secret = api_secret.as_bytes();
             let mut mac = Hmac::<Sha256>::new_from_slice(secret).unwrap();
@@ -376,15 +376,15 @@ mod tests {
         };
         assert_eq!(
             signature,
-            "bc4a26c8f131e16d7988a3d34cdf91b99180d049a8d46dca6aa548ea47dca97e"
+            "20dc4146a949cff021690fa177630ed713b72b030f397b04a56a204b03c9dd18"
         );
     }
 
     #[test]
     fn test_bybit_place_order_signature() {
         let qty = 100.44;
-        let api_key = std::env::var("BYBIT_API_KEY").unwrap();
-        let api_secret = std::env::var("BYBIT_API_SECRET").unwrap();
+        let api_key = "lala44";
+        let api_secret = "lala77";
         let recv_window = "5000";
         let timestamp = "1710588837615";
         let payload_str = format!(
@@ -394,11 +394,11 @@ mod tests {
         let param_str = format!("{}{}{}{}", timestamp, api_key, recv_window, payload_str);
         assert_eq!(
             param_str.split("{").collect::<Vec<&str>>()[0],
-            "1710588837615HlXHFplHqUg0JAFmtt5000"
+            "1710588837615lala445000"
         );
         assert_eq!(
             param_str,
-            "1710588837615HlXHFplHqUg0JAFmtt5000{\"symbol\": \"BTCUSDC\", \"orderType\": \"Market\", \"side\": \"Buy\", \"orderQty\": \"100.44\"}",
+            "1710588837615lala445000{\"symbol\": \"BTCUSDC\", \"orderType\": \"Market\", \"side\": \"Buy\", \"orderQty\": \"100.44\"}",
         );
         let signature = {
             let secret = api_secret.as_bytes();
@@ -408,7 +408,7 @@ mod tests {
         };
         assert_eq!(
             signature,
-            "8cb3c4b951382ef131a3d715ac7d909bad265ad4a06baf65e892e1faa6197a16"
+            "82f73dd07206485458276de5cca15991d08f3514c8b03de658ede21ba1a93fa7"
         );
     }
 }
