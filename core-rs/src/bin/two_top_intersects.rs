@@ -10,11 +10,23 @@ struct TwoTopSignal {
     high_value: f64,
 }
 
-// FIXME: add test for WithSpread
 #[derive(Clone)]
 enum TwoTopStrategy {
     Default,
     WithSpread,
+}
+
+impl TwoTopStrategy {
+    fn parse_from_env() -> TwoTopStrategy {
+        match std::env::var("TWO_TOP_STRATEGY") {
+            Ok(v) => match v.as_str() {
+                "default" => TwoTopStrategy::Default,
+                "with-spread" => TwoTopStrategy::WithSpread,
+                _ => panic!("invalid strategy"),
+            },
+            Err(_) => panic!("invalid strategy"),
+        }
+    }
 }
 
 struct TwoTopIntersection<'a> {
@@ -48,22 +60,17 @@ impl<'a> TwoTopIntersection<'a> {
     }
 
     fn fire(&mut self, ticker_price: f64) -> Option<TwoTopSignal> {
-        match self.strategy {
-            TwoTopStrategy::Default => self.fire_default(ticker_price),
-            TwoTopStrategy::WithSpread => self.fire_with_spread(ticker_price),
-        }
-    }
-
-    fn fire_default(&mut self, ticker_price: f64) -> Option<TwoTopSignal> {
-        if !self.high_values.is_empty() && ticker_price > *self.high_values.last().unwrap() {
+        let spread_val = match self.strategy {
+            TwoTopStrategy::Default => 0.0,
+            TwoTopStrategy::WithSpread => 300.0, // XXX: calc on hist data
+        };
+        if !self.high_values.is_empty()
+            && ticker_price > *self.high_values.last().unwrap() + spread_val
+        {
             let high_value = self.high_values.pop().unwrap();
             return Some(TwoTopSignal { high_value });
         }
         None
-    }
-
-    fn fire_with_spread(&mut self, _ticker_price: f64) -> Option<TwoTopSignal> {
-        unimplemented!()
     }
 
     fn log_hist(
@@ -176,12 +183,11 @@ impl TrailingThreshold {
 }
 
 fn trade() {
-    // TODO: run with spread
     let symbol = "BTCUSDC".to_string();
     let symbol_receive = symbol.clone();
     let symbol_calc = symbol.clone();
     let symbol_trade = symbol.clone();
-    let two_top_strategy = TwoTopStrategy::Default;
+    let two_top_strategy = TwoTopStrategy::parse_from_env();
     let two_top_strategy_calc = two_top_strategy.clone();
     let two_top_strategy_trade = two_top_strategy.clone();
     let (tx_tickers_calc_signals, rx_tickers_calc_signals) = mpsc::channel();
@@ -410,5 +416,35 @@ mod tests {
         );
         assert!(two_top_intersection.fire(67_000_f64).is_none());
         assert!(two_top_intersection.fire(68_001_f64).is_some());
+    }
+
+    #[test]
+    fn test_2top_intersects_with_spread_positive_behaviour() {
+        let mut two_top_intersection =
+            TwoTopIntersection::new(TwoTopStrategy::WithSpread, None, None);
+        two_top_intersection.apply_candle(&create_candle(70_000_f64));
+        two_top_intersection.apply_candle(&create_candle(71_000_f64));
+        assert_eq!(l_to_str(&two_top_intersection.high_values), "71000");
+        two_top_intersection.apply_candle(&create_candle(70_800_f64));
+        two_top_intersection.apply_candle(&create_candle(70_400_f64));
+        assert_eq!(
+            l_to_str(&two_top_intersection.high_values),
+            "71000,70800,70400"
+        );
+        two_top_intersection.apply_candle(&create_candle(70_600_f64));
+        assert_eq!(
+            l_to_str(&two_top_intersection.high_values),
+            "71000,70800,70600"
+        );
+        two_top_intersection.apply_candle(&create_candle(70_100_f64));
+        two_top_intersection.apply_candle(&create_candle(69000_f64));
+        two_top_intersection.apply_candle(&create_candle(68000_f64));
+        assert_eq!(
+            l_to_str(&two_top_intersection.high_values),
+            "71000,70800,70600,70100,69000,68000"
+        );
+        assert!(two_top_intersection.fire(67_000_f64).is_none());
+        assert!(two_top_intersection.fire(68_299_f64).is_none());
+        assert!(two_top_intersection.fire(68_301_f64).is_some());
     }
 }
