@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 use exchanges_arbitrage::domain::bybit::{self, TradingHttpTrait};
@@ -73,6 +73,7 @@ impl<'a> TwoTopIntersection<'a> {
         &mut self,
         cause: &str,
         threshold: f64,
+        spread: f64,
         order: &bybit::BybitOrder,
         ticker: &FlatTicker,
     ) {
@@ -89,6 +90,7 @@ impl<'a> TwoTopIntersection<'a> {
             &ticker.data_symbol,
             order.avg_fill_price,
             threshold,
+            spread,
             profit_abs,
             profit_rel,
             ticker.data_last_price,
@@ -102,33 +104,18 @@ impl<'a> TwoTopIntersection<'a> {
             "close order open_price={} trailing_threshold={} profit_abs={:.2} profit_rel={:.4}",
             order.avg_fill_price, threshold, profit_abs, profit_rel,
         );
-        self.telegram_port
-            .unwrap()
-            .notify_pretty(m.clone(), strategy_str.to_string());
+        match self.telegram_port {
+            Some(p) => p.notify_pretty(m.clone(), strategy_str.to_string()),
+            _ => {}
+        }
         log::debug!("{}", m);
     }
 }
 
 enum Reason {
     Continue,
-    ReachStopLoss,
-    ReachThrailingStop,
-}
-
-struct DecisionOut {
-    reason: Reason,
-    bottom_threshold: f64,
-    trailing_threshold: f64,
-}
-
-impl DecisionOut {
-    fn new(reason: Reason, bottom_threshold: f64, trailing_threshold: f64) -> Self {
-        Self {
-            reason,
-            bottom_threshold,
-            trailing_threshold,
-        }
-    }
+    ReachStopLoss(f64),
+    ReachThrailingStop(f64),
 }
 
 struct TrailingThreshold {
@@ -144,29 +131,25 @@ impl TrailingThreshold {
         }
     }
 
-    fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> DecisionOut {
+    fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> Reason {
         let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
         let trailing_rel_val = 0.5;
         let bottom_threshold = self.start_price * (1.0 - stop_loss_rel_val);
         if ticker.data_last_price <= bottom_threshold {
-            return DecisionOut::new(Reason::ReachStopLoss, bottom_threshold, 0.0);
+            return Reason::ReachStopLoss(bottom_threshold);
         }
         if ticker.data_last_price <= self.start_price {
-            return DecisionOut::new(Reason::Continue, 0.0, 0.0);
+            return Reason::Continue;
         }
         let next_threshold =
             self.start_price + (ticker.data_last_price - self.start_price) * trailing_rel_val;
         if self.trailing_threshold.is_none() {
             log::debug!("initialize threshold with {}", next_threshold);
             self.trailing_threshold = Some(next_threshold);
-            return DecisionOut::new(Reason::Continue, 0.0, 0.0);
+            return Reason::Continue;
         }
         if ticker.data_last_price < self.trailing_threshold.unwrap() {
-            return DecisionOut::new(
-                Reason::ReachThrailingStop,
-                0.0,
-                self.trailing_threshold.unwrap(),
-            );
+            return Reason::ReachThrailingStop(self.trailing_threshold.unwrap());
         }
         log::debug!(
             "moving threshold to new pos {}, start_price={}",
@@ -174,27 +157,38 @@ impl TrailingThreshold {
             self.start_price
         );
         self.trailing_threshold = Some(next_threshold);
-        return DecisionOut::new(Reason::Continue, 0.0, 0.0);
+        return Reason::Continue;
     }
 }
 
 fn trade() {
     let symbol = "BTCUSDC".to_string();
-    let symbol_receive = symbol.clone();
-    let symbol_calc = symbol.clone();
-    let symbol_trade = symbol.clone();
+    let (symbol_receive, symbol_calc, symbol_trade) =
+        (symbol.clone(), symbol.clone(), symbol.clone());
     let two_top_strategy = TwoTopStrategy::parse_from_env();
-    let two_top_strategy_calc = two_top_strategy.clone();
-    let two_top_strategy_trade = two_top_strategy.clone();
+    let (two_top_strategy_calc, two_top_strategy_trade) =
+        (two_top_strategy.clone(), two_top_strategy.clone());
     let (tx_tickers_calc_signals, rx_tickers_calc_signals) = mpsc::channel();
     let (tx_tickers_trade_signals, rx_tickers_trade_signals) = mpsc::channel();
     let (tx_calc_trade_signals, rx_calc_trade_signals) = mpsc::channel();
+    let spread = Arc::new(Mutex::new(0.0));
+    let (spread_receive, spread_trade) = (spread.clone(), spread.clone());
     let receive_tickers = move || {
-        let on_message = |m: FlatTicker| {
-            tx_tickers_calc_signals.send(m.clone()).unwrap();
-            tx_tickers_trade_signals.send(m).unwrap();
+        let config = bybit::ConfigWs::new(symbol_receive, true, true);
+        let mut order_book = OrderBookCache::new();
+        let on_message = |event: bybit::EventWs| match event {
+            bybit::EventWs::Ticker(ticker) => {
+                tx_tickers_calc_signals.send(ticker.clone()).unwrap();
+                tx_tickers_trade_signals.send(ticker).unwrap();
+            }
+            bybit::EventWs::Depth(depth) => {
+                order_book.apply_orders(depth.update_id, &depth.bids, &depth.asks);
+                if let Some(spread_next) = order_book.calc_spread_abs() {
+                    *spread_receive.lock().unwrap() = spread_next;
+                }
+            }
         };
-        bybit::TradingWs::listen_tickers(on_message, &symbol_receive);
+        bybit::TradingWs::listen_ws(&config, on_message);
     };
     let calc_signals = move || {
         let mut two_top_intersection = TwoTopIntersection::new(two_top_strategy_calc, None, None);
@@ -265,12 +259,12 @@ fn trade() {
             let mut threshold = TrailingThreshold::new(order.avg_fill_price);
             loop {
                 let ticker = rx_tickers_trade_signals.recv().unwrap();
-                let decision_out = threshold.apply_and_make_decision(&ticker);
-                match decision_out.reason {
-                    Reason::ReachStopLoss => {
+                match threshold.apply_and_make_decision(&ticker) {
+                    Reason::ReachStopLoss(bottom_threshold) => {
                         two_top_intersection.log_hist(
                             "reach-stop-loss",
-                            decision_out.bottom_threshold,
+                            bottom_threshold,
+                            *spread_trade.lock().unwrap(),
                             &order,
                             &ticker,
                         );
@@ -279,10 +273,11 @@ fn trade() {
                             .unwrap();
                         break;
                     }
-                    Reason::ReachThrailingStop => {
+                    Reason::ReachThrailingStop(trailing_threshold) => {
                         two_top_intersection.log_hist(
                             "reach-trailing-stop",
-                            decision_out.trailing_threshold,
+                            trailing_threshold,
+                            *spread_trade.lock().unwrap(),
                             &order,
                             &ticker,
                         );

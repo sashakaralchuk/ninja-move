@@ -101,6 +101,7 @@ pub struct HistoryRow {
     created_at: u128,
     commit_hash: String,
     trailing_threshold: f64,
+    spread: f64,
     open_price: f64,
     profit_abs: f64,
     profit_rel: f64,
@@ -115,6 +116,7 @@ impl HistoryRow {
         symbol: &String,
         open_price: f64,
         trailing_threshold: f64,
+        spread: f64,
         profit_abs: f64,
         profit_rel: f64,
         last_price: f64,
@@ -132,6 +134,7 @@ impl HistoryRow {
             created_at,
             commit_hash,
             trailing_threshold,
+            spread,
             open_price,
             profit_abs,
             profit_rel,
@@ -166,7 +169,8 @@ impl HistoryPort {
                 trailing_threshold real NOT NULL,
                 profit_abs real NOT NULL,
                 profit_rel real NOT NULL,
-                last_price real NOT NULL
+                last_price real NOT NULL,
+                spread real NOT NULL
             );
         ",
             )
@@ -177,10 +181,10 @@ impl HistoryPort {
         let query = format!(
             "INSERT INTO public.history_trades
                 (created_at, exchange, symbol, commit_hash, strategy, cause, open_price, \
-                    trailing_threshold, profit_abs, profit_rel, last_price)
+                    trailing_threshold, profit_abs, profit_rel, last_price, spread)
             VALUES {};",
             format!(
-                "(to_timestamp({})::timestamp, '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {}, {})",
+                "(to_timestamp({})::timestamp, '{}','{}','{}','{}','{}',{},{},{},{},{},{})",
                 x.created_at / 1000,
                 x.exchange,
                 x.symbol,
@@ -192,6 +196,7 @@ impl HistoryPort {
                 x.profit_abs,
                 x.profit_rel,
                 x.last_price,
+                x.spread,
             ),
         );
         match self.client.batch_execute(query.as_str()) {

@@ -121,20 +121,20 @@ impl TradingWs {
         let url_obj = Url::parse(URL_WS).unwrap();
         let (mut socket, _response) = connect(url_obj).unwrap();
         if config.listen_depth {
+            log::info!("subscribe to depth stream");
             let subscribe_text = format!(
                 "{{\"op\": \"subscribe\", \"args\": [\"orderbook.200.{}\"]}}",
                 config.symbol,
             );
             socket.write_message(Message::Text(subscribe_text)).unwrap();
-            log::info!("subscribed to depth stream")
         }
         if config.listen_tickers {
+            log::info!("subscribe to tickers stream");
             let subscribe_text = format!(
                 "{{\"op\": \"subscribe\", \"args\": [\"tickers.{}\"]}}",
                 config.symbol
             );
             socket.write_message(Message::Text(subscribe_text)).unwrap();
-            log::info!("subscribed to tickers stream")
         }
         log::info!("start busy loop for {}", config.symbol);
         let mut f = on_message;
