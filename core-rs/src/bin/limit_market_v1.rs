@@ -77,10 +77,8 @@ fn perform() {
         let on_message = |m: binance::Depth| {
             let mut order_book = order_book_arc.lock().unwrap();
             order_book.apply_orders(m.data.u, &m.data.b, &m.data.a);
-            if let (Some(last_bid), Some(last_ask)) =
-                (order_book.get_last_bid(), order_book.get_last_ask())
-            {
-                let market_price = last_bid[0] + (last_ask[0] - last_bid[0]) / 2_f64;
+
+            if let Some(market_price) = order_book.calc_market_price() {
                 let mut last_market_price = last_market_price.lock().unwrap();
                 if *last_market_price == market_price {
                     return;

@@ -200,3 +200,59 @@ impl HistoryPort {
         }
     }
 }
+
+pub struct SpreadRow {
+    exchange: String,
+    symbol: String,
+    value_abs: f64,
+}
+
+impl SpreadRow {
+    pub fn new(exchange: &String, symbol: &String, value_abs: f64) -> Self {
+        Self {
+            exchange: exchange.clone(),
+            symbol: symbol.clone(),
+            value_abs,
+        }
+    }
+}
+
+pub struct SpreadPort {
+    client: Client,
+}
+
+impl SpreadPort {
+    pub fn new_and_connect() -> Self {
+        Self {
+            client: connect_to_postgres(),
+        }
+    }
+
+    pub fn create_table(&mut self) {
+        self.client
+            .batch_execute(
+                "
+            CREATE TABLE IF NOT EXISTS public.spreads (
+                exchange varchar NOT NULL,
+                symbol varchar NOT NULL,
+                value_abs real NOT NULL,
+                created_at TIMESTAMP NOT NULL
+            );
+        ",
+            )
+            .unwrap();
+    }
+
+    pub fn insert_spread(&mut self, x: &SpreadRow) -> Result<(), String> {
+        let query = format!(
+            "INSERT INTO public.spreads
+                (created_at, exchange, symbol, value_abs)
+            VALUES {};",
+            format!("(now(), '{}', '{}', {})", x.exchange, x.symbol, x.value_abs),
+        );
+        match self.client.batch_execute(query.as_str()) {
+            Ok(v) => return Ok(v),
+            Err(error) => return Err(format!("error: {}", error)),
+        }
+    }
+}

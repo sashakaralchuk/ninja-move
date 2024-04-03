@@ -3,7 +3,7 @@ use sha2::Sha256;
 use tungstenite::{connect, Message};
 use url::Url;
 
-use crate::FlatTicker;
+use crate::{FlatDepth, FlatTicker};
 
 const URL_WS: &'static str = "wss://stream.bybit.com/v5/public/spot";
 
@@ -31,6 +31,49 @@ impl RawTicker {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct RawDepthData {
+    pub u: u64,
+    pub a: Vec<[String; 2]>,
+    pub b: Vec<[String; 2]>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RawDepth {
+    pub data: RawDepthData,
+}
+
+impl RawDepth {
+    fn to_flat(&self) -> FlatDepth {
+        FlatDepth {
+            update_id: self.data.u,
+            asks: self.data.a.clone(),
+            bids: self.data.b.clone(),
+        }
+    }
+}
+
+pub enum EventWs {
+    Depth(FlatDepth),
+    Ticker(FlatTicker),
+}
+
+pub struct ConfigWs {
+    symbol: String,
+    listen_depth: bool,
+    listen_tickers: bool,
+}
+
+impl ConfigWs {
+    pub fn new(symbol: String, listen_depth: bool, listen_tickers: bool) -> Self {
+        Self {
+            symbol,
+            listen_depth,
+            listen_tickers,
+        }
+    }
+}
+
 pub struct TradingWs {}
 
 impl TradingWs {
@@ -52,6 +95,58 @@ impl TradingWs {
             let msg_str = msg.to_text().unwrap();
             match serde_json::from_str::<RawTicker>(msg_str) {
                 Ok(o) => on_message(o.to_flat()),
+                Err(_) => {}
+            }
+        }
+    }
+
+    pub fn listen_depth(on_message: impl Fn(RawDepth), symbol: &String) {
+        let url_obj = Url::parse(URL_WS).unwrap();
+        let (mut socket, _response) = connect(url_obj).unwrap();
+        let subscribe_text =
+            format!("{{\"op\": \"subscribe\", \"args\": [\"orderbook.200.{symbol}\"]}}",);
+        socket.write_message(Message::Text(subscribe_text)).unwrap();
+        log::info!("start busy loop for {}", symbol);
+        loop {
+            let msg = socket.read_message().unwrap();
+            let msg_str = msg.to_text().unwrap();
+            match serde_json::from_str::<RawDepth>(msg_str) {
+                Ok(o) => on_message(o),
+                Err(_) => {}
+            }
+        }
+    }
+
+    pub fn listen_ws(config: &ConfigWs, on_message: impl FnMut(EventWs)) {
+        let url_obj = Url::parse(URL_WS).unwrap();
+        let (mut socket, _response) = connect(url_obj).unwrap();
+        if config.listen_depth {
+            let subscribe_text = format!(
+                "{{\"op\": \"subscribe\", \"args\": [\"orderbook.200.{}\"]}}",
+                config.symbol,
+            );
+            socket.write_message(Message::Text(subscribe_text)).unwrap();
+            log::info!("subscribed to depth stream")
+        }
+        if config.listen_tickers {
+            let subscribe_text = format!(
+                "{{\"op\": \"subscribe\", \"args\": [\"tickers.{}\"]}}",
+                config.symbol
+            );
+            socket.write_message(Message::Text(subscribe_text)).unwrap();
+            log::info!("subscribed to tickers stream")
+        }
+        log::info!("start busy loop for {}", config.symbol);
+        let mut f = on_message;
+        loop {
+            let msg = socket.read_message().unwrap();
+            let msg_str = msg.to_text().unwrap();
+            match serde_json::from_str::<RawDepth>(msg_str) {
+                Ok(o) => f(EventWs::Depth(o.to_flat())),
+                Err(_) => {}
+            }
+            match serde_json::from_str::<RawTicker>(msg_str) {
+                Ok(o) => f(EventWs::Ticker(o.to_flat())),
                 Err(_) => {}
             }
         }

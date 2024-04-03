@@ -2,8 +2,10 @@ use std::sync::mpsc;
 use std::thread;
 
 use exchanges_arbitrage::domain::bybit::{self, TradingHttpTrait};
-use exchanges_arbitrage::port::two_top_intersects::{CandlesPort, HistoryPort, HistoryRow};
-use exchanges_arbitrage::{pool, Args, Candle, FlatTicker, TelegramBotPort};
+use exchanges_arbitrage::port::two_top_intersects::{
+    CandlesPort, HistoryPort, HistoryRow, SpreadPort, SpreadRow,
+};
+use exchanges_arbitrage::{pool, Args, Candle, FlatTicker, OrderBookCache, TelegramBotPort};
 
 #[derive(Debug)]
 struct TwoTopSignal {
@@ -60,13 +62,7 @@ impl<'a> TwoTopIntersection<'a> {
     }
 
     fn fire(&mut self, ticker_price: f64) -> Option<TwoTopSignal> {
-        let spread_val = match self.strategy {
-            TwoTopStrategy::Default => 0.0,
-            TwoTopStrategy::WithSpread => 300.0, // XXX: calc on hist data
-        };
-        if !self.high_values.is_empty()
-            && ticker_price > *self.high_values.last().unwrap() + spread_val
-        {
+        if !self.high_values.is_empty() && ticker_price > *self.high_values.last().unwrap() {
             let high_value = self.high_values.pop().unwrap();
             return Some(TwoTopSignal { high_value });
         }
@@ -226,12 +222,9 @@ fn trade() {
     };
     let trade_signals = move || {
         let mut history_port = HistoryPort::new_and_connect();
-        let telegram_port = TelegramBotPort::new_from_envs();
-        let mut two_top_intersection = TwoTopIntersection::new(
-            two_top_strategy_trade,
-            Some(&mut history_port),
-            Some(&telegram_port),
-        );
+        let _telegram_port = TelegramBotPort::new_from_envs();
+        let mut two_top_intersection =
+            TwoTopIntersection::new(two_top_strategy_trade, Some(&mut history_port), None);
         let trading = bybit::TradingHttpDebug::new_from_envs();
         loop {
             let signal = {
@@ -313,47 +306,51 @@ fn trade() {
 fn create_tables() {
     CandlesPort::new_and_connect().create_table();
     HistoryPort::new_and_connect().create_table();
+    SpreadPort::new_and_connect().create_table();
     log::info!("database tables created");
 }
 
 fn listen_save_candles() {
-    // XXX: re-write without useless thread
-    //      p.s. error "expected a closure that implements
-    //      the `Fn` trait, but this closure only implements
-    //      `FnMut`" must be handled
     let symbol = "BTCUSDC".to_string();
-    let symbol_receive = symbol.clone();
-    let symbol_calc = symbol.clone();
-    let (tx, rx) = mpsc::channel();
-    let receive_tickers = move || {
-        let on_message = |m: FlatTicker| {
-            tx.send(m.clone()).unwrap();
-        };
-        bybit::TradingWs::listen_tickers(on_message, &symbol_receive);
-    };
-    let calc_signals = move || {
-        let mut port = CandlesPort::new_and_connect();
-        let mut current_candle = Candle::new_from_ticker(&FlatTicker {
-            ts: 0,
-            data_symbol: symbol_calc,
-            data_last_price: 0.0,
-            exchange: "bybit".to_string(),
-        });
-        loop {
-            let ticker = rx.recv().unwrap();
+    let mut candles_port = CandlesPort::new_and_connect();
+    let mut current_candle = Candle::new_from_ticker(&FlatTicker {
+        ts: 0,
+        data_symbol: symbol.clone(),
+        data_last_price: 0.0,
+        exchange: "bybit".to_string(),
+    });
+    let on_message = |event: bybit::EventWs| match event {
+        bybit::EventWs::Ticker(ticker) => {
             if current_candle.expired() {
                 log::info!("candle expired: {:?}", current_candle);
                 current_candle = Candle::new_from_ticker(&ticker);
-                port.insert_candle(&current_candle).unwrap();
+                candles_port.insert_candle(&current_candle).unwrap();
             } else {
                 current_candle.apply_ticker(&ticker)
             }
         }
+        _ => {}
     };
-    pool(&vec![
-        thread::spawn(receive_tickers),
-        thread::spawn(calc_signals),
-    ]);
+    let config = bybit::ConfigWs::new(symbol, false, true);
+    bybit::TradingWs::listen_ws(&config, on_message);
+}
+
+fn listen_save_spreads() {
+    let symbol = "BTCUSDC".to_string();
+    let mut order_book = OrderBookCache::new();
+    let mut spread_port = SpreadPort::new_and_connect();
+    let on_message = |event: bybit::EventWs| match event {
+        bybit::EventWs::Depth(depth) => {
+            order_book.apply_orders(depth.update_id, &depth.bids, &depth.asks);
+            if let Some(spread_abs) = order_book.calc_spread_abs() {
+                let row = SpreadRow::new(&"bybit".to_string(), &symbol, spread_abs);
+                spread_port.insert_spread(&row).unwrap();
+            }
+        }
+        _ => {}
+    };
+    let config = bybit::ConfigWs::new(symbol.clone(), true, false);
+    bybit::TradingWs::listen_ws(&config, on_message);
 }
 
 fn main() {
@@ -363,6 +360,7 @@ fn main() {
         "trade" => trade(),
         "create-tables" => create_tables(),
         "listen-save-candles" => listen_save_candles(),
+        "listen-save-spreads" => listen_save_spreads(),
         _ => panic!("command not found"),
     }
 }
@@ -418,33 +416,9 @@ mod tests {
         assert!(two_top_intersection.fire(68_001_f64).is_some());
     }
 
-    #[test]
-    fn test_2top_intersects_with_spread_positive_behaviour() {
-        let mut two_top_intersection =
-            TwoTopIntersection::new(TwoTopStrategy::WithSpread, None, None);
-        two_top_intersection.apply_candle(&create_candle(70_000_f64));
-        two_top_intersection.apply_candle(&create_candle(71_000_f64));
-        assert_eq!(l_to_str(&two_top_intersection.high_values), "71000");
-        two_top_intersection.apply_candle(&create_candle(70_800_f64));
-        two_top_intersection.apply_candle(&create_candle(70_400_f64));
-        assert_eq!(
-            l_to_str(&two_top_intersection.high_values),
-            "71000,70800,70400"
-        );
-        two_top_intersection.apply_candle(&create_candle(70_600_f64));
-        assert_eq!(
-            l_to_str(&two_top_intersection.high_values),
-            "71000,70800,70600"
-        );
-        two_top_intersection.apply_candle(&create_candle(70_100_f64));
-        two_top_intersection.apply_candle(&create_candle(69000_f64));
-        two_top_intersection.apply_candle(&create_candle(68000_f64));
-        assert_eq!(
-            l_to_str(&two_top_intersection.high_values),
-            "71000,70800,70600,70100,69000,68000"
-        );
-        assert!(two_top_intersection.fire(67_000_f64).is_none());
-        assert!(two_top_intersection.fire(68_299_f64).is_none());
-        assert!(two_top_intersection.fire(68_301_f64).is_some());
-    }
+    // #[test]
+    // fn test_trailing_threshold_default_positive_behaviour() {}
+
+    // #[test]
+    // fn test_trailing_threshold_with_spread_positive_behaviour() {}
 }

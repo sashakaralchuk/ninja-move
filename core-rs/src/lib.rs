@@ -88,6 +88,21 @@ impl OrderBookCache {
         asks.sort_by(|a, b| a[0].total_cmp(&b[0]));
         return Some(*asks.first().unwrap());
     }
+
+    pub fn calc_market_price(&self) -> Option<f64> {
+        if let (Some(last_bid), Some(last_ask)) = (self.get_last_bid(), self.get_last_ask()) {
+            let market_price = last_bid[0] + (last_ask[0] - last_bid[0]) / 2_f64;
+            return Some(market_price);
+        }
+        None
+    }
+
+    pub fn calc_spread_abs(&self) -> Option<f64> {
+        if let (Some(last_bid), Some(last_ask)) = (self.get_last_bid(), self.get_last_ask()) {
+            return Some(last_ask[0] - last_bid[0]);
+        }
+        None
+    }
 }
 
 /// NOTE: exists to use serde_json::to_string_pretty
@@ -187,6 +202,13 @@ pub struct FlatTicker {
     pub data_symbol: String,
     pub data_last_price: f64,
     pub exchange: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlatDepth {
+    pub update_id: u64,
+    pub asks: Vec<[String; 2]>,
+    pub bids: Vec<[String; 2]>,
 }
 
 #[derive(Debug)]
