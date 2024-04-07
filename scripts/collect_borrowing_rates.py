@@ -1,5 +1,6 @@
 import logging
 import time
+import os
 
 import dotenv
 import pydantic as pc
@@ -111,7 +112,10 @@ def main() -> None:
     rates_port = RatesPort(engine=shared.get_db_engine())
     rates_port.create_table()
     while True:
-        load_and_save_rates(rates_port=rates_port)
+        try:
+            load_and_save_rates(rates_port=rates_port)
+        except:
+            shared.send_telegram_notify(message='fall', action=os.path.basename(__file__))
         secs = 60 * 60
         logger.info(f'wait {secs} secs')
         time.sleep(secs)

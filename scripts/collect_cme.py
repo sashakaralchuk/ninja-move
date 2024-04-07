@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+import os
 
 import dotenv
 import pydantic as pc
@@ -135,7 +136,10 @@ def main():
     candles_port = CandlesPort(engine=shared.get_db_engine())
     candles_port.create_table()
     while True:
-        asyncio.run(fetch_and_save_candles(candles_port=candles_port))
+        try:
+            asyncio.run(fetch_and_save_candles(candles_port=candles_port))
+        except:
+            shared.send_telegram_notify(message='fall', action=os.path.basename(__file__))
         secs = 60 * 30
         logger.info(f'wait {secs} secs')
         time.sleep(secs)
