@@ -138,8 +138,9 @@ def main():
     while True:
         try:
             asyncio.run(fetch_and_save_candles(candles_port=candles_port))
-        except:
-            shared.send_telegram_notify(message='fall', action=os.path.basename(__file__))
+        except Exception as error:
+            logger.error(error, exc_info=True)
+            shared.send_telegram_notify(message='fail', action=os.path.basename(__file__))
         secs = 60 * 30
         logger.info(f'wait {secs} secs')
         time.sleep(secs)
