@@ -2,10 +2,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 use exchanges_arbitrage::domain::bybit::{self, TradingHttpTrait};
-use exchanges_arbitrage::port::two_top_intersects::{
-    CandlesPort, HistoryPort, HistoryRow, SpreadPort, SpreadRow,
+use exchanges_arbitrage::port::two_top_intersects::{CandlesPort, SpreadPort, SpreadRow};
+use exchanges_arbitrage::{
+    pool, Args, Candle, CandleTimeframe, FlatTicker, HistoryPort, HistoryRow, OrderBookCache,
+    TelegramBotPort, TrailingThreshold, TrailingThresholdReason,
 };
-use exchanges_arbitrage::{pool, Args, Candle, FlatTicker, OrderBookCache, TelegramBotPort};
 
 #[derive(Debug)]
 struct TwoTopSignal {
@@ -112,55 +113,6 @@ impl<'a> TwoTopIntersection<'a> {
     }
 }
 
-enum Reason {
-    Continue,
-    ReachStopLoss(f64),
-    ReachThrailingStop(f64),
-}
-
-struct TrailingThreshold {
-    start_price: f64,
-    trailing_threshold: Option<f64>,
-}
-
-impl TrailingThreshold {
-    fn new(start_price: f64) -> Self {
-        Self {
-            trailing_threshold: None,
-            start_price,
-        }
-    }
-
-    fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> Reason {
-        let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
-        let trailing_rel_val = 0.5;
-        let bottom_threshold = self.start_price * (1.0 - stop_loss_rel_val);
-        if ticker.data_last_price <= bottom_threshold {
-            return Reason::ReachStopLoss(bottom_threshold);
-        }
-        if ticker.data_last_price <= self.start_price {
-            return Reason::Continue;
-        }
-        let next_threshold =
-            self.start_price + (ticker.data_last_price - self.start_price) * trailing_rel_val;
-        if self.trailing_threshold.is_none() {
-            log::debug!("initialize threshold with {}", next_threshold);
-            self.trailing_threshold = Some(next_threshold);
-            return Reason::Continue;
-        }
-        if ticker.data_last_price < self.trailing_threshold.unwrap() {
-            return Reason::ReachThrailingStop(self.trailing_threshold.unwrap());
-        }
-        log::debug!(
-            "moving threshold to new pos {}, start_price={}",
-            next_threshold,
-            self.start_price
-        );
-        self.trailing_threshold = Some(next_threshold);
-        return Reason::Continue;
-    }
-}
-
 fn trade() {
     let symbol = "BTCUSDC".to_string();
     let (symbol_receive, symbol_calc, symbol_trade) =
@@ -198,13 +150,14 @@ fn trade() {
             two_top_intersection.apply_candle(&candle)
         }
         let start_ticker = Candle::wait_for_next(&rx_tickers_calc_signals);
-        let mut current_candle = Candle::new_from_ticker(&start_ticker);
+        let mut current_candle =
+            Candle::new_from_ticker(&start_ticker, CandleTimeframe::Minutes(1));
         loop {
             let ticker = rx_tickers_calc_signals.recv().unwrap();
             if current_candle.expired() {
                 log::debug!("candle expired {:?}", current_candle);
                 two_top_intersection.apply_candle(&current_candle);
-                current_candle = Candle::new_from_ticker(&ticker);
+                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
             } else {
                 current_candle.apply_ticker(&ticker)
             }
@@ -260,7 +213,7 @@ fn trade() {
             loop {
                 let ticker = rx_tickers_trade_signals.recv().unwrap();
                 match threshold.apply_and_make_decision(&ticker) {
-                    Reason::ReachStopLoss(bottom_threshold) => {
+                    TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
                         two_top_intersection.log_hist(
                             "reach-stop-loss",
                             bottom_threshold,
@@ -273,7 +226,7 @@ fn trade() {
                             .unwrap();
                         break;
                     }
-                    Reason::ReachThrailingStop(trailing_threshold) => {
+                    TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
                         two_top_intersection.log_hist(
                             "reach-trailing-stop",
                             trailing_threshold,
@@ -308,17 +261,20 @@ fn create_tables() {
 fn listen_save_candles() {
     let symbol = "BTCUSDC".to_string();
     let mut candles_port = CandlesPort::new_and_connect();
-    let mut current_candle = Candle::new_from_ticker(&FlatTicker {
-        ts: 0,
-        data_symbol: symbol.clone(),
-        data_last_price: 0.0,
-        exchange: "bybit".to_string(),
-    });
+    let mut current_candle = Candle::new_from_ticker(
+        &FlatTicker {
+            ts: 0,
+            data_symbol: symbol.clone(),
+            data_last_price: 0.0,
+            exchange: "bybit".to_string(),
+        },
+        CandleTimeframe::Minutes(1),
+    );
     let on_message = |event: bybit::EventWs| match event {
         bybit::EventWs::Ticker(ticker) => {
             if current_candle.expired() {
                 log::info!("candle expired: {:?}", current_candle);
-                current_candle = Candle::new_from_ticker(&ticker);
+                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
                 candles_port.insert_candle(&current_candle).unwrap();
             } else {
                 current_candle.apply_ticker(&ticker)
@@ -362,7 +318,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Candle, TwoTopIntersection, TwoTopStrategy};
+    use super::{Candle, CandleTimeframe, TwoTopIntersection, TwoTopStrategy};
 
     fn create_candle(high: f64) -> Candle {
         Candle {
@@ -373,6 +329,7 @@ mod tests {
             close: 0.0,
             open: 0.0,
             high,
+            timeframe: CandleTimeframe::Minutes(1),
         }
     }
 

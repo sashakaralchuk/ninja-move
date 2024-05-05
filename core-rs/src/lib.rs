@@ -1,3 +1,4 @@
+use postgres::{Client, NoTls};
 use std::collections::HashMap;
 use std::env;
 use std::thread;
@@ -212,6 +213,12 @@ pub struct FlatDepth {
 }
 
 #[derive(Debug)]
+pub enum CandleTimeframe {
+    Hours(u128),
+    Minutes(u128),
+}
+
+#[derive(Debug)]
 pub struct Candle {
     pub exchange: String,
     pub symbol: String,
@@ -220,10 +227,11 @@ pub struct Candle {
     pub close: f64,
     pub high: f64,
     pub low: f64,
+    pub timeframe: CandleTimeframe,
 }
 
 impl Candle {
-    pub fn new_from_ticker(ticker: &FlatTicker) -> Self {
+    pub fn new_from_ticker(ticker: &FlatTicker, timeframe: CandleTimeframe) -> Self {
         Self {
             exchange: ticker.exchange.clone(),
             symbol: ticker.data_symbol.clone(),
@@ -232,6 +240,7 @@ impl Candle {
             close: ticker.data_last_price,
             high: ticker.data_last_price,
             low: ticker.data_last_price,
+            timeframe,
         }
     }
 
@@ -246,8 +255,12 @@ impl Candle {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        let current_start_min = now_millis / 60_000;
-        let candle_start_min = self.open_time / 60_000;
+        let interval_millis = match self.timeframe {
+            CandleTimeframe::Minutes(n) => n * 60 * 1000,
+            CandleTimeframe::Hours(n) => n * 60 * 60 * 1000,
+        };
+        let current_start_min = now_millis / interval_millis;
+        let candle_start_min = self.open_time / interval_millis;
         current_start_min > candle_start_min
     }
 
@@ -269,4 +282,338 @@ impl Candle {
             }
         }
     }
+}
+
+pub fn connect_to_postgres() -> Client {
+    match Client::configure()
+        .host(env::var("POSTGRES_HOST").unwrap().as_str())
+        .port(env::var("POSTGRES_PORT").unwrap().parse::<u16>().unwrap())
+        .user(env::var("POSTGRES_USER").unwrap().as_str())
+        .password(env::var("POSTGRES_PASSWORD").unwrap().as_str())
+        .dbname(env::var("POSTGRES_DBNAME").unwrap().as_str())
+        .connect(NoTls)
+    {
+        Ok(client) => client,
+        Err(error) => panic!("postgres connection error: {}", error),
+    }
+}
+
+pub struct TickersPort {
+    client: Client,
+}
+
+impl TickersPort {
+    pub fn new_and_connect() -> Self {
+        Self {
+            client: connect_to_postgres(),
+        }
+    }
+
+    pub fn create_table(&mut self) {
+        self.client
+            .batch_execute(
+                "
+            CREATE TABLE IF NOT EXISTS public.tickers (
+                exchange varchar NOT NULL,
+                symbol varchar NOT NULL,
+                timestamp TIMESTAMP NOT NULL,
+                last_price real NOT NULL
+            );
+        ",
+            )
+            .unwrap();
+    }
+
+    pub fn insert(&mut self, x: &FlatTicker) -> Result<(), String> {
+        let query = format!(
+            "INSERT INTO public.tickers(exchange, symbol, timestamp, last_price)
+            VALUES {};",
+            format!(
+                "('{}','{}',to_timestamp({})::timestamp,{})",
+                x.exchange,
+                x.data_symbol,
+                x.ts / 1000,
+                x.data_last_price
+            ),
+        );
+        match self.client.batch_execute(query.as_str()) {
+            Ok(v) => return Ok(v),
+            Err(error) => return Err(format!("error: {}", error)),
+        }
+    }
+
+    pub fn remove_on_date(&mut self, date: &chrono::NaiveDate) -> Result<(), String> {
+        let date_str = date.to_string();
+        log::debug!("remove records on {date_str} in public.tickers table",);
+        let query = format!("delete from public.tickers where timestamp::date = '{date_str}';");
+        self.client.batch_execute(query.as_str()).unwrap();
+        Ok(())
+    }
+
+    pub fn insert_batch(&mut self, list: &Vec<FlatTicker>) -> Result<(), String> {
+        let n = 1_000_000;
+        for i in 0..(list.len() / n + 1) {
+            let (j, k) = (i * n, usize::min(i * n + n, list.len()));
+            log::debug!("write [{},{}]", j, k);
+            let values = &list[j..k]
+                .iter()
+                .map(|x| {
+                    format!(
+                        "('{}','{}',to_timestamp({})::timestamp,{})",
+                        x.exchange,
+                        x.data_symbol,
+                        x.ts / 1000,
+                        x.data_last_price
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join(",");
+            let query = format!(
+                "INSERT INTO public.tickers(exchange, symbol, timestamp, last_price)
+                VALUES {values};",
+            );
+            self.client.batch_execute(query.as_str()).unwrap();
+        }
+        Ok(())
+    }
+
+    pub fn fetch(&mut self, start_time_secs: i64, end_time_secs: i64) -> Vec<FlatTicker> {
+        let q = format!(
+            "
+            SELECT exchange, symbol, extract(epoch from timestamp), last_price
+            FROM public.tickers
+            where extract(epoch from timestamp) >= {start_time_secs}
+                and extract(epoch from timestamp) <= {end_time_secs}
+            order by timestamp;
+        "
+        );
+        self.client
+            .query(&q, &[])
+            .unwrap()
+            .iter()
+            .map(|x| FlatTicker {
+                ts: (x.get::<_, f64>(2) * 1000.0) as u128,
+                data_last_price: x.get::<_, f32>(3) as f64,
+                data_symbol: x.get(1),
+                exchange: x.get(0),
+            })
+            .collect()
+    }
+}
+
+pub enum TrailingThresholdReason {
+    Continue,
+    ReachStopLoss(f64),
+    ReachThrailingStop(f64),
+}
+
+#[derive(Copy, Clone)]
+pub struct TrailingThreshold {
+    pub start_price: f64,
+    trailing_threshold: Option<f64>,
+}
+
+impl TrailingThreshold {
+    pub fn new(start_price: f64) -> Self {
+        Self {
+            trailing_threshold: None,
+            start_price,
+        }
+    }
+
+    pub fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> TrailingThresholdReason {
+        let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
+        let trailing_rel_val = 0.5;
+        let bottom_threshold = self.start_price * (1.0 - stop_loss_rel_val);
+        if ticker.data_last_price <= bottom_threshold {
+            return TrailingThresholdReason::ReachStopLoss(bottom_threshold);
+        }
+        if ticker.data_last_price <= self.start_price {
+            return TrailingThresholdReason::Continue;
+        }
+        let next_threshold =
+            self.start_price + (ticker.data_last_price - self.start_price) * trailing_rel_val;
+        if self.trailing_threshold.is_none() {
+            log::debug!("initialize threshold with {}", next_threshold);
+            self.trailing_threshold = Some(next_threshold);
+            return TrailingThresholdReason::Continue;
+        }
+        if ticker.data_last_price < self.trailing_threshold.unwrap() {
+            return TrailingThresholdReason::ReachThrailingStop(self.trailing_threshold.unwrap());
+        }
+        log::debug!(
+            "moving threshold to new pos {}, start_price={}",
+            next_threshold,
+            self.start_price
+        );
+        self.trailing_threshold = Some(next_threshold);
+        return TrailingThresholdReason::Continue;
+    }
+}
+
+pub struct HistoryRow {
+    strategy: String,
+    cause: String,
+    exchange: String,
+    symbol: String,
+    created_at: u128,
+    commit_hash: String,
+    trailing_threshold: f64,
+    spread: f64,
+    open_price: f64,
+    profit_abs: f64,
+    profit_rel: f64,
+    last_price: f64,
+}
+
+impl HistoryRow {
+    pub fn new(
+        strategy: &str,
+        cause: &str,
+        exchange: &String,
+        symbol: &String,
+        open_price: f64,
+        trailing_threshold: f64,
+        spread: f64,
+        profit_abs: f64,
+        profit_rel: f64,
+        last_price: f64,
+    ) -> Self {
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
+        Self {
+            strategy: strategy.to_string(),
+            cause: cause.to_string(),
+            exchange: exchange.clone(),
+            symbol: symbol.clone(),
+            created_at,
+            commit_hash,
+            trailing_threshold,
+            spread,
+            open_price,
+            profit_abs,
+            profit_rel,
+            last_price,
+        }
+    }
+}
+
+pub struct HistoryPort {
+    client: Client,
+}
+
+impl HistoryPort {
+    pub fn new_and_connect() -> Self {
+        Self {
+            client: connect_to_postgres(),
+        }
+    }
+
+    pub fn create_table(&mut self) {
+        self.client
+            .batch_execute(
+                "
+            CREATE TABLE IF NOT EXISTS history_trades (
+                created_at TIMESTAMP NOT NULL,
+                exchange varchar NOT NULL,
+                symbol varchar NOT NULL,
+                commit_hash varchar NOT NULL,
+                strategy varchar NOT NULL,
+                cause varchar NOT NULL,
+                open_price real NOT NULL,
+                trailing_threshold real NOT NULL,
+                profit_abs real NOT NULL,
+                profit_rel real NOT NULL,
+                last_price real NOT NULL,
+                spread real NOT NULL
+            );
+        ",
+            )
+            .unwrap();
+    }
+
+    pub fn insert_hist(&mut self, x: &HistoryRow) -> Result<(), String> {
+        let query = format!(
+            "INSERT INTO public.history_trades
+                (created_at, exchange, symbol, commit_hash, strategy, cause, open_price, \
+                    trailing_threshold, profit_abs, profit_rel, last_price, spread)
+            VALUES {};",
+            format!(
+                "(to_timestamp({})::timestamp, '{}','{}','{}','{}','{}',{},{},{},{},{},{})",
+                x.created_at / 1000,
+                x.exchange,
+                x.symbol,
+                x.commit_hash,
+                x.strategy,
+                x.cause,
+                x.open_price,
+                x.trailing_threshold,
+                x.profit_abs,
+                x.profit_rel,
+                x.last_price,
+                x.spread,
+            ),
+        );
+        match self.client.batch_execute(query.as_str()) {
+            Ok(v) => return Ok(v),
+            Err(error) => return Err(format!("error: {}", error)),
+        }
+    }
+}
+
+mod test {
+    use crate::{Candle, CandleTimeframe, FlatTicker};
+
+    fn create_ticker(ts: u128) -> FlatTicker {
+        FlatTicker {
+            data_symbol: "".to_string(),
+            data_last_price: 0.0,
+            exchange: "".to_string(),
+            ts,
+        }
+    }
+
+    #[test]
+    fn test_candle_1m_timeframe() {
+        let start_millis = 1714893673378;
+        let mut tickers = vec![];
+        for i in 0..(3 * 60 * 60 * 1000) {
+            tickers.push(create_ticker(start_millis + i));
+        }
+        let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+        let mut candles = vec![];
+        assert_eq(tickers.len(), 10800000);
+        for ticker in tickers {
+            if current_candle.expired() {
+                candles.push(current_candle);
+                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+            } else {
+                current_candle.apply_ticker(&ticker)
+            }
+        }
+        assert_eq!(candles.len(), 1306623);
+    }
+
+    // #[test]
+    // fn test_candle_1h_timeframe() {
+    //     let start_millis = 1714893673378;
+    //     let mut tickers = vec![];
+    //     for i in 0..(3 * 60 * 60 * 1000) {
+    //         tickers.push(create_ticker(start_millis + i));
+    //     }
+    //     let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Hours(1));
+    //     let mut candles = vec![];
+    //     for ticker in tickers {
+    //         if current_candle.expired() {
+    //             candles.push(current_candle);
+    //             current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
+    //         } else {
+    //             current_candle.apply_ticker(&ticker)
+    //         }
+    //     }
+    //     assert_eq!(candles.len(), 4);
+    // }
 }

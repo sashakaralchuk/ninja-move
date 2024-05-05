@@ -41,6 +41,18 @@ test-bybit-domain:
 run-trade-emas:
 	${env_vars} cargo run --bin trade_emas -- --command draw-graph
 
+run-trade-emas-collect-bybit-tickers:
+	${env_vars} cargo run --bin trade_emas -- --command collect-bybit-tickers
+
+run-trade-emas-backtest:
+	${env_vars} cargo run --bin trade_emas -- --command run-backtest
+
+run-trade-upload-tickers-to-database:
+	${env_vars} cargo run --bin trade_emas -- --command upload-tickers-to-database
+
+run-trade-show-2024-04-07-candles:
+	${env_vars} cargo run --bin trade_emas -- --command show-2024-04-07-candles
+
 test:
 	${env_vars} cargo test
 

@@ -1,20 +1,5 @@
-use crate::Candle;
-use postgres::{Client, NoTls};
-use std::env;
-
-fn connect_to_postgres() -> Client {
-    match Client::configure()
-        .host(env::var("POSTGRES_HOST").unwrap().as_str())
-        .port(env::var("POSTGRES_PORT").unwrap().parse::<u16>().unwrap())
-        .user(env::var("POSTGRES_USER").unwrap().as_str())
-        .password(env::var("POSTGRES_PASSWORD").unwrap().as_str())
-        .dbname(env::var("POSTGRES_DBNAME").unwrap().as_str())
-        .connect(NoTls)
-    {
-        Ok(client) => client,
-        Err(error) => panic!("postgres connection error: {}", error),
-    }
-}
+use crate::{connect_to_postgres, Candle, CandleTimeframe};
+use postgres::Client;
 
 pub struct CandlesPort {
     client: Client,
@@ -87,122 +72,10 @@ impl CandlesPort {
                 low: row.get::<_, f32>(4) as f64,
                 open: row.get::<_, f32>(5) as f64,
                 close: row.get::<_, f32>(6) as f64,
+                timeframe: CandleTimeframe::Hours(1),
             });
         }
         out
-    }
-}
-
-pub struct HistoryRow {
-    strategy: String,
-    cause: String,
-    exchange: String,
-    symbol: String,
-    created_at: u128,
-    commit_hash: String,
-    trailing_threshold: f64,
-    spread: f64,
-    open_price: f64,
-    profit_abs: f64,
-    profit_rel: f64,
-    last_price: f64,
-}
-
-impl HistoryRow {
-    pub fn new(
-        strategy: &str,
-        cause: &str,
-        exchange: &String,
-        symbol: &String,
-        open_price: f64,
-        trailing_threshold: f64,
-        spread: f64,
-        profit_abs: f64,
-        profit_rel: f64,
-        last_price: f64,
-    ) -> Self {
-        let created_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
-        Self {
-            strategy: strategy.to_string(),
-            cause: cause.to_string(),
-            exchange: exchange.clone(),
-            symbol: symbol.clone(),
-            created_at,
-            commit_hash,
-            trailing_threshold,
-            spread,
-            open_price,
-            profit_abs,
-            profit_rel,
-            last_price,
-        }
-    }
-}
-
-pub struct HistoryPort {
-    client: Client,
-}
-
-impl HistoryPort {
-    pub fn new_and_connect() -> Self {
-        Self {
-            client: connect_to_postgres(),
-        }
-    }
-
-    pub fn create_table(&mut self) {
-        self.client
-            .batch_execute(
-                "
-            CREATE TABLE IF NOT EXISTS history_trades (
-                created_at TIMESTAMP NOT NULL,
-                exchange varchar NOT NULL,
-                symbol varchar NOT NULL,
-                commit_hash varchar NOT NULL,
-                strategy varchar NOT NULL,
-                cause varchar NOT NULL,
-                open_price real NOT NULL,
-                trailing_threshold real NOT NULL,
-                profit_abs real NOT NULL,
-                profit_rel real NOT NULL,
-                last_price real NOT NULL,
-                spread real NOT NULL
-            );
-        ",
-            )
-            .unwrap();
-    }
-
-    pub fn insert_hist(&mut self, x: &HistoryRow) -> Result<(), String> {
-        let query = format!(
-            "INSERT INTO public.history_trades
-                (created_at, exchange, symbol, commit_hash, strategy, cause, open_price, \
-                    trailing_threshold, profit_abs, profit_rel, last_price, spread)
-            VALUES {};",
-            format!(
-                "(to_timestamp({})::timestamp, '{}','{}','{}','{}','{}',{},{},{},{},{},{})",
-                x.created_at / 1000,
-                x.exchange,
-                x.symbol,
-                x.commit_hash,
-                x.strategy,
-                x.cause,
-                x.open_price,
-                x.trailing_threshold,
-                x.profit_abs,
-                x.profit_rel,
-                x.last_price,
-                x.spread,
-            ),
-        );
-        match self.client.batch_execute(query.as_str()) {
-            Ok(v) => return Ok(v),
-            Err(error) => return Err(format!("error: {}", error)),
-        }
     }
 }
 

@@ -7,6 +7,11 @@ fn main() {
         "download-trades" => download_trades::main(),
         "agg-trades" => agg_trades::main(),
         "draw-graph" => draw_graph::main(None),
+        "collect-bybit-tickers" => trade::collect_bybit_tickers(),
+        "run-backtest" => trade::run_backtest(),
+        "read-calc-write-emas" => trade::read_calc_write_emas(),
+        "upload-tickers-to-database" => trade::upload_tickers_to_database(),
+        "show-2024-04-07-candles" => trade::show_2024_04_07_candles(),
         _ => panic!("command not found"),
     }
 }
@@ -29,9 +34,7 @@ mod download_trades {
         str::FromStr,
     };
 
-    use polars::prelude::{
-        CsvReader, CsvWriter, DataFrame, SerReader, SerWriter,
-    };
+    use polars::prelude::{CsvReader, CsvWriter, DataFrame, SerReader, SerWriter};
 
     #[derive(serde::Deserialize)]
     struct ResTradesDataDownloadItem {
@@ -73,9 +76,7 @@ mod download_trades {
                 .header("content-type", "application/json")
                 .send()
                 .unwrap();
-            let res_body =
-                serde_json::from_str::<ResTrades>(&res.text().unwrap())
-                    .unwrap();
+            let res_body = serde_json::from_str::<ResTrades>(&res.text().unwrap()).unwrap();
             assert!(res_body.success);
             assert_eq!(res_body.data.downloadItemList.len(), 1);
             res_body.data.downloadItemList[0].url.clone()
@@ -114,8 +115,7 @@ mod download_trades {
             Ok(_) => log::info!("dir {} already exists", dir_path),
             Err(e) => log::info!("e: {:?}", e),
         }
-        let mut current_date =
-            chrono::NaiveDate::from_str("2023-08-01").unwrap();
+        let mut current_date = chrono::NaiveDate::from_str("2023-08-01").unwrap();
         let end_date: chrono::NaiveDate = chrono::Utc::now().naive_utc().into();
         while current_date < end_date {
             let date_str = current_date.to_string();
@@ -145,9 +145,9 @@ mod agg_trades {
             .sort(["time"], false, true)
             .unwrap()
             .lazy()
-            .with_columns([(col("time").cast(DataType::UInt64) / lit(60_000)
-                * lit(60_000))
-            .alias("time_1m")])
+            .with_columns([
+                (col("time").cast(DataType::UInt64) / lit(60_000) * lit(60_000)).alias("time_1m"),
+            ])
             .group_by([col("time_1m")])
             .agg([
                 col("price").last().alias("close"),
@@ -248,8 +248,7 @@ mod draw_graph {
             ("2019-03-15", 115.34, 117.25, 114.59, 115.91),
             ("2019-03-14", 114.54, 115.2, 114.33, 114.59),
         ];
-        let root =
-            BitMapBackend::new(".var/0.png", (1024, 768)).into_drawing_area();
+        let root = BitMapBackend::new(".var/0.png", (1024, 768)).into_drawing_area();
         root.fill(&WHITE).unwrap();
         let (max_x, min_x) = (
             parse_time(data[0].0) + chrono::TimeDelta::try_days(1).unwrap(),
@@ -269,16 +268,7 @@ mod draw_graph {
             .unwrap();
         chart
             .draw_series(data.iter().map(|x| {
-                CandleStick::new(
-                    parse_time(x.0),
-                    x.1,
-                    x.2,
-                    x.3,
-                    x.4,
-                    GREEN.filled(),
-                    RED,
-                    15,
-                )
+                CandleStick::new(parse_time(x.0), x.1, x.2, x.3, x.4, GREEN.filled(), RED, 15)
             }))
             .unwrap();
         chart
@@ -290,5 +280,377 @@ mod draw_graph {
             ))
             .unwrap();
         root.present().unwrap();
+    }
+}
+
+mod trade {
+    use exchanges_arbitrage::{
+        domain::bybit, Candle, CandleTimeframe, FlatTicker, HistoryPort, HistoryRow, TickersPort,
+        TrailingThreshold, TrailingThresholdReason,
+    };
+
+    struct RingBuffer {
+        p: i32,
+        list: Vec<f64>,
+    }
+
+    impl RingBuffer {
+        fn new(size: usize) -> Self {
+            let mut list = Vec::with_capacity(size);
+            unsafe {
+                list.set_len(size);
+            }
+            Self { p: -1, list }
+        }
+
+        fn add(&mut self, n: f64) {
+            let i = (self.p + 1) % self.list.len() as i32;
+            self.p = i;
+            self.list[i as usize] = n;
+        }
+
+        fn all(&self) -> Vec<f64> {
+            let mut out = vec![];
+            let mut i = (self.p + 1) % self.list.len() as i32;
+            for _ in 0..self.list.len() {
+                out.push(self.list[i as usize]);
+                i = (i + 1) % self.list.len() as i32;
+            }
+            out.into_iter().filter(|x| *x != 0.0).collect()
+        }
+    }
+
+    /// Calcs the same way as pd.Series(...).ewm(span=len, adjust=False).mean()
+    fn calc_emas(prices: &Vec<f64>, len: i32) -> Vec<f64> {
+        let len_f64 = len as f64;
+        let smoothing = 2.0;
+        let mut emas = vec![prices[0]];
+        for i in 1..prices.len() {
+            let k = smoothing / (1.0 + len_f64);
+            let ema = prices[i] * k + *emas.last().unwrap() * (1.0 - k);
+            emas.push(ema);
+        }
+        emas
+    }
+
+    struct StrategySignal {}
+
+    impl StrategySignal {
+        fn new() -> Self {
+            Self {}
+        }
+    }
+
+    struct Strategy {
+        ema_len: usize,
+        prices_len: usize,
+        prices: RingBuffer,
+    }
+
+    impl Strategy {
+        fn new() -> Self {
+            let ema_len = 12;
+            let prices_len = ema_len + 30; // 12 means ema(12)
+            Self {
+                prices: RingBuffer::new(prices_len),
+                ema_len,
+                prices_len,
+            }
+        }
+
+        fn apply_candle(&mut self, candle: &Candle) {
+            self.prices.add(candle.close);
+        }
+
+        fn fire(&self, ticker: &FlatTicker) -> Option<StrategySignal> {
+            let prices = self.prices.all();
+            if prices.len() < self.prices_len {
+                return None;
+            }
+            let ema = *calc_emas(&prices, self.ema_len as i32).last().unwrap();
+            let eps = 0.001;
+            let p = ticker.data_last_price;
+            if p - p * eps <= ema && ema <= p + p * eps {
+                return Some(StrategySignal::new());
+            }
+            None
+        }
+    }
+
+    struct BacktestOut {
+        // FIXME: add start and end times + save them in table
+        start_price: f64,
+        close_price: f64,
+        reason: String,
+    }
+
+    impl BacktestOut {
+        fn new(start_price: f64, close_price: f64, reason: String) -> Self {
+            Self {
+                start_price,
+                close_price,
+                reason,
+            }
+        }
+
+        fn log_hist(history_port: &mut HistoryPort, backtests: &Vec<BacktestOut>) {
+            // FIXME: write hist based on 2 entities - SignalStrategy, SellStrategy
+            for backtest in backtests.iter() {
+                let x = HistoryRow::new(
+                    "backtest-ema-TODO",
+                    backtest.reason.as_str(),
+                    &"bybit".to_string(),
+                    &"BTCUSDT".to_string(),
+                    backtest.start_price,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    backtest.close_price,
+                );
+                history_port.insert_hist(&x).unwrap();
+            }
+        }
+    }
+
+    pub fn collect_bybit_tickers() {
+        let mut tickers_port = TickersPort::new_and_connect();
+        tickers_port.create_table();
+        let config = bybit::ConfigWs::new("BTCUSDT".to_string(), false, true);
+        let on_message = |event: bybit::EventWs| match event {
+            bybit::EventWs::Ticker(ticker) => tickers_port.insert(&ticker).unwrap(),
+            _ => {}
+        };
+        bybit::TradingWs::listen_ws(&config, on_message);
+    }
+
+    /// Reads, sorts in asc and uploads all available tickets from
+    /// .var/binance-local/spot/trades/1m/BTCUSDT/* to database table
+    pub fn upload_tickers_to_database() {
+        let start_date = chrono::NaiveDate::parse_from_str("2024-04-08", "%Y-%m-%d").unwrap();
+        let end_date = chrono::Utc::now().date_naive() - chrono::Duration::try_days(1).unwrap();
+        let mut date = start_date.clone();
+        let mut tickers_port = TickersPort::new_and_connect();
+        while date <= end_date {
+            log::info!("{:?}", date);
+            let date_str = date.to_string();
+            let filepath = format!(
+                "/Users/yy/dev/python/ninja-move/jupy/.var/binance-local/\
+                spot/trades/1m/BTCUSDT/BTCUSDT-trades-{date_str}.csv"
+            );
+            log::info!("read file {filepath}");
+            let mut tickers = csv::Reader::from_path(filepath)
+                .unwrap()
+                .records()
+                .map(|x| {
+                    let record = x.unwrap();
+                    let ts = record.get(4).unwrap().parse::<u128>().unwrap();
+                    let data_symbol = "BTCUSDT".to_string();
+                    let data_last_price = record.get(1).unwrap().parse::<f64>().unwrap();
+                    let exchange = "binance".to_string();
+                    FlatTicker {
+                        ts,
+                        data_symbol,
+                        data_last_price,
+                        exchange,
+                    }
+                })
+                .collect::<Vec<FlatTicker>>()
+                .to_vec();
+            tickers.sort_by(|a, b| a.ts.cmp(&b.ts));
+            log::info!("remove prev tickers");
+            tickers_port.remove_on_date(&date).unwrap();
+            log::info!("insert {} tickers", tickers.len());
+            tickers_port.insert_batch(&tickers).unwrap();
+            date += chrono::Duration::try_days(1).unwrap();
+        }
+    }
+
+    pub fn show_2024_04_07_candles() {
+        let start_time =
+            chrono::NaiveDateTime::parse_from_str("2024-04-07 00:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        let end_time = start_time + chrono::Duration::try_days(1).unwrap();
+        log::info!("start_time={}, end_time={}", start_time, end_time);
+        let mut tickers_port = TickersPort::new_and_connect();
+        let tickers = tickers_port.fetch(
+            start_time.and_utc().timestamp(),
+            end_time.and_utc().timestamp(),
+        );
+        log::info!("there are {} tickers", tickers.len());
+        log::info!("{:?}", tickers[0]);
+        let candles = {
+            let interval_1h_millis = 60 * 60 * 1000;
+            let mut out = vec![];
+            let mut threshold_ts = tickers[0].ts + interval_1h_millis;
+            let mut current_candle =
+                Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+            for ticker in tickers.iter() {
+                if ticker.ts < threshold_ts {
+                    current_candle.apply_ticker(&ticker);
+                } else {
+                    out.push(current_candle);
+                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+                    threshold_ts += interval_1h_millis;
+                }
+            }
+            out
+        };
+        log::info!("there are {} candles", candles.len());
+    }
+
+    pub fn run_trading() {}
+
+    pub fn run_backtest() {
+        let start_time =
+            chrono::NaiveDateTime::parse_from_str("2024-04-07 17:45:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        let end_time =
+            chrono::NaiveDateTime::parse_from_str("2024-04-08 17:45:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        let trading_start_time =
+            chrono::NaiveDateTime::parse_from_str("2024-04-07 18:15:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap();
+        let mut tickers_port = TickersPort::new_and_connect();
+        let tickers = tickers_port.fetch(
+            start_time.and_utc().timestamp(),
+            end_time.and_utc().timestamp(),
+        );
+        let mut hist_tickers = vec![];
+        let mut backtest_tickers = vec![];
+        for ticker in tickers.iter() {
+            if ticker.ts <= (trading_start_time.and_utc().timestamp_millis() as u128) {
+                hist_tickers.push(ticker.clone());
+            } else {
+                backtest_tickers.push(ticker.clone())
+            }
+        }
+        log::info!(
+            "run test hist_tickers.len={} backtest_tickers.len={}",
+            hist_tickers.len(),
+            backtest_tickers.len(),
+        );
+        // TODO: immediate aim - run with some configuration, than configurize it and run remaining
+        // TODO: clarify that candles forms proper
+        // TODO: calc "strength" on candles in strategy
+        // TODO: run backtest, including (timestamp, open_price, sell_price)
+        // TODO: render backtest results
+        // TODO: re-check config - candles timeframes
+        let hist_candles = {
+            let interval_1h_millis = 60 * 60 * 1000;
+            let mut out = vec![];
+            let mut threshold_ts = hist_tickers[0].ts + interval_1h_millis;
+            let mut current_candle =
+                Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Minutes(1));
+            for ticker in hist_tickers.iter() {
+                if ticker.ts <= threshold_ts {
+                    current_candle.apply_ticker(&ticker);
+                } else {
+                    out.push(current_candle);
+                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+                    threshold_ts = ticker.ts;
+                }
+            }
+            out
+        };
+        let mut strategy = Strategy::new();
+        for candle in hist_candles {
+            strategy.apply_candle(&candle);
+        }
+        // FIXME: is it 1h candle?
+        // TODO: look to the ticker ticker time
+        // TODO: name ticker val with postfix secs, millis
+        let mut current_candle =
+            Candle::new_from_ticker(&backtest_tickers[0], CandleTimeframe::Minutes(1));
+        let mut backtests = vec![];
+        let mut threshold: Option<TrailingThreshold> = None;
+        for ticker in backtest_tickers {
+            if current_candle.expired() {
+                log::debug!("candle expired {:?}", current_candle);
+                strategy.apply_candle(&current_candle);
+                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+            } else {
+                current_candle.apply_ticker(&ticker)
+            }
+            match threshold {
+                Some(mut t) => match t.apply_and_make_decision(&ticker) {
+                    TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
+                        backtests.push(BacktestOut::new(
+                            t.start_price,
+                            bottom_threshold,
+                            "reach-stop-loss".to_string(),
+                        ));
+                        threshold = None;
+                    }
+                    TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
+                        backtests.push(BacktestOut::new(
+                            t.start_price,
+                            trailing_threshold,
+                            "reach-thrailing-stop".to_string(),
+                        ));
+                        threshold = None;
+                    }
+                    _ => {}
+                },
+                None => match strategy.fire(&ticker) {
+                    Some(_) => {
+                        threshold = Some(TrailingThreshold::new(ticker.data_last_price));
+                    }
+                    None => {}
+                },
+            }
+        }
+        log::info!("save backtest");
+        // let mut history_port = HistoryPort::new_and_connect();
+        // history_port.create_table();
+        // BacktestOut::log_hist(&mut history_port, &backtests)
+    }
+
+    #[derive(serde::Deserialize)]
+    struct DebugClosePrices {
+        close_prices: Vec<f64>,
+    }
+
+    pub fn read_calc_write_emas() {
+        let input_file_path =
+            "/Users/yy/dev/python/ninja-move/jupy/.var/close-prices-2024-04-08.json";
+        let output_file_path = "/Users/yy/dev/python/ninja-move/jupy/.var/emas-2024-04-08.json";
+        let input_str = std::fs::read_to_string(input_file_path).unwrap();
+        let input_prices = serde_json::from_str::<DebugClosePrices>(&input_str)
+            .unwrap()
+            .close_prices;
+        let emas = calc_emas(&input_prices, 12);
+        let emas_str = serde_json::json!({"emas": emas}).to_string();
+        std::fs::write(output_file_path, emas_str).unwrap();
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::trade::RingBuffer;
+
+        fn l_to_str(l: &Vec<f64>) -> String {
+            l.iter()
+                .map(|&v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+
+        #[test]
+        fn test_use_ring_buffer() {
+            let mut ring_buffer = RingBuffer::new(3);
+            assert_eq!(ring_buffer.p, -1);
+            ring_buffer.add(10.0);
+            assert_eq!(ring_buffer.p, 0);
+            assert_eq!(l_to_str(&ring_buffer.all()), "10");
+            ring_buffer.add(20.0);
+            assert_eq!(ring_buffer.p, 1);
+            assert_eq!(l_to_str(&ring_buffer.all()), "10,20");
+            ring_buffer.add(30.0);
+            assert_eq!(ring_buffer.p, 2);
+            assert_eq!(l_to_str(&ring_buffer.all()), "10,20,30");
+            ring_buffer.add(40.0);
+            assert_eq!(ring_buffer.p, 0);
+            assert_eq!(l_to_str(&ring_buffer.all()), "20,30,40");
+        }
     }
 }
