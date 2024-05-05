@@ -262,12 +262,13 @@ fn listen_save_candles() {
     let symbol = "BTCUSDC".to_string();
     let mut candles_port = CandlesPort::new_and_connect();
     let mut current_candle = Candle::new_from_ticker(
-        &FlatTicker {
-            ts: 0,
-            data_symbol: symbol.clone(),
-            data_last_price: 0.0,
-            exchange: "bybit".to_string(),
-        },
+        &FlatTicker::new_with_millis(
+            chrono::Utc::now().timestamp() as u128,
+            symbol.as_str(),
+            0.0,
+            "bybit",
+        )
+        .unwrap(),
         CandleTimeframe::Minutes(1),
     );
     let on_message = |event: bybit::EventWs| match event {

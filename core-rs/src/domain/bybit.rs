@@ -23,7 +23,7 @@ struct RawTicker {
 impl RawTicker {
     fn to_flat(&self) -> FlatTicker {
         FlatTicker {
-            ts: self.ts,
+            ts_millis: self.ts,
             data_symbol: self.data.symbol.clone(),
             data_last_price: self.data.lastPrice.parse::<f64>().unwrap(),
             exchange: "bybit".to_string(),

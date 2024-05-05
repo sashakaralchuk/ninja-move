@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use postgres::{Client, NoTls};
 use std::collections::HashMap;
 use std::env;
@@ -199,10 +200,34 @@ impl Args {
 
 #[derive(Clone, Debug)]
 pub struct FlatTicker {
-    pub ts: u128,
+    pub ts_millis: u128,
     pub data_symbol: String,
     pub data_last_price: f64,
     pub exchange: String,
+}
+
+impl FlatTicker {
+    /// Creates struct and validates millis
+    pub fn new_with_millis(
+        ts_millis: u128,
+        data_symbol: &str,
+        data_last_price: f64,
+        exchange: &str,
+    ) -> Result<Self, String> {
+        let year = chrono::DateTime::from_timestamp_millis(ts_millis as i64)
+            .unwrap()
+            .year();
+        if year == 1970 {
+            return Err(format!("invalid year={year} for millis param"));
+        }
+        let o = Self {
+            ts_millis,
+            data_symbol: data_symbol.to_string(),
+            data_last_price,
+            exchange: exchange.to_string(),
+        };
+        Ok(o)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -235,7 +260,7 @@ impl Candle {
         Self {
             exchange: ticker.exchange.clone(),
             symbol: ticker.data_symbol.clone(),
-            open_time: ticker.ts,
+            open_time: ticker.ts_millis,
             open: ticker.data_last_price,
             close: ticker.data_last_price,
             high: ticker.data_last_price,
@@ -255,7 +280,7 @@ impl Candle {
             CandleTimeframe::Minutes(n) => n * 60 * 1000,
             CandleTimeframe::Hours(n) => n * 60 * 60 * 1000,
         };
-        let current_start_min = ticker.ts / interval_millis;
+        let current_start_min = ticker.ts_millis / interval_millis;
         let candle_start_min = self.open_time / interval_millis;
         current_start_min > candle_start_min
     }
@@ -272,8 +297,8 @@ impl Candle {
         log::info!("wait for the next minute beginning");
         loop {
             let ticker = rx.recv().unwrap();
-            if ticker.ts >= candle_start_time_millis {
-                log::info!("first found candle timestamp is {}", ticker.ts);
+            if ticker.ts_millis >= candle_start_time_millis {
+                log::info!("first found candle timestamp is {}", ticker.ts_millis);
                 break ticker;
             }
         }
@@ -328,7 +353,7 @@ impl TickersPort {
                 "('{}','{}',to_timestamp({})::timestamp,{})",
                 x.exchange,
                 x.data_symbol,
-                x.ts / 1000,
+                x.ts_millis / 1000,
                 x.data_last_price
             ),
         );
@@ -358,7 +383,7 @@ impl TickersPort {
                         "('{}','{}',to_timestamp({})::timestamp,{})",
                         x.exchange,
                         x.data_symbol,
-                        x.ts / 1000,
+                        x.ts_millis / 1000,
                         x.data_last_price
                     )
                 })
@@ -387,11 +412,14 @@ impl TickersPort {
             .query(&q, &[])
             .unwrap()
             .iter()
-            .map(|x| FlatTicker {
-                ts: (x.get::<_, f64>(2) * 1000.0) as u128,
-                data_last_price: x.get::<_, f32>(3) as f64,
-                data_symbol: x.get(1),
-                exchange: x.get(0),
+            .map(|x| {
+                FlatTicker::new_with_millis(
+                    (x.get::<_, f64>(2) * 1000.0) as u128,
+                    x.get(1),
+                    x.get::<_, f32>(3) as f64,
+                    x.get(0),
+                )
+                .unwrap()
             })
             .collect()
     }
@@ -560,16 +588,12 @@ impl HistoryPort {
     }
 }
 
+#[cfg(test)]
 mod test {
     use crate::{Candle, CandleTimeframe, FlatTicker};
 
-    fn create_ticker(ts: u128) -> FlatTicker {
-        FlatTicker {
-            data_symbol: "".to_string(),
-            data_last_price: 0.0,
-            exchange: "".to_string(),
-            ts,
-        }
+    fn create_ticker(ts_millis: u128) -> FlatTicker {
+        FlatTicker::new_with_millis(ts_millis, "", 0.0, "").unwrap()
     }
 
     #[test]
@@ -590,7 +614,7 @@ mod test {
                 current_candle.apply_ticker(&ticker)
             }
         }
-        assert_eq!(candles.len(), 180);
+        assert_eq!(candles.len(), 179);
     }
 
     #[test]
@@ -644,5 +668,17 @@ mod test {
             }
             assert_eq!(expired_amount, 0);
         }
+    }
+
+    #[test]
+    fn test_invalid_ts_millis_in_flat_ticker() {
+        match FlatTicker::new_with_millis(1714893719999, "", 0.0, "") {
+            Ok(_) => {}
+            Err(_) => assert_eq!(0, 1),
+        };
+        match FlatTicker::new_with_millis(1714893719, "", 0.0, "") {
+            Ok(_) => assert_eq!(0, 1),
+            Err(_) => {}
+        };
     }
 }

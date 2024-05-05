@@ -427,6 +427,8 @@ mod trade {
     /// Reads, sorts in asc and uploads all available tickets from
     /// .var/binance-local/spot/trades/1m/BTCUSDT/* to database table
     pub fn upload_tickers_to_database() {
+        // TODO: re-upload from files to check does the millis there
+        // TODO: use i64 for millis times
         let start_date = chrono::NaiveDate::parse_from_str("2024-04-08", "%Y-%m-%d").unwrap();
         let end_date = chrono::Utc::now().date_naive() - chrono::Duration::try_days(1).unwrap();
         let mut date = start_date.clone();
@@ -444,20 +446,14 @@ mod trade {
                 .records()
                 .map(|x| {
                     let record = x.unwrap();
-                    let ts = record.get(4).unwrap().parse::<u128>().unwrap();
-                    let data_symbol = "BTCUSDT".to_string();
+                    let ts_millis = record.get(4).unwrap().parse::<u128>().unwrap();
                     let data_last_price = record.get(1).unwrap().parse::<f64>().unwrap();
-                    let exchange = "binance".to_string();
-                    FlatTicker {
-                        ts,
-                        data_symbol,
-                        data_last_price,
-                        exchange,
-                    }
+                    FlatTicker::new_with_millis(ts_millis, "BTCUSDT", data_last_price, "binance")
+                        .unwrap()
                 })
                 .collect::<Vec<FlatTicker>>()
                 .to_vec();
-            tickers.sort_by(|a, b| a.ts.cmp(&b.ts));
+            tickers.sort_by(|a, b| a.ts_millis.cmp(&b.ts_millis));
             log::info!("remove prev tickers");
             tickers_port.remove_on_date(&date).unwrap();
             log::info!("insert {} tickers", tickers.len());
@@ -482,11 +478,11 @@ mod trade {
         let candles = {
             let interval_1h_millis = 60 * 60 * 1000;
             let mut out = vec![];
-            let mut threshold_ts = tickers[0].ts + interval_1h_millis;
+            let mut threshold_ts = tickers[0].ts_millis + interval_1h_millis;
             let mut current_candle =
                 Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
             for ticker in tickers.iter() {
-                if ticker.ts < threshold_ts {
+                if ticker.ts_millis < threshold_ts {
                     current_candle.apply_ticker(&ticker);
                 } else {
                     out.push(current_candle);
@@ -519,7 +515,7 @@ mod trade {
         let mut hist_tickers = vec![];
         let mut backtest_tickers = vec![];
         for ticker in tickers.iter() {
-            if ticker.ts <= (trading_start_time.and_utc().timestamp_millis() as u128) {
+            if ticker.ts_millis <= (trading_start_time.and_utc().timestamp_millis() as u128) {
                 hist_tickers.push(ticker.clone());
             } else {
                 backtest_tickers.push(ticker.clone())
@@ -539,16 +535,16 @@ mod trade {
         let hist_candles = {
             let interval_1h_millis = 60 * 60 * 1000;
             let mut out = vec![];
-            let mut threshold_ts = hist_tickers[0].ts + interval_1h_millis;
+            let mut threshold_ts = hist_tickers[0].ts_millis + interval_1h_millis;
             let mut current_candle =
                 Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Minutes(1));
             for ticker in hist_tickers.iter() {
-                if ticker.ts <= threshold_ts {
+                if ticker.ts_millis <= threshold_ts {
                     current_candle.apply_ticker(&ticker);
                 } else {
                     out.push(current_candle);
                     current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
-                    threshold_ts = ticker.ts;
+                    threshold_ts = ticker.ts_millis;
                 }
             }
             out
