@@ -16,7 +16,7 @@ struct RawTickerData {
 
 #[derive(serde::Deserialize)]
 struct RawTicker {
-    ts: u128,
+    ts: i64,
     data: RawTickerData,
 }
 

@@ -200,7 +200,7 @@ impl Args {
 
 #[derive(Clone, Debug)]
 pub struct FlatTicker {
-    pub ts_millis: u128,
+    pub ts_millis: i64,
     pub data_symbol: String,
     pub data_last_price: f64,
     pub exchange: String,
@@ -209,7 +209,7 @@ pub struct FlatTicker {
 impl FlatTicker {
     /// Creates struct and validates millis
     pub fn new_with_millis(
-        ts_millis: u128,
+        ts_millis: i64,
         data_symbol: &str,
         data_last_price: f64,
         exchange: &str,
@@ -217,7 +217,7 @@ impl FlatTicker {
         let year = chrono::DateTime::from_timestamp_millis(ts_millis as i64)
             .unwrap()
             .year();
-        if year == 1970 {
+        if year < 2000 {
             return Err(format!("invalid year={year} for millis param"));
         }
         let o = Self {
@@ -239,15 +239,15 @@ pub struct FlatDepth {
 
 #[derive(Debug)]
 pub enum CandleTimeframe {
-    Hours(u128),
-    Minutes(u128),
+    Hours(i64),
+    Minutes(i64),
 }
 
 #[derive(Debug)]
 pub struct Candle {
     pub exchange: String,
     pub symbol: String,
-    pub open_time: u128,
+    pub open_time: i64,
     pub open: f64,
     pub close: f64,
     pub high: f64,
@@ -290,7 +290,7 @@ impl Candle {
         let candle_start_time_millis = ((std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_millis()
+            .as_millis() as i64
             / 60_000)
             + 1)
             * 60_000;
@@ -414,7 +414,7 @@ impl TickersPort {
             .iter()
             .map(|x| {
                 FlatTicker::new_with_millis(
-                    (x.get::<_, f64>(2) * 1000.0) as u128,
+                    (x.get::<_, f64>(2) * 1000.0) as i64,
                     x.get(1),
                     x.get::<_, f32>(3) as f64,
                     x.get(0),
@@ -592,7 +592,7 @@ impl HistoryPort {
 mod test {
     use crate::{Candle, CandleTimeframe, FlatTicker};
 
-    fn create_ticker(ts_millis: u128) -> FlatTicker {
+    fn create_ticker(ts_millis: i64) -> FlatTicker {
         FlatTicker::new_with_millis(ts_millis, "", 0.0, "").unwrap()
     }
 

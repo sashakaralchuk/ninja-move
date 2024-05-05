@@ -263,7 +263,7 @@ fn listen_save_candles() {
     let mut candles_port = CandlesPort::new_and_connect();
     let mut current_candle = Candle::new_from_ticker(
         &FlatTicker::new_with_millis(
-            chrono::Utc::now().timestamp() as u128,
+            chrono::Utc::now().timestamp(),
             symbol.as_str(),
             0.0,
             "bybit",
@@ -368,10 +368,4 @@ mod tests {
         assert!(two_top_intersection.fire(67_000_f64).is_none());
         assert!(two_top_intersection.fire(68_001_f64).is_some());
     }
-
-    // #[test]
-    // fn test_trailing_threshold_default_positive_behaviour() {}
-
-    // #[test]
-    // fn test_trailing_threshold_with_spread_positive_behaviour() {}
 }

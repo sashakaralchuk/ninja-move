@@ -65,7 +65,7 @@ impl CandlesPort {
                     .get::<_, std::time::SystemTime>(0)
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_millis(),
+                    .as_millis() as i64,
                 exchange: row.get::<_, String>(1),
                 symbol: row.get::<_, String>(2),
                 high: row.get::<_, f32>(3) as f64,

@@ -446,7 +446,7 @@ mod trade {
                 .records()
                 .map(|x| {
                     let record = x.unwrap();
-                    let ts_millis = record.get(4).unwrap().parse::<u128>().unwrap();
+                    let ts_millis = record.get(4).unwrap().parse::<i64>().unwrap();
                     let data_last_price = record.get(1).unwrap().parse::<f64>().unwrap();
                     FlatTicker::new_with_millis(ts_millis, "BTCUSDT", data_last_price, "binance")
                         .unwrap()
@@ -515,7 +515,7 @@ mod trade {
         let mut hist_tickers = vec![];
         let mut backtest_tickers = vec![];
         for ticker in tickers.iter() {
-            if ticker.ts_millis <= (trading_start_time.and_utc().timestamp_millis() as u128) {
+            if ticker.ts_millis <= trading_start_time.and_utc().timestamp_millis() {
                 hist_tickers.push(ticker.clone());
             } else {
                 backtest_tickers.push(ticker.clone())
@@ -554,8 +554,6 @@ mod trade {
             strategy.apply_candle(&candle);
         }
         // FIXME: is it 1h candle?
-        // TODO: look to the ticker ticker time
-        // TODO: name ticker val with postfix secs, millis
         let mut current_candle =
             Candle::new_from_ticker(&backtest_tickers[0], CandleTimeframe::Minutes(1));
         let mut backtests = vec![];
