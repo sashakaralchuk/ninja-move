@@ -565,7 +565,7 @@ mod trade {
         let mut backtests = vec![];
         let mut threshold: Option<TrailingThreshold> = None;
         for ticker in backtest_tickers {
-            if current_candle.expired() {
+            if current_candle.expired(&ticker) {
                 log::debug!("candle expired {:?}", current_candle);
                 strategy.apply_candle(&current_candle);
                 current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));

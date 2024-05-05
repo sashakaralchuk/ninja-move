@@ -250,16 +250,12 @@ impl Candle {
         self.low = f64::max(self.low, self.close);
     }
 
-    pub fn expired(&self) -> bool {
-        let now_millis = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
+    pub fn expired(&self, ticker: &FlatTicker) -> bool {
         let interval_millis = match self.timeframe {
             CandleTimeframe::Minutes(n) => n * 60 * 1000,
             CandleTimeframe::Hours(n) => n * 60 * 60 * 1000,
         };
-        let current_start_min = now_millis / interval_millis;
+        let current_start_min = ticker.ts / interval_millis;
         let candle_start_min = self.open_time / interval_millis;
         current_start_min > candle_start_min
     }
@@ -578,42 +574,75 @@ mod test {
 
     #[test]
     fn test_candle_1m_timeframe() {
-        let start_millis = 1714893673378;
+        let start_millis = 1714893660000;
         let mut tickers = vec![];
         for i in 0..(3 * 60 * 60 * 1000) {
             tickers.push(create_ticker(start_millis + i));
         }
         let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
         let mut candles = vec![];
-        assert_eq(tickers.len(), 10800000);
+        assert_eq!(tickers.len(), 10800000);
         for ticker in tickers {
-            if current_candle.expired() {
+            if current_candle.expired(&ticker) {
                 candles.push(current_candle);
                 current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
             } else {
                 current_candle.apply_ticker(&ticker)
             }
         }
-        assert_eq!(candles.len(), 1306623);
+        assert_eq!(candles.len(), 180);
     }
 
-    // #[test]
-    // fn test_candle_1h_timeframe() {
-    //     let start_millis = 1714893673378;
-    //     let mut tickers = vec![];
-    //     for i in 0..(3 * 60 * 60 * 1000) {
-    //         tickers.push(create_ticker(start_millis + i));
-    //     }
-    //     let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Hours(1));
-    //     let mut candles = vec![];
-    //     for ticker in tickers {
-    //         if current_candle.expired() {
-    //             candles.push(current_candle);
-    //             current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
-    //         } else {
-    //             current_candle.apply_ticker(&ticker)
-    //         }
-    //     }
-    //     assert_eq!(candles.len(), 4);
-    // }
+    #[test]
+    fn test_candle_1h_timeframe() {
+        let start_millis = 1714893660000;
+        let mut tickers = vec![];
+        for i in 0..(3 * 60 * 60 * 1000) {
+            tickers.push(create_ticker(start_millis + i));
+        }
+        let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Hours(1));
+        let mut candles = vec![];
+        assert_eq!(tickers.len(), 10800000);
+        for ticker in tickers {
+            if current_candle.expired(&ticker) {
+                candles.push(current_candle);
+                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
+            } else {
+                current_candle.apply_ticker(&ticker)
+            }
+        }
+        assert_eq!(candles.len(), 3);
+    }
+
+    #[test]
+    fn test_candle_timeframe_threshold() {
+        let start_millis = 1714893660000;
+        let tickers = (0..(60_001))
+            .into_iter()
+            .map(|i| create_ticker(start_millis + i))
+            .collect::<Vec<FlatTicker>>();
+        {
+            let current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+            let mut expired_amount = 0;
+            for i in 0..tickers.len() {
+                let ticker = &tickers[i];
+                if current_candle.expired(ticker) {
+                    expired_amount += 1;
+                }
+            }
+            assert_eq!(expired_amount, 1);
+        }
+        {
+            let current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+            let mut expired_amount = 0;
+            for i in 0..(tickers.len() - 1) {
+                let ticker = &tickers[i];
+                if current_candle.expired(ticker) {
+                    println!("i: {i}, current_candle: {current_candle:?}, ticker: {ticker:?}",);
+                    expired_amount += 1;
+                }
+            }
+            assert_eq!(expired_amount, 0);
+        }
+    }
 }

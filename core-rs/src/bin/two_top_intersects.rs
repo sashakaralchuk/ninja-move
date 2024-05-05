@@ -154,7 +154,7 @@ fn trade() {
             Candle::new_from_ticker(&start_ticker, CandleTimeframe::Minutes(1));
         loop {
             let ticker = rx_tickers_calc_signals.recv().unwrap();
-            if current_candle.expired() {
+            if current_candle.expired(&ticker) {
                 log::debug!("candle expired {:?}", current_candle);
                 two_top_intersection.apply_candle(&current_candle);
                 current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
@@ -272,7 +272,7 @@ fn listen_save_candles() {
     );
     let on_message = |event: bybit::EventWs| match event {
         bybit::EventWs::Ticker(ticker) => {
-            if current_candle.expired() {
+            if current_candle.expired(&ticker) {
                 log::info!("candle expired: {:?}", current_candle);
                 current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
                 candles_port.insert_candle(&current_candle).unwrap();
