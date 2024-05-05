@@ -286,8 +286,8 @@ mod draw_graph {
 
 mod trade {
     use exchanges_arbitrage::{
-        domain::bybit, Candle, CandleTimeframe, FlatTicker, HistoryPort, HistoryRow, TickersPort,
-        TrailingThreshold, TrailingThresholdReason,
+        domain::bybit, Candle, CandleTimeframe, DebugCandlesPort, FlatTicker, HistoryPort,
+        HistoryRow, TickersPort, TrailingThreshold, TrailingThresholdReason,
     };
 
     struct RingBuffer {
@@ -414,6 +414,31 @@ mod trade {
         }
     }
 
+    #[derive(Debug)]
+    struct BacktestConfig {
+        save_backtest_outs: bool,
+        save_debug_candles: bool,
+    }
+
+    impl BacktestConfig {
+        fn new_from_envs() -> Self {
+            let save_backtest_outs = std::env::var("TRADE_EMAS_BACKTEST_SAVE_BACKTESTS_OUTS")
+                .unwrap()
+                .parse::<u8>()
+                .unwrap()
+                > 0;
+            let save_debug_candles = std::env::var("TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES")
+                .unwrap()
+                .parse::<i32>()
+                .unwrap()
+                > 0;
+            Self {
+                save_backtest_outs,
+                save_debug_candles,
+            }
+        }
+    }
+
     pub fn collect_bybit_tickers() {
         let mut tickers_port = TickersPort::new_and_connect();
         tickers_port.create_table();
@@ -499,6 +524,7 @@ mod trade {
     }
 
     pub fn run_backtest() {
+        let config = BacktestConfig::new_from_envs();
         let start_time =
             chrono::NaiveDateTime::parse_from_str("2024-04-07 17:45:00", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
@@ -527,20 +553,23 @@ mod trade {
             hist_tickers.len(),
             backtest_tickers.len(),
         );
-        // TODO: clarify that candles forms proper
         // TODO: than write the results and render them in notebooks
         // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: calc "strength" on candles in strategy
         // TODO: run backtest, including (timestamp, open_price, sell_price)
         // TODO: render backtest results
         // TODO: re-check config - candles timeframes
+        let mut debug_candles = vec![];
+        let mut current_candle =
+            Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Hours(1));
         let mut strategy = {
             let mut s = Strategy::new();
-            let mut current_candle =
-                Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Hours(1));
             for ticker in hist_tickers {
                 if current_candle.expired(&ticker) {
                     s.apply_candle(&current_candle);
+                    if config.save_debug_candles {
+                        debug_candles.push(current_candle);
+                    }
                     current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
                 } else {
                     current_candle.apply_ticker(&ticker)
@@ -548,34 +577,39 @@ mod trade {
             }
             s
         };
-        let mut current_candle =
-            Candle::new_from_ticker(&backtest_tickers[0], CandleTimeframe::Hours(1));
         let mut backtests = vec![];
         let mut threshold: Option<TrailingThreshold> = None;
         for ticker in backtest_tickers {
             if current_candle.expired(&ticker) {
                 log::debug!("candle expired {:?}", current_candle);
                 strategy.apply_candle(&current_candle);
-                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+                if config.save_debug_candles {
+                    debug_candles.push(current_candle);
+                }
+                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
             } else {
                 current_candle.apply_ticker(&ticker)
             }
             match threshold {
                 Some(mut t) => match t.apply_and_make_decision(&ticker) {
                     TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
-                        backtests.push(BacktestOut::new(
-                            t.start_price,
-                            bottom_threshold,
-                            "reach-stop-loss".to_string(),
-                        ));
+                        if config.save_backtest_outs {
+                            backtests.push(BacktestOut::new(
+                                t.start_price,
+                                bottom_threshold,
+                                "reach-stop-loss".to_string(),
+                            ));
+                        }
                         threshold = None;
                     }
                     TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
-                        backtests.push(BacktestOut::new(
-                            t.start_price,
-                            trailing_threshold,
-                            "reach-thrailing-stop".to_string(),
-                        ));
+                        if config.save_backtest_outs {
+                            backtests.push(BacktestOut::new(
+                                t.start_price,
+                                trailing_threshold,
+                                "reach-thrailing-stop".to_string(),
+                            ));
+                        }
                         threshold = None;
                     }
                     _ => {}
@@ -588,10 +622,18 @@ mod trade {
                 },
             }
         }
-        log::info!("save backtest");
-        let mut history_port = HistoryPort::new_and_connect();
-        history_port.create_table();
-        BacktestOut::log_hist(&mut history_port, &backtests)
+        if config.save_backtest_outs {
+            log::info!("save backtests outs");
+            let mut history_port = HistoryPort::new_and_connect();
+            history_port.create_table();
+            BacktestOut::log_hist(&mut history_port, &backtests)
+        }
+        if config.save_debug_candles {
+            log::info!("save debug candles");
+            let mut debug_candles_port = DebugCandlesPort::new_and_connect();
+            debug_candles_port.create_table();
+            debug_candles_port.insert_batch(&debug_candles).unwrap();
+        }
     }
 
     #[derive(serde::Deserialize)]

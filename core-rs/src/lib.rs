@@ -272,7 +272,7 @@ impl Candle {
     pub fn apply_ticker(&mut self, ticker: &FlatTicker) {
         self.close = ticker.data_last_price;
         self.high = f64::max(self.high, self.close);
-        self.low = f64::max(self.low, self.close);
+        self.low = f64::min(self.low, self.close);
     }
 
     pub fn expired(&self, ticker: &FlatTicker) -> bool {
@@ -585,6 +585,75 @@ impl HistoryPort {
             Ok(v) => return Ok(v),
             Err(error) => return Err(format!("error: {}", error)),
         }
+    }
+}
+
+pub struct DebugCandlesPort {
+    client: Client,
+}
+
+impl DebugCandlesPort {
+    pub fn new_and_connect() -> Self {
+        Self {
+            client: connect_to_postgres(),
+        }
+    }
+
+    pub fn create_table(&mut self) {
+        self.client
+            .batch_execute(
+                "
+            CREATE TABLE IF NOT EXISTS public.debug_candles (
+                created_at TIMESTAMP NOT NULL,
+                exchange varchar NOT NULL,
+                symbol varchar NOT NULL,
+                open_time TIMESTAMP NOT NULL,
+                open real NOT NULL,
+                close real NOT NULL,
+                high real NOT NULL,
+                low real NOT NULL,
+                timeframe varchar NOT NULL,
+                commit_hash varchar NOT NULL
+            );
+        ",
+            )
+            .unwrap();
+    }
+
+    pub fn insert_batch(&mut self, list: &Vec<Candle>) -> Result<(), String> {
+        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
+        let values = list
+            .iter()
+            .map(|x| {
+                let timeframe = match x.timeframe {
+                    CandleTimeframe::Hours(n) => format!("{n}h"),
+                    CandleTimeframe::Minutes(n) => format!("{n}m"),
+                };
+                format!(
+                    "(now(), '{}', '{}', to_timestamp({})::timestamp, {}, {}, {}, {},
+                    '{}', '{}')",
+                    x.exchange,
+                    x.symbol,
+                    x.open_time / 1000,
+                    x.open,
+                    x.close,
+                    x.high,
+                    x.low,
+                    timeframe,
+                    commit_hash,
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+        let query = format!(
+            "INSERT INTO public.debug_candles
+                (created_at, exchange, symbol, open_time, open, close, high, low,
+                    timeframe, commit_hash)
+                VALUES {values};",
+        );
+        log::info!("save {} debug candles", list.len());
+        self.client.batch_execute(query.as_str()).unwrap();
+        Ok(())
     }
 }
 
