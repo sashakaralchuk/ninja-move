@@ -428,8 +428,6 @@ mod trade {
     /// Reads, sorts in asc and uploads all available tickets from
     /// .var/binance-local/spot/trades/1m/BTCUSDT/* to database table
     pub fn upload_tickers_to_database() {
-        // TODO: re-upload from files to check does the millis there
-        // TODO: use i64 for millis times
         let start_date = chrono::NaiveDate::parse_from_str("2024-04-08", "%Y-%m-%d").unwrap();
         let end_date = chrono::Utc::now().date_naive() - chrono::Duration::try_days(1).unwrap();
         let mut date = start_date.clone();
@@ -529,36 +527,29 @@ mod trade {
             hist_tickers.len(),
             backtest_tickers.len(),
         );
-        // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: clarify that candles forms proper
+        // TODO: than write the results and render them in notebooks
+        // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: calc "strength" on candles in strategy
         // TODO: run backtest, including (timestamp, open_price, sell_price)
         // TODO: render backtest results
         // TODO: re-check config - candles timeframes
-        let hist_candles = {
-            let interval_1h_millis = 60 * 60 * 1000;
-            let mut out = vec![];
-            let mut threshold_ts = hist_tickers[0].ts_millis + interval_1h_millis;
+        let mut strategy = {
+            let mut s = Strategy::new();
             let mut current_candle =
-                Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Minutes(1));
-            for ticker in hist_tickers.iter() {
-                if ticker.ts_millis <= threshold_ts {
-                    current_candle.apply_ticker(&ticker);
+                Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Hours(1));
+            for ticker in hist_tickers {
+                if current_candle.expired(&ticker) {
+                    s.apply_candle(&current_candle);
+                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
                 } else {
-                    out.push(current_candle);
-                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
-                    threshold_ts = ticker.ts_millis;
+                    current_candle.apply_ticker(&ticker)
                 }
             }
-            out
+            s
         };
-        let mut strategy = Strategy::new();
-        for candle in hist_candles {
-            strategy.apply_candle(&candle);
-        }
-        // FIXME: is it 1h candle?
         let mut current_candle =
-            Candle::new_from_ticker(&backtest_tickers[0], CandleTimeframe::Minutes(1));
+            Candle::new_from_ticker(&backtest_tickers[0], CandleTimeframe::Hours(1));
         let mut backtests = vec![];
         let mut threshold: Option<TrailingThreshold> = None;
         for ticker in backtest_tickers {

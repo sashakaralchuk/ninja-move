@@ -44,10 +44,10 @@ run-trade-emas:
 run-trade-emas-collect-bybit-tickers:
 	${env_vars} cargo run --bin trade_emas -- --command collect-bybit-tickers
 
-run-trade-emas-backtest:
+run-trade-emas-run-backtest:
 	${env_vars} cargo run --bin trade_emas -- --command run-backtest
 
-run-trade-upload-tickers-to-database:
+run-trade-emas-upload-tickers-to-database:
 	${env_vars} cargo run --bin trade_emas -- --command upload-tickers-to-database
 
 run-trade-show-2024-04-07-candles:
