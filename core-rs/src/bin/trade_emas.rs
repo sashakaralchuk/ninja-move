@@ -395,10 +395,9 @@ mod trade {
         }
 
         fn log_hist(history_port: &mut HistoryPort, backtests: &Vec<BacktestOut>) {
-            // FIXME: write hist based on 2 entities - SignalStrategy, SellStrategy
             for backtest in backtests.iter() {
                 let x = HistoryRow::new(
-                    "backtest-ema-TODO",
+                    "trade-emas",
                     backtest.reason.as_str(),
                     &"bybit".to_string(),
                     &"BTCUSDT".to_string(),
@@ -429,7 +428,7 @@ mod trade {
                 > 0;
             let save_debug_candles = std::env::var("TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES")
                 .unwrap()
-                .parse::<i32>()
+                .parse::<u8>()
                 .unwrap()
                 > 0;
             Self {
@@ -593,24 +592,26 @@ mod trade {
             match threshold {
                 Some(mut t) => match t.apply_and_make_decision(&ticker) {
                     TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
-                        if config.save_backtest_outs {
-                            backtests.push(BacktestOut::new(
-                                t.start_price,
-                                bottom_threshold,
-                                "reach-stop-loss".to_string(),
-                            ));
-                        }
                         threshold = None;
+                        if config.save_backtest_outs {
+                            return;
+                        }
+                        backtests.push(BacktestOut::new(
+                            t.start_price,
+                            bottom_threshold,
+                            "reach-stop-loss".to_string(),
+                        ));
                     }
                     TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
-                        if config.save_backtest_outs {
-                            backtests.push(BacktestOut::new(
-                                t.start_price,
-                                trailing_threshold,
-                                "reach-thrailing-stop".to_string(),
-                            ));
-                        }
                         threshold = None;
+                        if config.save_backtest_outs {
+                            return;
+                        }
+                        backtests.push(BacktestOut::new(
+                            t.start_price,
+                            trailing_threshold,
+                            "reach-thrailing-stop".to_string(),
+                        ));
                     }
                     _ => {}
                 },
@@ -623,10 +624,10 @@ mod trade {
             }
         }
         if config.save_backtest_outs {
-            log::info!("save backtests outs");
+            log::info!("save {} backtests outs", backtests.len());
             let mut history_port = HistoryPort::new_and_connect();
             history_port.create_table();
-            BacktestOut::log_hist(&mut history_port, &backtests)
+            BacktestOut::log_hist(&mut history_port, &backtests);
         }
         if config.save_debug_candles {
             log::info!("save debug candles");

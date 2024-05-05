@@ -540,7 +540,7 @@ impl HistoryPort {
         self.client
             .batch_execute(
                 "
-            CREATE TABLE IF NOT EXISTS history_trades (
+            CREATE TABLE IF NOT EXISTS public.history_trades (
                 created_at TIMESTAMP NOT NULL,
                 exchange varchar NOT NULL,
                 symbol varchar NOT NULL,
@@ -621,6 +621,7 @@ impl DebugCandlesPort {
     }
 
     pub fn insert_batch(&mut self, list: &Vec<Candle>) -> Result<(), String> {
+        let create_at_secs = chrono::Utc::now().timestamp();
         let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
         let values = list
             .iter()
@@ -630,8 +631,9 @@ impl DebugCandlesPort {
                     CandleTimeframe::Minutes(n) => format!("{n}m"),
                 };
                 format!(
-                    "(now(), '{}', '{}', to_timestamp({})::timestamp, {}, {}, {}, {},
-                    '{}', '{}')",
+                    "(to_timestamp({})::timestamp, '{}', '{}', to_timestamp({})::timestamp,
+                    {}, {}, {}, {}, '{}', '{}')",
+                    create_at_secs,
                     x.exchange,
                     x.symbol,
                     x.open_time / 1000,
