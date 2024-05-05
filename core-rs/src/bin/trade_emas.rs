@@ -9,6 +9,7 @@ fn main() {
         "draw-graph" => draw_graph::main(None),
         "collect-bybit-tickers" => trade::collect_bybit_tickers(),
         "run-backtest" => trade::run_backtest(),
+        "run-trading" => trade::run_trading(),
         "read-calc-write-emas" => trade::read_calc_write_emas(),
         "upload-tickers-to-database" => trade::upload_tickers_to_database(),
         "show-2024-04-07-candles" => trade::show_2024_04_07_candles(),
@@ -495,7 +496,9 @@ mod trade {
         log::info!("there are {} candles", candles.len());
     }
 
-    pub fn run_trading() {}
+    pub fn run_trading() {
+        unimplemented!()
+    }
 
     pub fn run_backtest() {
         let start_time =
@@ -595,9 +598,9 @@ mod trade {
             }
         }
         log::info!("save backtest");
-        // let mut history_port = HistoryPort::new_and_connect();
-        // history_port.create_table();
-        // BacktestOut::log_hist(&mut history_port, &backtests)
+        let mut history_port = HistoryPort::new_and_connect();
+        history_port.create_table();
+        BacktestOut::log_hist(&mut history_port, &backtests)
     }
 
     #[derive(serde::Deserialize)]

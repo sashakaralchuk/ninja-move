@@ -135,10 +135,7 @@ struct CachedWriteV2 {
 }
 
 impl CachedWriteV2 {
-    pub fn new(
-        exchange: String,
-        repository: monitoring::RepositoryV2Ticker,
-    ) -> Self {
+    pub fn new(exchange: String, repository: monitoring::RepositoryV2Ticker) -> Self {
         let threshold_to_write = 1000;
         let list_to_write = Vec::<monitoring::InsertParamV2Ticker>::new();
         Self {
@@ -165,11 +162,7 @@ impl CachedWriteV2 {
 }
 
 /// Shows/writes binance symbols spreads
-pub fn monitor_v1_binance(
-    symbols_amount: Option<usize>,
-    write_needed: bool,
-    show_binance: bool,
-) {
+pub fn monitor_v1_binance(symbols_amount: Option<usize>, write_needed: bool, show_binance: bool) {
     let streams = {
         let amount = match symbols_amount {
             Some(v) => v,
@@ -228,8 +221,7 @@ pub fn monitor_v1_binance(
             if let (Some(last_bid), Some(last_ask)) =
                 (cache[symbol].get_last_bid(), cache[symbol].get_last_ask())
             {
-                let market_price =
-                    last_bid[0] + (last_ask[0] - last_bid[0]) / 2.0;
+                let market_price = last_bid[0] + (last_ask[0] - last_bid[0]) / 2.0;
                 let diff_absolute = last_ask[0] - last_bid[0];
                 let diff_relative = diff_absolute / market_price;
                 table.add_row(row![
@@ -264,12 +256,7 @@ pub fn monitor_v1_binance(
         loop {
             let (updated_stream, timestamp) = rx.recv().unwrap();
             let cache = &caches.lock().unwrap();
-            cached_write.tick(
-                updated_stream,
-                timestamp,
-                cache,
-                symbol_from_stream,
-            );
+            cached_write.tick(updated_stream, timestamp, cache, symbol_from_stream);
         }
     };
 
@@ -317,11 +304,7 @@ pub fn monitor_v1_gateio(symbols_amount: Option<usize>, write_needed: bool) {
                 .unwrap()
                 .get_mut(&msg_obj.result.s)
                 .unwrap()
-                .apply_orders(
-                    msg_obj.result.u,
-                    &msg_obj.result.b,
-                    &msg_obj.result.a,
-                );
+                .apply_orders(msg_obj.result.u, &msg_obj.result.b, &msg_obj.result.a);
             match tx.send((msg_obj.result.s, msg_obj.result.t)) {
                 Ok(_) => {}
                 Err(e) => log::error!("[gateio][listen] error: {}", e),
@@ -331,8 +314,7 @@ pub fn monitor_v1_gateio(symbols_amount: Option<usize>, write_needed: bool) {
     };
     let handle_write = move || {
         // XXX: do pause at the beginning to avoid fancy prices in table
-        let symbol_from_stream =
-            |stream: &String| stream.replace("_", "").to_uppercase();
+        let symbol_from_stream = |stream: &String| stream.replace("_", "").to_uppercase();
         let mut cached_write = CachedWriteV1::new(
             String::from("gateio"),
             monitoring::RepositoryV2::new_and_connect(),
@@ -341,12 +323,7 @@ pub fn monitor_v1_gateio(symbols_amount: Option<usize>, write_needed: bool) {
         loop {
             let (updated_stream, timestamp) = rx.recv().unwrap();
             let cache = &caches.lock().unwrap();
-            cached_write.tick(
-                updated_stream,
-                timestamp,
-                cache,
-                symbol_from_stream,
-            );
+            cached_write.tick(updated_stream, timestamp, cache, symbol_from_stream);
         }
     };
 
@@ -370,10 +347,7 @@ fn monitor_v1(args: &Args) {
             )
         }),
         thread::spawn(move || {
-            monitor_v1_gateio(
-                args_gateio.symbols_amount,
-                args_gateio.write_needed,
-            )
+            monitor_v1_gateio(args_gateio.symbols_amount, args_gateio.write_needed)
         }),
     ]);
 }
@@ -421,8 +395,7 @@ fn monitor_v2_gateio() {
     let handle_listen = move || {
         let precision = PrecisionF64::default();
         let on_message = |ticker: gateio::Ticker| {
-            let symbol =
-                ticker.result.currency_pair.replace("_", "").to_uppercase();
+            let symbol = ticker.result.currency_pair.replace("_", "").to_uppercase();
             let param = monitoring::InsertParamV2Ticker {
                 symbol,
                 exchange: "gateio".to_string(),
@@ -498,18 +471,18 @@ fn put_postgres_data_to_druid() {
 }
 
 fn generate_mat_views() {
-    let interval = chrono::Duration::hours(4);
+    let interval = chrono::TimeDelta::try_hours(4).unwrap();
     let mut repository = monitoring::Repository::new_and_connect();
     let (mut start, end) = repository.start_end_dates().unwrap();
     log::info!("start: {:?}, end: {:?}", start, end);
     let to_strict_millis = {
-        start.timestamp_millis() % 1000
+        start.and_utc().timestamp_millis() % 1000
             + (start.second() * 1000) as i64
             + (start.minute() * 1000 * 60) as i64
     };
-    start.add_assign(chrono::Duration::milliseconds(-to_strict_millis));
+    start.add_assign(chrono::TimeDelta::try_milliseconds(-to_strict_millis).unwrap());
     while start.lt(&end) && {
-        let seconds_till_now = Utc::now().timestamp() - start.timestamp();
+        let seconds_till_now = Utc::now().timestamp() - start.and_utc().timestamp();
         seconds_till_now > interval.num_hours() * 60 * 60
     } {
         repository.spread_mat_view(&start, &start.add(interval));
