@@ -433,30 +433,32 @@ pub enum TrailingThresholdReason {
 
 #[derive(Copy, Clone)]
 pub struct TrailingThreshold {
-    pub start_price: f64,
+    pub open_price: f64,
+    pub open_timestamp_millis: i64,
     trailing_threshold: Option<f64>,
 }
 
 impl TrailingThreshold {
-    pub fn new(start_price: f64) -> Self {
+    pub fn new(open_price: f64, open_timestamp_millis: i64) -> Self {
         Self {
+            open_price,
+            open_timestamp_millis,
             trailing_threshold: None,
-            start_price,
         }
     }
 
     pub fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> TrailingThresholdReason {
         let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
         let trailing_rel_val = 0.5;
-        let bottom_threshold = self.start_price * (1.0 - stop_loss_rel_val);
+        let bottom_threshold = self.open_price * (1.0 - stop_loss_rel_val);
         if ticker.data_last_price <= bottom_threshold {
             return TrailingThresholdReason::ReachStopLoss(bottom_threshold);
         }
-        if ticker.data_last_price <= self.start_price {
+        if ticker.data_last_price <= self.open_price {
             return TrailingThresholdReason::Continue;
         }
         let next_threshold =
-            self.start_price + (ticker.data_last_price - self.start_price) * trailing_rel_val;
+            self.open_price + (ticker.data_last_price - self.open_price) * trailing_rel_val;
         if self.trailing_threshold.is_none() {
             log::debug!("initialize threshold with {}", next_threshold);
             self.trailing_threshold = Some(next_threshold);
@@ -468,7 +470,7 @@ impl TrailingThreshold {
         log::debug!(
             "moving threshold to new pos {}, start_price={}",
             next_threshold,
-            self.start_price
+            self.open_price
         );
         self.trailing_threshold = Some(next_threshold);
         return TrailingThresholdReason::Continue;
@@ -620,6 +622,13 @@ impl DebugCandlesPort {
             .unwrap();
     }
 
+    pub fn clear_table(&mut self) {
+        log::info!("delete all rows in public.debug_candles");
+        self.client
+            .batch_execute("delete from public.debug_candles")
+            .unwrap();
+    }
+
     pub fn insert_batch(&mut self, list: &Vec<Candle>) -> Result<(), String> {
         let create_at_secs = chrono::Utc::now().timestamp();
         let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
@@ -654,6 +663,161 @@ impl DebugCandlesPort {
                 VALUES {values};",
         );
         log::info!("save {} debug candles", list.len());
+        self.client.batch_execute(query.as_str()).unwrap();
+        Ok(())
+    }
+}
+
+pub struct DebugEmasPort {
+    client: Client,
+}
+
+impl DebugEmasPort {
+    pub fn new_and_connect() -> Self {
+        Self {
+            client: connect_to_postgres(),
+        }
+    }
+
+    pub fn create_table(&mut self) {
+        self.client
+            .batch_execute(
+                "
+            CREATE TABLE IF NOT EXISTS public.debug_emas (
+                created_at TIMESTAMP NOT NULL,
+                value_ema real NOT NULL,
+                commit_hash varchar NOT NULL
+            );
+        ",
+            )
+            .unwrap();
+    }
+
+    pub fn clear_table(&mut self) {
+        log::info!("delete all rows in public.debug_emas");
+        self.client
+            .batch_execute("delete from public.debug_emas")
+            .unwrap();
+    }
+
+    pub fn insert_batch(&mut self, list: &Vec<f64>) -> Result<(), String> {
+        let create_at_secs = chrono::Utc::now().timestamp();
+        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
+        let values = list
+            .iter()
+            .map(|x| {
+                format!(
+                    "(to_timestamp({})::timestamp, {}, '{}')",
+                    create_at_secs, x, commit_hash
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+        let query = format!(
+            "INSERT INTO public.debug_emas
+                (created_at, value_ema, commit_hash)
+                VALUES {values};",
+        );
+        log::info!("save {} debug emas", list.len());
+        self.client.batch_execute(query.as_str()).unwrap();
+        Ok(())
+    }
+}
+
+pub struct BacktestOut {
+    open_price: f64,
+    close_price: f64,
+    open_timestamp_millis: i64,
+    close_timestamp_millis: i64,
+    close_reason: String,
+}
+
+impl BacktestOut {
+    pub fn new(
+        open_price: f64,
+        close_price: f64,
+        open_timestamp_millis: i64,
+        close_timestamp_millis: i64,
+        close_reason: String,
+    ) -> Self {
+        Self {
+            open_price,
+            close_price,
+            open_timestamp_millis,
+            close_timestamp_millis,
+            close_reason,
+        }
+    }
+}
+
+pub struct BacktestsPort {
+    client: Client,
+}
+
+// FIXME: use diesel here
+impl BacktestsPort {
+    pub fn new_and_connect() -> Self {
+        Self {
+            client: connect_to_postgres(),
+        }
+    }
+
+    pub fn create_table(&mut self) {
+        self.client
+            .batch_execute(
+                "
+            CREATE TABLE IF NOT EXISTS public.backtests (
+                created_at TIMESTAMP NOT NULL,
+                open_price real NOT NULL,
+                close_price real NOT NULL,
+                open_timestamp TIMESTAMP NOT NULL,
+                close_timestamp TIMESTAMP NOT NULL,
+                close_reason varchar NOT NULL,
+                strategy_name varchar NOT NULL,
+                commit_hash varchar NOT NULL
+            );
+        ",
+            )
+            .unwrap();
+    }
+
+    pub fn clear_table(&mut self) {
+        log::info!("delete all rows in public.backtests");
+        self.client
+            .batch_execute("delete from public.backtests")
+            .unwrap();
+    }
+
+    pub fn insert_batch(
+        &mut self,
+        list: &Vec<BacktestOut>,
+        strategy_name: String,
+    ) -> Result<(), String> {
+        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
+        let values = list
+            .iter()
+            .map(|x| {
+                format!(
+                    "(now(), {}, {}, to_timestamp({})::timestamp,
+                    to_timestamp({})::timestamp, '{}', '{}', '{}')",
+                    x.open_price,
+                    x.close_price,
+                    x.open_timestamp_millis / 1000,
+                    x.close_timestamp_millis / 1000,
+                    x.close_reason,
+                    strategy_name,
+                    commit_hash,
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+        let query = format!(
+            "INSERT INTO public.backtests
+                (created_at, open_price, close_price, open_timestamp,
+                    close_timestamp, close_reason, strategy_name, commit_hash)
+                VALUES {values};",
+        );
+        log::info!("save {} debug emas", list.len());
         self.client.batch_execute(query.as_str()).unwrap();
         Ok(())
     }

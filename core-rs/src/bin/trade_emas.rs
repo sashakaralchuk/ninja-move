@@ -286,8 +286,8 @@ mod draw_graph {
 
 mod trade {
     use exchanges_arbitrage::{
-        domain::bybit, Candle, CandleTimeframe, DebugCandlesPort, FlatTicker, HistoryPort,
-        HistoryRow, TickersPort, TrailingThreshold, TrailingThresholdReason,
+        domain::bybit, BacktestOut, BacktestsPort, Candle, CandleTimeframe, DebugCandlesPort,
+        DebugEmasPort, FlatTicker, TickersPort, TrailingThreshold, TrailingThresholdReason,
     };
 
     struct RingBuffer {
@@ -346,6 +346,7 @@ mod trade {
         ema_len: usize,
         prices_len: usize,
         prices: RingBuffer,
+        name: String,
     }
 
     impl Strategy {
@@ -356,6 +357,7 @@ mod trade {
                 prices: RingBuffer::new(prices_len),
                 ema_len,
                 prices_len,
+                name: "trade-emas".to_string(),
             }
         }
 
@@ -364,11 +366,10 @@ mod trade {
         }
 
         fn fire(&self, ticker: &FlatTicker) -> Option<StrategySignal> {
-            let prices = self.prices.all();
-            if prices.len() < self.prices_len {
+            if self.prices.all().len() < self.prices_len {
                 return None;
             }
-            let ema = *calc_emas(&prices, self.ema_len as i32).last().unwrap();
+            let ema = self.calc_ema();
             let eps = 0.001;
             let p = ticker.data_last_price;
             if p - p * eps <= ema && ema <= p + p * eps {
@@ -376,40 +377,10 @@ mod trade {
             }
             None
         }
-    }
 
-    struct BacktestOut {
-        // FIXME: add start and end times + save them in table
-        start_price: f64,
-        close_price: f64,
-        reason: String,
-    }
-
-    impl BacktestOut {
-        fn new(start_price: f64, close_price: f64, reason: String) -> Self {
-            Self {
-                start_price,
-                close_price,
-                reason,
-            }
-        }
-
-        fn log_hist(history_port: &mut HistoryPort, backtests: &Vec<BacktestOut>) {
-            for backtest in backtests.iter() {
-                let x = HistoryRow::new(
-                    "trade-emas",
-                    backtest.reason.as_str(),
-                    &"bybit".to_string(),
-                    &"BTCUSDT".to_string(),
-                    backtest.start_price,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    backtest.close_price,
-                );
-                history_port.insert_hist(&x).unwrap();
-            }
+        fn calc_ema(&self) -> f64 {
+            let emas = calc_emas(&self.prices.all(), self.ema_len as i32);
+            *emas.last().unwrap()
         }
     }
 
@@ -417,24 +388,26 @@ mod trade {
     struct BacktestConfig {
         save_backtest_outs: bool,
         save_debug_candles: bool,
+        save_debug_emas: bool,
     }
 
     impl BacktestConfig {
         fn new_from_envs() -> Self {
-            let save_backtest_outs = std::env::var("TRADE_EMAS_BACKTEST_SAVE_BACKTESTS_OUTS")
-                .unwrap()
-                .parse::<u8>()
-                .unwrap()
-                > 0;
-            let save_debug_candles = std::env::var("TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES")
-                .unwrap()
-                .parse::<u8>()
-                .unwrap()
-                > 0;
+            let save_backtest_outs =
+                BacktestConfig::parse_bool_val("TRADE_EMAS_BACKTEST_SAVE_BACKTESTS_OUTS");
+            let save_debug_candles =
+                BacktestConfig::parse_bool_val("TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES");
+            let save_debug_emas =
+                BacktestConfig::parse_bool_val("TRADE_EMAS_BACKTEST_SAVE_DEBUG_EMAS");
             Self {
                 save_backtest_outs,
                 save_debug_candles,
+                save_debug_emas,
             }
+        }
+
+        fn parse_bool_val(key: &str) -> bool {
+            std::env::var(key).unwrap().parse::<u8>().unwrap() > 0
         }
     }
 
@@ -525,15 +498,20 @@ mod trade {
     pub fn run_backtest() {
         let config = BacktestConfig::new_from_envs();
         let start_time =
-            chrono::NaiveDateTime::parse_from_str("2024-04-07 17:45:00", "%Y-%m-%d %H:%M:%S")
+            chrono::NaiveDateTime::parse_from_str("2024-04-07 00:00:00", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
         let end_time =
-            chrono::NaiveDateTime::parse_from_str("2024-04-08 17:45:00", "%Y-%m-%d %H:%M:%S")
+            chrono::NaiveDateTime::parse_from_str("2024-04-14 00:00:00", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
         let trading_start_time =
-            chrono::NaiveDateTime::parse_from_str("2024-04-07 18:15:00", "%Y-%m-%d %H:%M:%S")
+            chrono::NaiveDateTime::parse_from_str("2024-04-12 18:15:00", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
         let mut tickers_port = TickersPort::new_and_connect();
+        log::info!(
+            "fetch tickers for [{}, {}]",
+            start_time.to_string(),
+            end_time.to_string()
+        );
         let tickers = tickers_port.fetch(
             start_time.and_utc().timestamp(),
             end_time.and_utc().timestamp(),
@@ -552,13 +530,17 @@ mod trade {
             hist_tickers.len(),
             backtest_tickers.len(),
         );
+        // TODO: make positive test for strategy
+        // TODO: does it opens prices in wrong moments?
         // TODO: than write the results and render them in notebooks
         // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: calc "strength" on candles in strategy
         // TODO: run backtest, including (timestamp, open_price, sell_price)
         // TODO: render backtest results
         // TODO: re-check config - candles timeframes
+        // TODO: read matplotlib and mplfinance doc
         let mut debug_candles = vec![];
+        let mut debug_emas = vec![];
         let mut current_candle =
             Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Hours(1));
         let mut strategy = {
@@ -585,6 +567,9 @@ mod trade {
                 if config.save_debug_candles {
                     debug_candles.push(current_candle);
                 }
+                if config.save_debug_emas {
+                    debug_emas.push(strategy.calc_ema());
+                }
                 current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
             } else {
                 current_candle.apply_ticker(&ticker)
@@ -592,48 +577,72 @@ mod trade {
             match threshold {
                 Some(mut t) => match t.apply_and_make_decision(&ticker) {
                     TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
+                        log::info!("reach-stop-loss");
                         threshold = None;
-                        if config.save_backtest_outs {
+                        if !config.save_backtest_outs {
                             return;
                         }
-                        backtests.push(BacktestOut::new(
-                            t.start_price,
+                        let backtest = BacktestOut::new(
+                            t.open_price,
                             bottom_threshold,
+                            t.open_timestamp_millis,
+                            ticker.ts_millis,
                             "reach-stop-loss".to_string(),
-                        ));
+                        );
+                        backtests.push(backtest);
                     }
                     TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
+                        log::info!("reach-thrailing-loss");
                         threshold = None;
-                        if config.save_backtest_outs {
+                        if !config.save_backtest_outs {
                             return;
                         }
-                        backtests.push(BacktestOut::new(
-                            t.start_price,
+                        let backtest = BacktestOut::new(
+                            t.open_price,
                             trailing_threshold,
-                            "reach-thrailing-stop".to_string(),
-                        ));
+                            t.open_timestamp_millis,
+                            ticker.ts_millis,
+                            "reach-thrailing-loss".to_string(),
+                        );
+                        backtests.push(backtest);
                     }
                     _ => {}
                 },
                 None => match strategy.fire(&ticker) {
                     Some(_) => {
-                        threshold = Some(TrailingThreshold::new(ticker.data_last_price));
+                        log::info!("fire trade");
+                        threshold = Some(TrailingThreshold::new(
+                            ticker.data_last_price,
+                            ticker.ts_millis,
+                        ));
                     }
                     None => {}
                 },
             }
         }
+        // XXX: use diesel for this queries
         if config.save_backtest_outs {
             log::info!("save {} backtests outs", backtests.len());
-            let mut history_port = HistoryPort::new_and_connect();
-            history_port.create_table();
-            BacktestOut::log_hist(&mut history_port, &backtests);
+            let mut backtests_port = BacktestsPort::new_and_connect();
+            backtests_port.create_table();
+            backtests_port.clear_table();
+            backtests_port
+                .insert_batch(&backtests, strategy.name)
+                .unwrap();
         }
         if config.save_debug_candles {
             log::info!("save debug candles");
             let mut debug_candles_port = DebugCandlesPort::new_and_connect();
             debug_candles_port.create_table();
+            debug_candles_port.clear_table();
             debug_candles_port.insert_batch(&debug_candles).unwrap();
+        }
+        if config.save_debug_emas {
+            log::info!("save debug emas");
+            let mut debug_emas_port = DebugEmasPort::new_and_connect();
+            debug_emas_port.create_table();
+            debug_emas_port.clear_table();
+            debug_emas_port.insert_batch(&debug_emas).unwrap();
         }
     }
 

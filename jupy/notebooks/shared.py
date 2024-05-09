@@ -41,6 +41,14 @@ def get_logger() -> logging.RootLogger:
     return logger
 
 
+def get_sa_engine() -> sa.Engine:
+    # XXX: cache it
+    return sa.create_engine(
+        "postgresql://default:default@database:5432/exchanges-arbitrage",
+        echo=False,
+    )
+
+
 def read_matic_k_lines() -> pd.DataFrame:
     columns = [
         'open_time', 'open', 'high', 'low', 'close',
@@ -72,19 +80,18 @@ def read_binance_klines() -> pd.DataFrame:
     )
 
 
-def read_binance_trades() -> pd.DataFrame:
-    file_path = '/home/jovyan/.var/binance/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2024-01.csv'
-    columns = ['id', 'price', 'qty', 'base_qty', 'time', 'is_buyer', 'is_maker']
-    return (pd.read_csv(file_path, names=columns, header=None, nrows=1_000_000)
-        .assign(
-            date=lambda x: x.time.apply(lambda x: dt.datetime.fromtimestamp(x/1000)),
-            open=lambda x: x.price,
-            close=lambda x: x.price,
-            low=lambda x: x.price,
-            high=lambda x: x.price,
-        )
-        .set_index('date')
-    )
+def read_binance_trades(date_start: dt.date, date_end: dt.date) -> pd.DataFrame:
+    dir_path = "/home/jovyan/.var/binance-local/spot/trades/1m/BTCUSDT"
+    date = date_start
+    dfs = []
+    while date <= date_end:
+        file_name = f'BTCUSDT-trades-{date.isoformat()}.csv'
+        df = pd.read_csv(f"{dir_path}/{file_name}")
+        dfs.append(df)
+        date += dt.timedelta(days=1)
+    return pd.concat(dfs, ignore_index=True).assign(
+        timestamp=lambda x: (x.time / 1000).apply(dt.datetime.fromtimestamp)
+    ).sort_values(by=['time'])
 
 
 def split_df(df: pd.DataFrame, interval_str: str) -> pd.DataFrame:

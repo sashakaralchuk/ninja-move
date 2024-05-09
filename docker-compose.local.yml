@@ -10,3 +10,13 @@ services:
       POSTGRES_DB: exchanges-arbitrage
     ports:
     - 5432:5432
+  jupyterhub:
+    build:
+      dockerfile: ./jupy/dockerfile.jupyterhub
+    ports:
+    - 8888:8888
+    volumes:
+    - ./jupy/notebooks:/home/jovyan/notebooks
+    - ./jupy/.var:/home/jovyan/.var
+    command: 'start-notebook.sh --NotebookApp.password="sha1:f8409da91c32:bab6de2e611c36ac6b49d3f8d8229689cd9d5474"' # password - root
+    mem_limit: 8gb
