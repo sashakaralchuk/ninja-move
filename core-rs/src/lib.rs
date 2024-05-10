@@ -256,6 +256,28 @@ pub struct Candle {
 }
 
 impl Candle {
+    pub fn new(
+        exchange: String,
+        symbol: String,
+        open_time: i64,
+        open: f64,
+        close: f64,
+        high: f64,
+        low: f64,
+        timeframe: CandleTimeframe,
+    ) -> Self {
+        Self {
+            exchange,
+            symbol,
+            open_time,
+            open,
+            close,
+            high,
+            low,
+            timeframe,
+        }
+    }
+
     pub fn new_from_ticker(ticker: &FlatTicker, timeframe: CandleTimeframe) -> Self {
         Self {
             exchange: ticker.exchange.clone(),
