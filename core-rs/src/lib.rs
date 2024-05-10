@@ -776,7 +776,6 @@ pub struct BacktestsPort {
     client: Client,
 }
 
-// FIXME: use diesel here
 impl BacktestsPort {
     pub fn new_and_connect() -> Self {
         Self {

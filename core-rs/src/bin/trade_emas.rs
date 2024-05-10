@@ -158,7 +158,6 @@ mod agg_trades {
             ])
             .collect()
             .unwrap();
-        // TODO: use debugger here
         let out_dir_path = ".var/binance-local/spot/klines/1m/BTCUSDT/";
         std::fs::create_dir_all(out_dir_path).unwrap_or_default();
         let out_path = format!("{out_dir_path}BTCUSDT-klines-2024-03-23.csv");
@@ -530,14 +529,10 @@ mod trade {
             hist_tickers.len(),
             backtest_tickers.len(),
         );
-        // TODO: draw all required events on thresholds
-        // TODO: does it opens prices in wrong moments?
-        // TODO: than write the results and render them in notebooks
+        // FIXME: use diesel here
+        // TODO: use debugger here
         // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: calc "strength" on candles in strategy
-        // TODO: run backtest, including (timestamp, open_price, sell_price)
-        // TODO: render backtest results
-        // TODO: re-check config - candles timeframes
         // TODO: read matplotlib and mplfinance doc
         let mut debug_candles = vec![];
         let mut debug_emas = vec![];
@@ -617,7 +612,6 @@ mod trade {
                 },
             }
         }
-        // XXX: use diesel for this queries
         if config.save_backtest_outs {
             log::info!("save {} backtests outs", backtests.len());
             let mut backtests_port = BacktestsPort::new_and_connect();
