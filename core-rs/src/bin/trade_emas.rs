@@ -529,7 +529,6 @@ mod trade {
             hist_tickers.len(),
             backtest_tickers.len(),
         );
-        // TODO: use debugger here
         // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: calc "strength" on candles in strategy
         // TODO: read matplotlib and mplfinance doc
