@@ -531,6 +531,7 @@ mod trade {
             backtest_tickers.len(),
         );
         // TODO: make positive test for strategy
+        // TODO: draw all required events
         // TODO: does it opens prices in wrong moments?
         // TODO: than write the results and render them in notebooks
         // TODO: immediate aim - run with some configuration, than configurize it and run remaining
@@ -577,7 +578,6 @@ mod trade {
             match threshold {
                 Some(mut t) => match t.apply_and_make_decision(&ticker) {
                     TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
-                        log::info!("reach-stop-loss");
                         threshold = None;
                         if !config.save_backtest_outs {
                             return;
@@ -592,7 +592,6 @@ mod trade {
                         backtests.push(backtest);
                     }
                     TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
-                        log::info!("reach-thrailing-loss");
                         threshold = None;
                         if !config.save_backtest_outs {
                             return;
@@ -610,11 +609,10 @@ mod trade {
                 },
                 None => match strategy.fire(&ticker) {
                     Some(_) => {
-                        log::info!("fire trade");
                         threshold = Some(TrailingThreshold::new(
                             ticker.data_last_price,
                             ticker.ts_millis,
-                        ));
+                        ))
                     }
                     None => {}
                 },
