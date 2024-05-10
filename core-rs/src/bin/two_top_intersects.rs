@@ -209,7 +209,7 @@ fn trade() {
                     rx_tickers_trade_signals.recv().unwrap();
                 }
             };
-            let mut threshold = TrailingThreshold::new(order.avg_fill_price);
+            let mut threshold = TrailingThreshold::new(order.avg_fill_price, -1);
             loop {
                 let ticker = rx_tickers_trade_signals.recv().unwrap();
                 match threshold.apply_and_make_decision(&ticker) {
