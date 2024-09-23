@@ -457,7 +457,7 @@ pub enum TrailingThresholdReason {
 pub struct TrailingThreshold {
     pub open_price: f64,
     pub open_timestamp_millis: i64,
-    trailing_threshold: Option<f64>,
+    pub trailing_threshold: Option<f64>,
 }
 
 impl TrailingThreshold {
@@ -471,30 +471,43 @@ impl TrailingThreshold {
 
     pub fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> TrailingThresholdReason {
         let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
-        let trailing_rel_val = 0.5;
-        let bottom_threshold = self.open_price * (1.0 - stop_loss_rel_val);
-        if ticker.data_last_price <= bottom_threshold {
-            return TrailingThresholdReason::ReachStopLoss(bottom_threshold);
+        let stop_loss_abs_val = self.open_price * (1.0 - stop_loss_rel_val);
+        if ticker.data_last_price <= stop_loss_abs_val {
+            return TrailingThresholdReason::ReachStopLoss(stop_loss_abs_val);
         }
         if ticker.data_last_price <= self.open_price {
             return TrailingThresholdReason::Continue;
         }
+        let trailing_rel_val = 0.5;
+        let trailing_threshold_rel_val = 0.002; // TODO: calc this on prev data
         let next_threshold =
             self.open_price + (ticker.data_last_price - self.open_price) * trailing_rel_val;
         if self.trailing_threshold.is_none() {
-            log::debug!("initialize threshold with {}", next_threshold);
-            self.trailing_threshold = Some(next_threshold);
+            let calc_start_abs_val = self.open_price * (1.0 + trailing_threshold_rel_val);
+            if ticker.data_last_price <= calc_start_abs_val {
+                // log::debug!(
+                //     "price haven't reached level to start calculating \
+                //     trailing threshold calc_start_abs_val={calc_start_abs_val},\
+                //     ticker.data_last_price={}",
+                //     ticker.data_last_price,
+                // );
+            } else {
+                // log::debug!("initialize threshold with {}", next_threshold);
+                self.trailing_threshold = Some(next_threshold);
+            }
             return TrailingThresholdReason::Continue;
         }
-        if ticker.data_last_price < self.trailing_threshold.unwrap() {
-            return TrailingThresholdReason::ReachThrailingStop(self.trailing_threshold.unwrap());
+        let curr_threshold = self.trailing_threshold.unwrap();
+        if ticker.data_last_price <= curr_threshold {
+            return TrailingThresholdReason::ReachThrailingStop(curr_threshold);
         }
-        log::debug!(
-            "moving threshold to new pos {}, start_price={}",
-            next_threshold,
-            self.open_price
-        );
-        self.trailing_threshold = Some(next_threshold);
+        if curr_threshold < next_threshold {
+            log::debug!(
+                "moving threshold to new pos {next_threshold}, start_price={}",
+                self.open_price
+            );
+            self.trailing_threshold = Some(next_threshold);
+        }
         return TrailingThresholdReason::Continue;
     }
 }
@@ -846,10 +859,15 @@ impl BacktestsPort {
 
 #[cfg(test)]
 mod test {
-    use crate::{Candle, CandleTimeframe, FlatTicker};
+    use crate::{Candle, CandleTimeframe, FlatTicker, TrailingThreshold, TrailingThresholdReason};
 
-    fn create_ticker(ts_millis: i64) -> FlatTicker {
+    fn create_ticker_on_ts(ts_millis: i64) -> FlatTicker {
         FlatTicker::new_with_millis(ts_millis, "", 0.0, "").unwrap()
+    }
+
+    fn create_ticker_on_price(price: f64) -> FlatTicker {
+        let now_millis = chrono::Utc::now().timestamp_millis();
+        FlatTicker::new_with_millis(now_millis, "", price, "").unwrap()
     }
 
     #[test]
@@ -857,7 +875,7 @@ mod test {
         let start_millis = 1714893660000;
         let mut tickers = vec![];
         for i in 0..(3 * 60 * 60 * 1000) {
-            tickers.push(create_ticker(start_millis + i));
+            tickers.push(create_ticker_on_ts(start_millis + i));
         }
         let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
         let mut candles = vec![];
@@ -878,7 +896,7 @@ mod test {
         let start_millis = 1714893660000;
         let mut tickers = vec![];
         for i in 0..(3 * 60 * 60 * 1000) {
-            tickers.push(create_ticker(start_millis + i));
+            tickers.push(create_ticker_on_ts(start_millis + i));
         }
         let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Hours(1));
         let mut candles = vec![];
@@ -899,7 +917,7 @@ mod test {
         let start_millis = 1714893660000;
         let tickers = (0..(60_001))
             .into_iter()
-            .map(|i| create_ticker(start_millis + i))
+            .map(|i| create_ticker_on_ts(start_millis + i))
             .collect::<Vec<FlatTicker>>();
         {
             let current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
@@ -936,5 +954,123 @@ mod test {
             Ok(_) => assert_eq!(0, 1),
             Err(_) => {}
         };
+    }
+
+    #[test]
+    fn test_trailing_threshold_reach_trailing_threshold() {
+        let mut t = TrailingThreshold::new(60_000_f64, 0);
+        match t.apply_and_make_decision(&create_ticker_on_price(60_119_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert!(t.trailing_threshold.is_none());
+        match t.apply_and_make_decision(&create_ticker_on_price(60_120_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert!(t.trailing_threshold.is_none());
+        match t.apply_and_make_decision(&create_ticker_on_price(60_121_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert_eq!(t.trailing_threshold.unwrap(), 60060.5_f64);
+        match t.apply_and_make_decision(&create_ticker_on_price(61_000_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert_eq!(t.trailing_threshold.unwrap(), 60_500_f64);
+        match t.apply_and_make_decision(&create_ticker_on_price(60_501_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert_eq!(t.trailing_threshold.unwrap(), 60_500_f64);
+        match t.apply_and_make_decision(&create_ticker_on_price(62_000_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert_eq!(t.trailing_threshold.unwrap(), 61_000_f64);
+        match t.apply_and_make_decision(&create_ticker_on_price(61_001_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert_eq!(t.trailing_threshold.unwrap(), 61_000_f64);
+        match t.apply_and_make_decision(&create_ticker_on_price(61_000_f64)) {
+            TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
+                assert_eq!(trailing_threshold, 61_000_f64)
+            }
+            _ => assert_eq!(0, 1),
+        };
+    }
+
+    #[test]
+    fn test_trailing_threshold_reach_stop_loss() {
+        let mut t = TrailingThreshold::new(60_000_f64, 0);
+        match t.apply_and_make_decision(&create_ticker_on_price(59_701_f64)) {
+            TrailingThresholdReason::Continue => {}
+            _ => assert_eq!(0, 1),
+        };
+        assert!(t.trailing_threshold.is_none());
+        match t.apply_and_make_decision(&create_ticker_on_price(59_700_f64)) {
+            TrailingThresholdReason::ReachStopLoss(stop_loss_threshold) => {
+                assert_eq!(stop_loss_threshold, 59_700_f64)
+            }
+            _ => assert_eq!(0, 1),
+        };
+        assert!(t.trailing_threshold.is_none());
+    }
+
+    /// Cover exit on the next chart https://prnt.sc/kKfOTb_rqRJ7.
+    #[test]
+    fn test_trailing_threshold_reach_trailing_threshold_case_1() {
+        return;
+        let open_price = 62310.50;
+        let tickers_prices = vec![
+            61809.93, 64953.85, 64184.61, 65179.0, 64098.13, 65099.0, 64490.0, 64943.87, 64420.0,
+            65213.31, 64691.28, 65450.0, 64770.0, 65440.57, 64436.51, 65069.07, 63820.57, 64965.78,
+            64333.33, 64707.7, 63506.57, 64533.29, 63929.18, 64808.54, 64084.86, 64660.86,
+            64085.44, 64393.96, 63677.36, 64334.84, 64044.11, 64444.91, 64000.01, 64494.03,
+            62953.9, 64124.0, 63418.0, 64263.41, 63090.07, 63777.03, 63530.0, 64092.29, 63766.0,
+            64040.67, 63815.53, 64268.58, 63987.17, 64250.08, 63939.0, 64222.22, 63922.36,
+            64159.99, 63661.54, 63988.0, 63277.0, 63778.32, 63377.22, 63781.82, 63557.74, 63924.05,
+            63575.83, 63935.32, 63798.92, 64047.92, 63746.0, 63984.79, 63790.0, 64960.37, 64456.54,
+            64969.39, 64739.23, 65419.0, 64837.19, 65310.99, 64791.79, 65000.01, 64622.12,
+            65031.25, 64622.13, 64825.39, 64555.0, 64778.0, 64613.51, 64988.92, 64608.0, 64960.0,
+            64737.5, 65100.0, 64921.0, 65377.0, 65093.99, 65695.56, 64843.98, 65195.98, 64984.44,
+            65244.65, 64941.79, 65200.0, 64899.84, 65175.0, 64920.26, 65222.07, 64763.15, 64986.72,
+            64785.04, 64986.0, 64954.5, 65440.95, 64934.0, 65375.41, 64778.69, 65244.9, 64790.0,
+            65036.82, 64880.0, 65132.07, 64237.5, 65087.92, 64530.89, 64875.98, 64596.09, 64862.5,
+            64528.38, 64856.05, 64362.5, 64722.04, 64646.16, 65167.19, 64569.07, 65110.0, 64866.0,
+            65063.0, 64758.93, 65158.08, 64604.56, 65640.0, 64500.0, 64862.5, 64754.0, 66090.69,
+            65509.24, 65878.17, 65701.99, 66414.81, 66150.8, 66412.6, 65979.33, 66479.8, 65905.73,
+            66204.44, 65801.76, 66055.17, 65890.0, 66154.87, 65702.0, 66108.0, 65626.87, 65995.48,
+            65693.98, 66260.54, 65962.16, 66477.53, 65665.86, 66085.46, 65913.52, 66419.56,
+            66133.35, 66824.28, 66293.05, 66691.22, 66141.07, 66609.33, 66394.52, 66760.56,
+            66342.1, 66558.91, 66526.94, 67200.0, 66790.0, 67232.35, 66712.96, 67032.83, 66777.4,
+            67183.01, 66558.31, 66912.0, 66419.55, 66756.0, 66181.1, 66582.67, 66192.0, 66609.31,
+            66304.0, 66646.0, 66020.0, 66451.19, 65963.4, 66260.47, 66046.63, 66309.3, 66058.99,
+            66310.44, 65852.35, 66236.13, 65765.81, 66165.0, 66049.4, 66590.92, 66420.0, 67130.0,
+            66328.44, 66930.47, 66350.91, 66807.91, 66584.61, 66905.99, 66589.47, 66846.0, 66390.0,
+            66783.57, 65980.0, 66484.96, 66258.86, 66464.0, 66278.59, 66455.76, 66120.0, 66433.31,
+            66390.0, 66747.73, 66682.33, 66900.0, 66441.32, 66766.0, 66514.44, 66714.43, 66589.01,
+            67065.0, 66633.0, 67070.43, 66552.37, 66792.0, 66588.0, 66883.68, 66485.3, 66743.01,
+            66272.0, 66560.51, 66203.05, 66517.85, 66361.73, 66631.01, 66351.1, 66737.0, 65834.28,
+            66355.99, 64732.34, 66200.0, 64519.03, 65243.73, 64348.0, 64959.74, 64766.33, 65156.95,
+            64070.15, 64920.0, 63736.7, 64486.0, 63606.06, 64240.01, 64000.0, 64447.91, 63956.49,
+            64404.0, 63825.72, 64339.83, 64226.6, 64741.47, 64046.74, 64657.15, 63860.0, 64338.58,
+            64128.3, 64464.29, 64058.0, 64397.78, 64025.5, 64377.6, 64195.7, 64391.99, 63824.07,
+            64379.85, 63708.2, 64176.86, 63809.13, 64192.0, 63337.25, 63966.03, 63447.37, 63994.23,
+        ];
+        let mut t = TrailingThreshold::new(open_price, 0);
+        for p in tickers_prices {
+            let out = match t.apply_and_make_decision(&create_ticker_on_price(p)) {
+                TrailingThresholdReason::ReachThrailingStop(v) => {
+                    format!("reach-trailing-stop {v}")
+                }
+                TrailingThresholdReason::ReachStopLoss(v) => format!("reach-stop-loss {v}"),
+                TrailingThresholdReason::Continue => "continue".to_string(),
+            };
+            println!("{p:.2}: {out}")
+        }
+        assert_eq!(0, 1)
     }
 }

@@ -500,7 +500,7 @@ mod trade {
             chrono::NaiveDateTime::parse_from_str("2024-04-07 00:00:00", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
         let end_time =
-            chrono::NaiveDateTime::parse_from_str("2024-04-14 00:00:00", "%Y-%m-%d %H:%M:%S")
+            chrono::NaiveDateTime::parse_from_str("2024-05-15 00:00:00", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
         let trading_start_time =
             chrono::NaiveDateTime::parse_from_str("2024-04-12 18:15:00", "%Y-%m-%d %H:%M:%S")
@@ -529,6 +529,10 @@ mod trade {
             hist_tickers.len(),
             backtest_tickers.len(),
         );
+        // TODO: figure out why here i strategy haven't quited https://prnt.sc/FIGF6VvE1eSm
+        //       how? export in notebooks candle and debug in test why this happens
+        // TODO: speed up loading of tickers
+        // TODO: workout why strategy doesn't quit trades
         // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: calc "strength" on candles in strategy
         // TODO: read matplotlib and mplfinance doc
@@ -568,34 +572,34 @@ mod trade {
                 current_candle.apply_ticker(&ticker)
             }
             match threshold {
-                Some(mut t) => match t.apply_and_make_decision(&ticker) {
+                Some(_) => match threshold.unwrap().apply_and_make_decision(&ticker) {
                     TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
-                        threshold = None;
-                        if !config.save_backtest_outs {
-                            return;
+                        if config.save_backtest_outs {
+                            let t = threshold.unwrap();
+                            let backtest = BacktestOut::new(
+                                t.open_price,
+                                bottom_threshold,
+                                t.open_timestamp_millis,
+                                ticker.ts_millis,
+                                "reach-stop-loss".to_string(),
+                            );
+                            backtests.push(backtest);
                         }
-                        let backtest = BacktestOut::new(
-                            t.open_price,
-                            bottom_threshold,
-                            t.open_timestamp_millis,
-                            ticker.ts_millis,
-                            "reach-stop-loss".to_string(),
-                        );
-                        backtests.push(backtest);
+                        threshold = None;
                     }
                     TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
-                        threshold = None;
                         if !config.save_backtest_outs {
-                            return;
+                            let t = threshold.unwrap();
+                            let backtest = BacktestOut::new(
+                                t.open_price,
+                                trailing_threshold,
+                                t.open_timestamp_millis,
+                                ticker.ts_millis,
+                                "reach-thrailing-loss".to_string(),
+                            );
+                            backtests.push(backtest);
                         }
-                        let backtest = BacktestOut::new(
-                            t.open_price,
-                            trailing_threshold,
-                            t.open_timestamp_millis,
-                            ticker.ts_millis,
-                            "reach-thrailing-loss".to_string(),
-                        );
-                        backtests.push(backtest);
+                        threshold = None;
                     }
                     _ => {}
                 },
@@ -611,13 +615,17 @@ mod trade {
             }
         }
         if config.save_backtest_outs {
-            log::info!("save {} backtests outs", backtests.len());
-            let mut backtests_port = BacktestsPort::new_and_connect();
-            backtests_port.create_table();
-            backtests_port.clear_table();
-            backtests_port
-                .insert_batch(&backtests, strategy.name)
-                .unwrap();
+            if backtests.len() > 0 {
+                log::info!("save {} backtests outs", backtests.len());
+                let mut backtests_port = BacktestsPort::new_and_connect();
+                backtests_port.create_table();
+                backtests_port.clear_table();
+                backtests_port
+                    .insert_batch(&backtests, strategy.name)
+                    .unwrap();
+            } else {
+                log::info!("there is no backtests to save");
+            }
         }
         if config.save_debug_candles {
             log::info!("save debug candles");
@@ -664,6 +672,11 @@ mod trade {
                 .map(|&v| v.to_string())
                 .collect::<Vec<_>>()
                 .join(",")
+        }
+
+        fn create_ticker_on_price(price: f64) -> FlatTicker {
+            let now_millis = chrono::Utc::now().timestamp_millis();
+            FlatTicker::new_with_millis(now_millis, "", price, "").unwrap()
         }
 
         #[test]
@@ -856,23 +869,19 @@ mod trade {
             for candle in candles.iter() {
                 strategy.apply_candle(&candle);
             }
-            fn create_ticker(price: f64) -> FlatTicker {
-                let now_millis = chrono::Utc::now().timestamp_millis();
-                FlatTicker::new_with_millis(now_millis, "", price, "").unwrap()
-            }
-            match strategy.fire(&create_ticker(67269.0)) {
+            match strategy.fire(&create_ticker_on_price(67269.0)) {
                 Some(_) => assert_eq!(0, 1),
                 _ => {}
             }
-            match strategy.fire(&create_ticker(67270.0)) {
+            match strategy.fire(&create_ticker_on_price(67270.0)) {
                 Some(_) => {}
                 _ => assert_eq!(0, 1),
             }
-            match strategy.fire(&create_ticker(67400.0)) {
+            match strategy.fire(&create_ticker_on_price(67400.0)) {
                 Some(_) => {}
                 _ => assert_eq!(0, 1),
             }
-            match strategy.fire(&create_ticker(67404.0)) {
+            match strategy.fire(&create_ticker_on_price(67404.0)) {
                 Some(_) => assert_eq!(0, 1),
                 _ => {}
             }
