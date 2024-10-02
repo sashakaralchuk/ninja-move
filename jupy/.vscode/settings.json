@@ -1,0 +1,20 @@
+{
+    "ruff.lint.args": ["--unsafe-fixes"],
+    "ruff.lineLength": 80,
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll": "explicit"
+        }
+    },
+    "notebook.formatOnSave.enabled": true,
+    "notebook.codeActionsOnSave": {
+        "notebook.source.fixAll": "explicit",
+        "notebook.source.organizeImports": "explicit",
+    },
+    "[sql]": {"editor.formatOnSave": true},
+    "sqltools.format": {"reservedWordCase": "upper"},
+    "files.insertFinalNewline": true
+}

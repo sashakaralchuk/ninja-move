@@ -16,7 +16,22 @@ services:
     ports:
     - 8888:8888
     volumes:
-    - ./jupy/notebooks:/home/jovyan/notebooks
-    - ./jupy/.var:/home/jovyan/.var
+    - ./jupy/shared.py:/home/jovyan/shared.py
     command: 'start-notebook.sh --NotebookApp.password="sha1:f8409da91c32:bab6de2e611c36ac6b49d3f8d8229689cd9d5474"' # password - root
     mem_limit: 8gb
+  redpanda-1:
+    image: docker.vectorized.io/vectorized/redpanda:v23.3.21
+    command: redpanda start
+    volumes:
+    - ./config-redpanda.yaml:/etc/redpanda/redpanda.yaml
+    ports:
+    - 9092:9092
+    - 9644:9644
+    mem_limit: 16gb
+  clickhouse-1:
+    image: docker.io/clickhouse/clickhouse-server:24.8.4.13
+    ports:
+    - 18123:8123
+    volumes:
+    - ./.var/data_clickhouse:/var/lib/clickhouse/
+    mem_limit: 16gb

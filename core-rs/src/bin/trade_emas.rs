@@ -1,6 +1,7 @@
 use polars::prelude::{DataType, Field, Schema};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
     let args = exchanges_arbitrage::Args::new_and_parse();
     match args.command.as_str() {
@@ -8,7 +9,7 @@ fn main() {
         "agg-trades" => agg_trades::main(),
         "draw-graph" => draw_graph::main(None),
         "collect-bybit-tickers" => trade::collect_bybit_tickers(),
-        "run-backtest" => trade::run_backtest(),
+        "run-backtest" => trade::run_backtest().await,
         "run-trading" => trade::run_trading(),
         "read-calc-write-emas" => trade::read_calc_write_emas(),
         "upload-tickers-to-database" => trade::upload_tickers_to_database(),
@@ -285,8 +286,8 @@ mod draw_graph {
 
 mod trade {
     use exchanges_arbitrage::{
-        domain::bybit, BacktestOut, BacktestsPort, Candle, CandleTimeframe, DebugCandlesPort,
-        DebugEmasPort, FlatTicker, TickersPort, TrailingThreshold, TrailingThresholdReason,
+        domain::bybit, Candle, CandleTimeframe, FlatTicker, TickersPort, TradesTPortClickhouse,
+        TrailingThreshold, TrailingThresholdReason,
     };
 
     struct RingBuffer {
@@ -388,6 +389,7 @@ mod trade {
         save_backtest_outs: bool,
         save_debug_candles: bool,
         save_debug_emas: bool,
+        run_id: String,
     }
 
     impl BacktestConfig {
@@ -398,10 +400,12 @@ mod trade {
                 BacktestConfig::parse_bool_val("TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES");
             let save_debug_emas =
                 BacktestConfig::parse_bool_val("TRADE_EMAS_BACKTEST_SAVE_DEBUG_EMAS");
+            let run_id = uuid::Uuid::new_v4().to_string();
             Self {
                 save_backtest_outs,
                 save_debug_candles,
                 save_debug_emas,
+                run_id,
             }
         }
 
@@ -494,7 +498,7 @@ mod trade {
         unimplemented!()
     }
 
-    pub fn run_backtest() {
+    pub async fn run_backtest() {
         let config = BacktestConfig::new_from_envs();
         let start_time =
             chrono::NaiveDateTime::parse_from_str("2024-04-07 00:00:00", "%Y-%m-%d %H:%M:%S")
@@ -505,16 +509,15 @@ mod trade {
         let trading_start_time =
             chrono::NaiveDateTime::parse_from_str("2024-04-12 18:15:00", "%Y-%m-%d %H:%M:%S")
                 .unwrap();
-        let mut tickers_port = TickersPort::new_and_connect();
         log::info!(
             "fetch tickers for [{}, {}]",
             start_time.to_string(),
             end_time.to_string()
         );
-        let tickers = tickers_port.fetch(
-            start_time.and_utc().timestamp(),
-            end_time.and_utc().timestamp(),
-        );
+        let tickers = TradesTPortClickhouse::new_and_connect()
+            .fetch(&start_time.to_string(), &end_time.to_string())
+            .await;
+        log::info!("there are {} tickers", tickers.len());
         let mut hist_tickers = vec![];
         let mut backtest_tickers = vec![];
         for ticker in tickers.iter() {
@@ -531,11 +534,9 @@ mod trade {
         );
         // TODO: figure out why here i strategy haven't quited https://prnt.sc/FIGF6VvE1eSm
         //       how? export in notebooks candle and debug in test why this happens
-        // TODO: speed up loading of tickers
         // TODO: workout why strategy doesn't quit trades
         // TODO: immediate aim - run with some configuration, than configurize it and run remaining
         // TODO: calc "strength" on candles in strategy
-        // TODO: read matplotlib and mplfinance doc
         let mut debug_candles = vec![];
         let mut debug_emas = vec![];
         let mut current_candle =
@@ -576,32 +577,34 @@ mod trade {
                     TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
                         if config.save_backtest_outs {
                             let t = threshold.unwrap();
-                            let backtest = BacktestOut::new(
-                                t.open_price,
-                                bottom_threshold,
-                                t.open_timestamp_millis,
-                                ticker.ts_millis,
-                                "reach-stop-loss".to_string(),
-                            );
-                            backtests.push(backtest);
+                            let b = serde_json::json!({
+                                "open_price": t.open_price,
+                                "open_timestamp_millis": t.open_timestamp_millis,
+                                "close_timestamp_millis": ticker.ts_millis,
+                                "bottom_threshold": bottom_threshold,
+                                "reason": "reach-stop-loss",
+                            })
+                            .to_string();
+                            backtests.push(b);
                         }
                         threshold = None;
                     }
                     TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
-                        if !config.save_backtest_outs {
+                        if config.save_backtest_outs {
                             let t = threshold.unwrap();
-                            let backtest = BacktestOut::new(
-                                t.open_price,
-                                trailing_threshold,
-                                t.open_timestamp_millis,
-                                ticker.ts_millis,
-                                "reach-thrailing-loss".to_string(),
-                            );
-                            backtests.push(backtest);
+                            let b = serde_json::json!({
+                                "open_price": t.open_price,
+                                "open_timestamp_millis": t.open_timestamp_millis,
+                                "close_timestamp_millis": ticker.ts_millis,
+                                "trailing_threshold": trailing_threshold,
+                                "reason": "reach-thrailing-stop",
+                            })
+                            .to_string();
+                            backtests.push(b);
                         }
                         threshold = None;
                     }
-                    _ => {}
+                    TrailingThresholdReason::Continue => {}
                 },
                 None => match strategy.fire(&ticker) {
                     Some(_) => {
@@ -614,32 +617,56 @@ mod trade {
                 },
             }
         }
-        if config.save_backtest_outs {
-            if backtests.len() > 0 {
-                log::info!("save {} backtests outs", backtests.len());
-                let mut backtests_port = BacktestsPort::new_and_connect();
-                backtests_port.create_table();
-                backtests_port.clear_table();
-                backtests_port
-                    .insert_batch(&backtests, strategy.name)
-                    .unwrap();
-            } else {
-                log::info!("there is no backtests to save");
-            }
+        // TODO: workout why closes doesn;'t happen https://prnt.sc/AIMKND_qrDIA
+        //   TODO: as an idea log internal state of threshold when trade opens
+        //   TODO: run test with exactly same data like in runtime (find them and run)
+        // TODO: workout how librdkafka works
+        // TODO: speed up loading of tickers
+        // TODO: read matplotlib and mplfinance doc
+        // TODO: what's rust iter() diff with into_iter() and what are the ways to iterate through array
+        // TODO: use https://github.com/rust-lang/rust-clippy
+        log::info!(
+            "finish run_id={} debug_candles.len()={} backtests.len()={}",
+            config.run_id,
+            debug_candles.len(),
+            backtests.len()
+        );
+        let debugs_port = exchanges_arbitrage::DebugsPortClickhouse::new_and_connect();
+        if config.save_debug_candles && debug_candles.len() > 0 {
+            log::info!("save debug_candles to default.debugs");
+            let vec = debug_candles
+                .iter()
+                .map(|x| exchanges_arbitrage::DebugsRow {
+                    run_id: config.run_id.clone(),
+                    kind: "candle".into(),
+                    content: x.to_json_string(),
+                })
+                .collect::<Vec<_>>();
+            let _ = debugs_port.insert_batch(&vec).await;
         }
-        if config.save_debug_candles {
-            log::info!("save debug candles");
-            let mut debug_candles_port = DebugCandlesPort::new_and_connect();
-            debug_candles_port.create_table();
-            debug_candles_port.clear_table();
-            debug_candles_port.insert_batch(&debug_candles).unwrap();
+        if config.save_backtest_outs && backtests.len() > 0 {
+            log::info!("save backtests to default.debugs");
+            let vec = backtests
+                .iter()
+                .map(|x| exchanges_arbitrage::DebugsRow {
+                    run_id: config.run_id.clone(),
+                    kind: "backtest".into(),
+                    content: x.into(),
+                })
+                .collect::<Vec<_>>();
+            let _ = debugs_port.insert_batch(&vec).await;
         }
-        if config.save_debug_emas {
-            log::info!("save debug emas");
-            let mut debug_emas_port = DebugEmasPort::new_and_connect();
-            debug_emas_port.create_table();
-            debug_emas_port.clear_table();
-            debug_emas_port.insert_batch(&debug_emas).unwrap();
+        if config.save_debug_emas && debug_emas.len() > 0 {
+            log::info!("save debug_emas to default.debugs");
+            let vec = debug_emas
+                .iter()
+                .map(|x| exchanges_arbitrage::DebugsRow {
+                    run_id: config.run_id.clone(),
+                    kind: "ema".into(),
+                    content: x.to_string(),
+                })
+                .collect::<Vec<_>>();
+            let _ = debugs_port.insert_batch(&vec).await;
         }
     }
 

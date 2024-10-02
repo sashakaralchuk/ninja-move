@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::env;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use struct_field_names_as_array::FieldNamesAsArray;
 
 pub mod constants;
 pub mod domain;
@@ -162,6 +163,7 @@ impl TelegramBotPort {
     }
 }
 
+// TODO: use clap
 #[derive(Clone)]
 pub struct Args {
     pub write_needed: bool,
@@ -325,6 +327,24 @@ impl Candle {
             }
         }
     }
+
+    pub fn to_json_string(&self) -> String {
+        let timeframe = match self.timeframe {
+            CandleTimeframe::Minutes(n) => format!("{n}m"),
+            CandleTimeframe::Hours(n) => format!("{n}h"),
+        };
+        serde_json::json!({
+            "exchange": self.exchange,
+            "symbol": self.symbol,
+            "open_time": self.open_time,
+            "open": self.open,
+            "close": self.close,
+            "high": self.high,
+            "low": self.low,
+            "timeframe": timeframe,
+        })
+        .to_string()
+    }
 }
 
 pub fn connect_to_postgres() -> Client {
@@ -342,18 +362,18 @@ pub fn connect_to_postgres() -> Client {
 }
 
 pub struct TickersPort {
-    client: Client,
+    client_postgres: Client,
 }
 
 impl TickersPort {
     pub fn new_and_connect() -> Self {
         Self {
-            client: connect_to_postgres(),
+            client_postgres: connect_to_postgres(),
         }
     }
 
     pub fn create_table(&mut self) {
-        self.client
+        self.client_postgres
             .batch_execute(
                 "
             CREATE TABLE IF NOT EXISTS public.tickers (
@@ -379,7 +399,7 @@ impl TickersPort {
                 x.data_last_price
             ),
         );
-        match self.client.batch_execute(query.as_str()) {
+        match self.client_postgres.batch_execute(query.as_str()) {
             Ok(v) => return Ok(v),
             Err(error) => return Err(format!("error: {}", error)),
         }
@@ -389,7 +409,7 @@ impl TickersPort {
         let date_str = date.to_string();
         log::debug!("remove records on {date_str} in public.tickers table",);
         let query = format!("delete from public.tickers where timestamp::date = '{date_str}';");
-        self.client.batch_execute(query.as_str()).unwrap();
+        self.client_postgres.batch_execute(query.as_str()).unwrap();
         Ok(())
     }
 
@@ -415,7 +435,7 @@ impl TickersPort {
                 "INSERT INTO public.tickers(exchange, symbol, timestamp, last_price)
                 VALUES {values};",
             );
-            self.client.batch_execute(query.as_str()).unwrap();
+            self.client_postgres.batch_execute(query.as_str()).unwrap();
         }
         Ok(())
     }
@@ -430,7 +450,7 @@ impl TickersPort {
             order by timestamp;
         "
         );
-        self.client
+        self.client_postgres
             .query(&q, &[])
             .unwrap()
             .iter()
@@ -445,6 +465,111 @@ impl TickersPort {
             })
             .collect()
     }
+}
+
+pub struct DebugsPortClickhouse {
+    client: clickhouse::Client,
+}
+
+impl DebugsPortClickhouse {
+    pub fn new_and_connect() -> Self {
+        let client = clickhouse::Client::default().with_url("http://127.0.0.1:18123");
+        Self { client }
+    }
+
+    pub async fn insert_batch(&self, debugs: &Vec<DebugsRow>) {
+        let mut insert = self.client.insert("debugs").unwrap();
+        for debug_row in debugs {
+            insert.write(debug_row).await.unwrap();
+        }
+        insert.end().await.unwrap();
+    }
+}
+
+#[derive(clickhouse::Row, serde::Serialize)]
+pub struct DebugsRow {
+    pub run_id: String,
+    pub kind: String,
+    pub content: String,
+}
+
+pub struct TradesTPortClickhouse {
+    client: clickhouse::Client,
+}
+
+impl TradesTPortClickhouse {
+    pub fn new_and_connect() -> Self {
+        let client = clickhouse::Client::default().with_url("http://127.0.0.1:18123");
+        Self { client }
+    }
+
+    pub async fn fetch(&mut self, start_time_iso: &str, end_time_iso: &str) -> Vec<FlatTicker> {
+        let query = format!(
+            "
+            SELECT {}
+            FROM default.trades_t_raw
+            WHERE time BETWEEN '{}' AND '{}'
+            ORDER BY id ASC
+            ",
+            TradesRow::FIELD_NAMES_AS_ARRAY.join(","),
+            start_time_iso,
+            end_time_iso
+        );
+        self.client
+            .query(query.as_str())
+            .fetch_all::<TradesRow>()
+            .await
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let ts_millis = (x.time.unix_timestamp_nanos() / 1_000_000) as i64;
+                FlatTicker::new_with_millis(ts_millis, &x.symbol, x.price, &x.exchange).unwrap()
+            })
+            .collect()
+    }
+
+    pub async fn insert_batch_chunked(&self, vec: &Vec<TradesRow>) {
+        let slice_size = 100_000;
+        let mut i = 0;
+        while i < vec.len() {
+            let mut insert = self.client.insert("trades_t_raw").unwrap();
+            let mut to_write_amount = 0;
+            for _ in 0..slice_size {
+                if i == vec.len() {
+                    break;
+                }
+                insert.write(&vec[i]).await.unwrap();
+                to_write_amount += 1;
+                i += 1;
+            }
+            log::debug!(
+                "TradesTPortClickhouse::insert_batch_chunked \
+                insert tick with slice_size={slice_size} to_write_amount={to_write_amount}",
+            );
+            insert.end().await.unwrap();
+        }
+    }
+}
+
+#[derive(
+    clickhouse::Row,
+    serde::Deserialize,
+    serde::Serialize,
+    struct_field_names_as_array::FieldNamesAsArray,
+)]
+pub struct TradesRow {
+    pub id: u64,
+    pub price: f64,
+    pub qty: f64,
+    pub base_qty: f64,
+    #[serde(with = "clickhouse::serde::time::datetime")]
+    pub time: time::OffsetDateTime,
+    pub is_buyer: bool,
+    pub is_maker: bool,
+    pub exchange: String,
+    pub symbol: String,
+    #[serde(with = "clickhouse::serde::time::date")]
+    pub date_iso: time::Date,
 }
 
 pub enum TrailingThresholdReason {
@@ -484,15 +609,7 @@ impl TrailingThreshold {
             self.open_price + (ticker.data_last_price - self.open_price) * trailing_rel_val;
         if self.trailing_threshold.is_none() {
             let calc_start_abs_val = self.open_price * (1.0 + trailing_threshold_rel_val);
-            if ticker.data_last_price <= calc_start_abs_val {
-                // log::debug!(
-                //     "price haven't reached level to start calculating \
-                //     trailing threshold calc_start_abs_val={calc_start_abs_val},\
-                //     ticker.data_last_price={}",
-                //     ticker.data_last_price,
-                // );
-            } else {
-                // log::debug!("initialize threshold with {}", next_threshold);
+            if ticker.data_last_price > calc_start_abs_val {
                 self.trailing_threshold = Some(next_threshold);
             }
             return TrailingThresholdReason::Continue;
@@ -622,238 +739,6 @@ impl HistoryPort {
             Ok(v) => return Ok(v),
             Err(error) => return Err(format!("error: {}", error)),
         }
-    }
-}
-
-pub struct DebugCandlesPort {
-    client: Client,
-}
-
-impl DebugCandlesPort {
-    pub fn new_and_connect() -> Self {
-        Self {
-            client: connect_to_postgres(),
-        }
-    }
-
-    pub fn create_table(&mut self) {
-        self.client
-            .batch_execute(
-                "
-            CREATE TABLE IF NOT EXISTS public.debug_candles (
-                created_at TIMESTAMP NOT NULL,
-                exchange varchar NOT NULL,
-                symbol varchar NOT NULL,
-                open_time TIMESTAMP NOT NULL,
-                open real NOT NULL,
-                close real NOT NULL,
-                high real NOT NULL,
-                low real NOT NULL,
-                timeframe varchar NOT NULL,
-                commit_hash varchar NOT NULL
-            );
-        ",
-            )
-            .unwrap();
-    }
-
-    pub fn clear_table(&mut self) {
-        log::info!("delete all rows in public.debug_candles");
-        self.client
-            .batch_execute("delete from public.debug_candles")
-            .unwrap();
-    }
-
-    pub fn insert_batch(&mut self, list: &Vec<Candle>) -> Result<(), String> {
-        let create_at_secs = chrono::Utc::now().timestamp();
-        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
-        let values = list
-            .iter()
-            .map(|x| {
-                let timeframe = match x.timeframe {
-                    CandleTimeframe::Hours(n) => format!("{n}h"),
-                    CandleTimeframe::Minutes(n) => format!("{n}m"),
-                };
-                format!(
-                    "(to_timestamp({})::timestamp, '{}', '{}', to_timestamp({})::timestamp,
-                    {}, {}, {}, {}, '{}', '{}')",
-                    create_at_secs,
-                    x.exchange,
-                    x.symbol,
-                    x.open_time / 1000,
-                    x.open,
-                    x.close,
-                    x.high,
-                    x.low,
-                    timeframe,
-                    commit_hash,
-                )
-            })
-            .collect::<Vec<String>>()
-            .join(",");
-        let query = format!(
-            "INSERT INTO public.debug_candles
-                (created_at, exchange, symbol, open_time, open, close, high, low,
-                    timeframe, commit_hash)
-                VALUES {values};",
-        );
-        log::info!("save {} debug candles", list.len());
-        self.client.batch_execute(query.as_str()).unwrap();
-        Ok(())
-    }
-}
-
-pub struct DebugEmasPort {
-    client: Client,
-}
-
-impl DebugEmasPort {
-    pub fn new_and_connect() -> Self {
-        Self {
-            client: connect_to_postgres(),
-        }
-    }
-
-    pub fn create_table(&mut self) {
-        self.client
-            .batch_execute(
-                "
-            CREATE TABLE IF NOT EXISTS public.debug_emas (
-                created_at TIMESTAMP NOT NULL,
-                value_ema real NOT NULL,
-                commit_hash varchar NOT NULL
-            );
-        ",
-            )
-            .unwrap();
-    }
-
-    pub fn clear_table(&mut self) {
-        log::info!("delete all rows in public.debug_emas");
-        self.client
-            .batch_execute("delete from public.debug_emas")
-            .unwrap();
-    }
-
-    pub fn insert_batch(&mut self, list: &Vec<f64>) -> Result<(), String> {
-        let create_at_secs = chrono::Utc::now().timestamp();
-        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
-        let values = list
-            .iter()
-            .map(|x| {
-                format!(
-                    "(to_timestamp({})::timestamp, {}, '{}')",
-                    create_at_secs, x, commit_hash
-                )
-            })
-            .collect::<Vec<String>>()
-            .join(",");
-        let query = format!(
-            "INSERT INTO public.debug_emas
-                (created_at, value_ema, commit_hash)
-                VALUES {values};",
-        );
-        log::info!("save {} debug emas", list.len());
-        self.client.batch_execute(query.as_str()).unwrap();
-        Ok(())
-    }
-}
-
-pub struct BacktestOut {
-    open_price: f64,
-    close_price: f64,
-    open_timestamp_millis: i64,
-    close_timestamp_millis: i64,
-    close_reason: String,
-}
-
-impl BacktestOut {
-    pub fn new(
-        open_price: f64,
-        close_price: f64,
-        open_timestamp_millis: i64,
-        close_timestamp_millis: i64,
-        close_reason: String,
-    ) -> Self {
-        Self {
-            open_price,
-            close_price,
-            open_timestamp_millis,
-            close_timestamp_millis,
-            close_reason,
-        }
-    }
-}
-
-pub struct BacktestsPort {
-    client: Client,
-}
-
-impl BacktestsPort {
-    pub fn new_and_connect() -> Self {
-        Self {
-            client: connect_to_postgres(),
-        }
-    }
-
-    pub fn create_table(&mut self) {
-        self.client
-            .batch_execute(
-                "
-            CREATE TABLE IF NOT EXISTS public.backtests (
-                created_at TIMESTAMP NOT NULL,
-                open_price real NOT NULL,
-                close_price real NOT NULL,
-                open_timestamp TIMESTAMP NOT NULL,
-                close_timestamp TIMESTAMP NOT NULL,
-                close_reason varchar NOT NULL,
-                strategy_name varchar NOT NULL,
-                commit_hash varchar NOT NULL
-            );
-        ",
-            )
-            .unwrap();
-    }
-
-    pub fn clear_table(&mut self) {
-        log::info!("delete all rows in public.backtests");
-        self.client
-            .batch_execute("delete from public.backtests")
-            .unwrap();
-    }
-
-    pub fn insert_batch(
-        &mut self,
-        list: &Vec<BacktestOut>,
-        strategy_name: String,
-    ) -> Result<(), String> {
-        let commit_hash = env::var("COMMIT_HASH_STR").unwrap();
-        let values = list
-            .iter()
-            .map(|x| {
-                format!(
-                    "(now(), {}, {}, to_timestamp({})::timestamp,
-                    to_timestamp({})::timestamp, '{}', '{}', '{}')",
-                    x.open_price,
-                    x.close_price,
-                    x.open_timestamp_millis / 1000,
-                    x.close_timestamp_millis / 1000,
-                    x.close_reason,
-                    strategy_name,
-                    commit_hash,
-                )
-            })
-            .collect::<Vec<String>>()
-            .join(",");
-        let query = format!(
-            "INSERT INTO public.backtests
-                (created_at, open_price, close_price, open_timestamp,
-                    close_timestamp, close_reason, strategy_name, commit_hash)
-                VALUES {values};",
-        );
-        log::info!("save {} debug emas", list.len());
-        self.client.batch_execute(query.as_str()).unwrap();
-        Ok(())
     }
 }
 
@@ -1019,9 +904,48 @@ mod test {
         assert!(t.trailing_threshold.is_none());
     }
 
-    /// Cover exit on the next chart https://prnt.sc/kKfOTb_rqRJ7.
+    ///
+    /// Covers why do exit doesn't happen on such chart https://prnt.sc/vwhKy6TXX_J-.
+    ///
     #[test]
     fn test_trailing_threshold_reach_trailing_threshold_case_1() {
+        let candles = [
+            [62073.39, 64624.37, 61809.93, 64953.85],
+            [64624.37, 64547.18, 64184.61, 65179.0],
+            [64547.18, 64639.02, 64098.13, 65099.0],
+            [64639.02, 64775.93, 64490.0, 64943.87],
+            [64775.94, 64777.7, 64420.0, 65213.31],
+            [64777.7, 64870.74, 64691.28, 65450.0],
+            [64870.73, 64965.19, 64770.0, 65440.57],
+            [64965.19, 64903.71, 64436.51, 65069.07],
+            [64903.71, 64452.12, 63820.57, 64965.78],
+            [64452.12, 64437.17, 64333.33, 64707.7],
+            [64437.18, 64005.76, 63506.57, 64533.29],
+            [64005.76, 64627.8, 63929.18, 64808.54],
+            [64627.8, 64202.63, 64084.86, 64660.86],
+            [64202.63, 64325.25, 64085.44, 64393.96],
+            [64325.26, 64044.11, 63677.36, 64334.84],
+            [64044.12, 64398.32, 64044.11, 64444.91],
+            [64398.31, 64012.5, 64000.01, 64494.03],
+            [64012.49, 63818.01, 62953.9, 64124.0],
+        ];
+        let mut t = TrailingThreshold::new(62073.39, 0);
+        for candle_prices in candles.iter() {
+            for price in candle_prices.iter() {
+                let decision = match t.apply_and_make_decision(&create_ticker_on_price(*price)) {
+                    TrailingThresholdReason::ReachStopLoss(_) => "ReachStopLoss",
+                    TrailingThresholdReason::ReachThrailingStop(_) => "ReachThrailingStop",
+                    TrailingThresholdReason::Continue => "Continue",
+                };
+                println!("{price:.2} {decision}")
+            }
+        }
+    }
+
+    /// Cover exit on the next chart https://prnt.sc/kKfOTb_rqRJ7.
+    #[test]
+    fn test_trailing_threshold_reach_trailing_threshold_case_2() {
+        // TODO: add test for case then price ups and then decreases, threshold must go lower
         return;
         let open_price = 62310.50;
         let tickers_prices = vec![
