@@ -1,7 +1,3 @@
-"""
-!pip install pandas mplfinance pandera nb-black-only
-"""
-
 import os
 import typing
 import logging
