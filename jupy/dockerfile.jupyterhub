@@ -4,7 +4,14 @@ USER root
 RUN apt update -y
 RUN apt upgrade -y
 RUN apt install build-essential curl -y
-RUN pip install spylon-kernel pandas==2.2.0 matplotlib==3.8.2
+
+RUN pip install \
+    spylon-kernel==0.4.1 \
+    pandas==2.2.0 \
+    matplotlib==3.8.2 \
+    mplfinance==0.12.10b0 \
+    pandera==0.20.4 \
+    clickhouse-sqlalchemy==0.3.2
 
 USER jovyan
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
