@@ -346,7 +346,6 @@ mod trade {
         ema_len: usize,
         prices_len: usize,
         prices: RingBuffer,
-        name: String,
     }
 
     impl Strategy {
@@ -357,7 +356,6 @@ mod trade {
                 prices: RingBuffer::new(prices_len),
                 ema_len,
                 prices_len,
-                name: "trade-emas".to_string(),
             }
         }
 
@@ -573,7 +571,7 @@ mod trade {
                 current_candle.apply_ticker(&ticker)
             }
             match threshold {
-                Some(_) => match threshold.unwrap().apply_and_make_decision(&ticker) {
+                Some(_) => match threshold.as_mut().unwrap().apply_and_make_decision(&ticker) {
                     TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
                         if config.save_backtest_outs {
                             let t = threshold.unwrap();
@@ -617,13 +615,11 @@ mod trade {
                 },
             }
         }
-        // TODO: workout why closes doesn;'t happen https://prnt.sc/AIMKND_qrDIA
-        //   TODO: as an idea log internal state of threshold when trade opens
-        //   TODO: run test with exactly same data like in runtime (find them and run)
-        // TODO: workout how librdkafka works
+        // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
         // TODO: speed up loading of tickers
         // TODO: read matplotlib and mplfinance doc
         // TODO: what's rust iter() diff with into_iter() and what are the ways to iterate through array
+        // TODO: what are ref and deref
         // TODO: use https://github.com/rust-lang/rust-clippy
         log::info!(
             "finish run_id={} debug_candles.len()={} backtests.len()={}",
