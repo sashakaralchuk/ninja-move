@@ -75,3 +75,7 @@ run-example-log-dynamic:
 
 run-example-log-to-file:
 	cargo run --example log_to_file
+
+run-docs:
+	# find . -maxdepth 1 | grep -v target
+	cargo doc && cargo doc --open

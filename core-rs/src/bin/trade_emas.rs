@@ -160,7 +160,8 @@ mod trade {
             let content = serde_json::json!({
                 "debug_candles.len()": debug_candles.len(),
                 "backtests.len()": backtests.len(),
-                "config": "TODO: serialize config here + save run info to mlflow",
+                // TODO: save run info to mlflow
+                "config": serde_json::to_string(&config).unwrap(),
             })
             .to_string();
             log::info!("finish run_id={} content={}", config.run_id, content);
@@ -209,12 +210,13 @@ mod trade {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, serde::Serialize)]
     struct BacktestConfig {
         save_backtest_outs: bool,
         save_debug_candles: bool,
         save_debug_emas: bool,
         run_id: String,
+        commit_hash: String,
         start_timestamp: chrono::NaiveDateTime,
         end_timestamp: chrono::NaiveDateTime,
         trading_start_timestamp: chrono::NaiveDateTime,
@@ -228,6 +230,7 @@ mod trade {
                 Self::parse_bool_from_int("TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES");
             let save_debug_emas = Self::parse_bool_from_int("TRADE_EMAS_BACKTEST_SAVE_DEBUG_EMAS");
             let run_id = uuid::Uuid::new_v4().to_string();
+            let commit_hash = std::env::var("COMMIT_HASH_STR").unwrap();
             let start_timestamp = Self::parse_timestamp("TRADE_EMAS_BACKTEST_START_TIMESTAMP");
             let end_timestamp = Self::parse_timestamp("TRADE_EMAS_BACKTEST_END_TIMESTAMP");
             let trading_start_timestamp =
@@ -237,6 +240,7 @@ mod trade {
                 save_debug_candles,
                 save_debug_emas,
                 run_id,
+                commit_hash,
                 start_timestamp,
                 end_timestamp,
                 trading_start_timestamp,
