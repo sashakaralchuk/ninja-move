@@ -45,11 +45,15 @@ run-trade-emas-collect-bybit-tickers:
 	${env_vars} cargo run --bin trade_emas -- --command collect-bybit-tickers
 
 run-trade-emas-run-backtest:
+	RUST_LOG=info \
+	COMMIT_HASH_STR=${commit_hash} \
 	TRADE_EMAS_BACKTEST_SAVE_BACKTESTS_OUTS=1 \
 	TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES=1 \
-	TRADE_EMAS_BACKTEST_SAVE_DEBUG_EMAS=1 \
-	COMMIT_HASH_STR=${commit_hash} \
-	${env_vars} cargo run --bin trade_emas -- --command run-backtest
+	TRADE_EMAS_BACKTEST_SAVE_DEBUG_EMAS=0 \
+	TRADE_EMAS_BACKTEST_START_TIMESTAMP="2024-04-07 00:00:00" \
+	TRADE_EMAS_BACKTEST_END_TIMESTAMP="2024-05-15 00:00:00" \
+	TRADE_EMAS_BACKTEST_TRADING_START_TIMESTAMP="2024-04-12 18:15:00" \
+	cargo run --bin trade_emas -- --command run-backtest
 
 run-trade-emas-upload-tickers-to-database:
 	${env_vars} cargo run --bin trade_emas -- --command upload-tickers-to-database
