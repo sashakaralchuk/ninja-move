@@ -503,6 +503,13 @@ impl TradesTPortClickhouse {
         Self { client }
     }
 
+    ///
+    /// Example:
+    /// ```
+    /// let _ = TradesTPortClickhouse::new_and_connect()
+    ///     .fetch("2024-01-01", "2025-01-01").await;
+    /// ```
+    ///
     pub async fn fetch(&mut self, start_time_iso: &str, end_time_iso: &str) -> Vec<FlatTicker> {
         let query = format!(
             "
@@ -526,6 +533,54 @@ impl TradesTPortClickhouse {
                 FlatTicker::new_with_millis(ts_millis, &x.symbol, x.price, &x.exchange).unwrap()
             })
             .collect()
+    }
+
+    pub fn fetch_in_parallel(
+        start_timestamp: &chrono::NaiveDateTime,
+        end_timestamp: &chrono::NaiveDateTime,
+    ) -> Vec<FlatTicker> {
+        let n = 25;
+        let start_millis = start_timestamp.and_utc().timestamp_millis();
+        let interval_millis = end_timestamp.and_utc().timestamp_millis() - start_millis;
+        let step_millis = interval_millis / n;
+        let cache = vec![vec![]; n as usize];
+        let cache_arc = std::sync::Arc::new(std::sync::Mutex::new(cache));
+        let _ = (0..n)
+            .map(|i| {
+                let l = start_millis + step_millis * i + 1000;
+                let r = start_millis + step_millis * (i + 1);
+                let l_ts_str = chrono::DateTime::from_timestamp_millis(l)
+                    .unwrap()
+                    .naive_utc()
+                    .to_string();
+                let r_ts_str = chrono::DateTime::from_timestamp_millis(r)
+                    .unwrap()
+                    .naive_utc()
+                    .to_string();
+                let cache_arc_int = cache_arc.clone();
+                std::thread::spawn(move || {
+                    tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(async {
+                            log::debug!("fetch [{},{},{}]", &i, l_ts_str, r_ts_str);
+                            let mut port = TradesTPortClickhouse::new_and_connect();
+                            let tickers = port.fetch(&l_ts_str, &r_ts_str).await;
+                            cache_arc_int.lock().unwrap()[i as usize] = tickers;
+                        })
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|t| t.join().unwrap());
+        return cache_arc
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .flatten()
+            .collect::<Vec<_>>();
     }
 
     pub async fn insert_batch_chunked(&self, vec: &Vec<TradesRow>) {

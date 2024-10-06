@@ -39,15 +39,13 @@ mod trade {
         let config = BacktestConfig::new_from_envs();
         log::info!(
             "fetch tickers for [{}, {}]",
-            config.start_timestamp.to_string(),
-            config.end_timestamp.to_string()
+            config.start_timestamp,
+            config.end_timestamp
         );
-        let tickers = TradesTPortClickhouse::new_and_connect()
-            .fetch(
-                &config.start_timestamp.to_string(),
-                &config.end_timestamp.to_string(),
-            )
-            .await;
+        let tickers = TradesTPortClickhouse::fetch_in_parallel(
+            &config.start_timestamp,
+            &config.end_timestamp,
+        );
         log::info!(
             "divide tickers on (hist, backtest) tickers.len={}",
             tickers.len()
@@ -149,10 +147,9 @@ mod trade {
                 },
             }
         }
-        // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
-        // TODO: speed up loading of tickers
         // TODO: read matplotlib and mplfinance doc
-        // TODO: use https://github.com/rust-lang/rust-clippy
+        // TODO: why do clickhouse gives bytes back slowly
+        // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
         // TODO: as_ref, as_mut, as_deref etc, to_owned, try_into, std Any, TypeId
         //       std::any::*, Box, Box::pin, Rc::new, t.drop, what's the slice
         //       (dbg!, dbgr!) what are other macroses, how to_sql exists on vec![]
@@ -162,7 +159,6 @@ mod trade {
             let content = serde_json::json!({
                 "debug_candles.len()": debug_candles.len(),
                 "backtests.len()": backtests.len(),
-                // TODO: save run info to mlflow
                 "config": serde_json::to_string(&config).unwrap(),
             })
             .to_string();
