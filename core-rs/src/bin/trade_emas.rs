@@ -31,6 +31,184 @@ mod trade {
         TrailingThresholdReason,
     };
 
+    pub fn run_trading() {
+        unimplemented!()
+    }
+
+    pub async fn run_backtest() {
+        let config = BacktestConfig::new_from_envs();
+        log::info!(
+            "fetch tickers for [{}, {}]",
+            config.start_timestamp.to_string(),
+            config.end_timestamp.to_string()
+        );
+        let tickers = TradesTPortClickhouse::new_and_connect()
+            .fetch(
+                &config.start_timestamp.to_string(),
+                &config.end_timestamp.to_string(),
+            )
+            .await;
+        log::info!(
+            "divide tickers on (hist, backtest) tickers.len={}",
+            tickers.len()
+        );
+        let mut hist_tickers = vec![];
+        let mut backtest_tickers = vec![];
+        for ticker in tickers.iter() {
+            if ticker.ts_millis <= config.trading_start_timestamp.and_utc().timestamp_millis() {
+                hist_tickers.push(ticker.clone());
+            } else {
+                backtest_tickers.push(ticker.clone())
+            }
+        }
+        let mut debug_candles = vec![];
+        let mut current_candle =
+            Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Hours(1));
+        log::info!(
+            "fill hist state (current_candle, strategy) hist_tickers.len={}",
+            hist_tickers.len(),
+        );
+        let mut strategy = {
+            let mut strategy_int = StrategyEmas::new();
+            for ticker in hist_tickers {
+                if current_candle.expired(&ticker) {
+                    strategy_int.apply_candle(&current_candle);
+                    if config.save_debug_candles {
+                        debug_candles.push(current_candle);
+                    }
+                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
+                } else {
+                    current_candle.apply_ticker(&ticker)
+                }
+            }
+            strategy_int
+        };
+        let mut backtests = vec![];
+        let mut debug_emas = vec![];
+        let mut threshold: Option<TrailingThreshold> = None;
+        log::info!(
+            "run backtest backtest_tickers.len()={}",
+            backtest_tickers.len()
+        );
+        for ticker in backtest_tickers {
+            if current_candle.expired(&ticker) {
+                log::debug!("candle expired {:?}", current_candle);
+                strategy.apply_candle(&current_candle);
+                if config.save_debug_candles {
+                    debug_candles.push(current_candle);
+                }
+                if config.save_debug_emas {
+                    debug_emas.push(strategy.calc_ema());
+                }
+                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
+            } else {
+                current_candle.apply_ticker(&ticker)
+            }
+            match threshold {
+                Some(_) => match threshold.as_mut().unwrap().apply_and_make_decision(&ticker) {
+                    TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
+                        if config.save_backtest_outs {
+                            let t = threshold.unwrap();
+                            let b = serde_json::json!({
+                                "open_price": t.open_price,
+                                "open_timestamp_millis": t.open_timestamp_millis,
+                                "close_timestamp_millis": ticker.ts_millis,
+                                "bottom_threshold": bottom_threshold,
+                                "reason": "reach-stop-loss",
+                            })
+                            .to_string();
+                            backtests.push(b);
+                        }
+                        threshold = None;
+                    }
+                    TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
+                        if config.save_backtest_outs {
+                            let t = threshold.unwrap();
+                            let b = serde_json::json!({
+                                "open_price": t.open_price,
+                                "open_timestamp_millis": t.open_timestamp_millis,
+                                "close_timestamp_millis": ticker.ts_millis,
+                                "trailing_threshold": trailing_threshold,
+                                "reason": "reach-thrailing-stop",
+                            })
+                            .to_string();
+                            backtests.push(b);
+                        }
+                        threshold = None;
+                    }
+                    TrailingThresholdReason::Continue => {}
+                },
+                None => match strategy.fire_with_res(&ticker) {
+                    Ok(_) => {
+                        threshold = Some(TrailingThreshold::new(
+                            ticker.data_last_price,
+                            ticker.ts_millis,
+                        ))
+                    }
+                    Err(_) => {}
+                },
+            }
+        }
+        // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
+        // TODO: speed up loading of tickers
+        // TODO: read matplotlib and mplfinance doc
+        // TODO: what's rust iter() diff with into_iter() and what are the ways to iterate through array
+        // TODO: what are ref and deref
+        // TODO: use https://github.com/rust-lang/rust-clippy
+        let debugs_port = exchanges_arbitrage::DebugsPortClickhouse::new_and_connect();
+        {
+            let content = serde_json::json!({
+                "debug_candles.len()": debug_candles.len(),
+                "backtests.len()": backtests.len(),
+                "config": "TODO: serialize config here + save run info to mlflow",
+            })
+            .to_string();
+            log::info!("finish run_id={} content={}", config.run_id, content);
+            let row = exchanges_arbitrage::DebugsRow {
+                run_id: config.run_id.clone(),
+                kind: "run-info".into(),
+                content,
+            };
+            let _ = debugs_port.insert_batch(&vec![row]).await;
+        }
+        if config.save_debug_candles && debug_candles.len() > 0 {
+            log::info!("save debug_candles to default.debugs");
+            let vec = debug_candles
+                .iter()
+                .map(|x| exchanges_arbitrage::DebugsRow {
+                    run_id: config.run_id.clone(),
+                    kind: "candle".into(),
+                    content: x.to_json_string(),
+                })
+                .collect::<Vec<_>>();
+            let _ = debugs_port.insert_batch(&vec).await;
+        }
+        if config.save_backtest_outs && backtests.len() > 0 {
+            log::info!("save backtests to default.debugs");
+            let vec = backtests
+                .iter()
+                .map(|x| exchanges_arbitrage::DebugsRow {
+                    run_id: config.run_id.clone(),
+                    kind: "backtest".into(),
+                    content: x.into(),
+                })
+                .collect::<Vec<_>>();
+            let _ = debugs_port.insert_batch(&vec).await;
+        }
+        if config.save_debug_emas && debug_emas.len() > 0 {
+            log::info!("save debug_emas to default.debugs");
+            let vec = debug_emas
+                .iter()
+                .map(|x| exchanges_arbitrage::DebugsRow {
+                    run_id: config.run_id.clone(),
+                    kind: "ema".into(),
+                    content: x.to_string(),
+                })
+                .collect::<Vec<_>>();
+            let _ = debugs_port.insert_batch(&vec).await;
+        }
+    }
+
     #[derive(Debug)]
     struct BacktestConfig {
         save_backtest_outs: bool,
@@ -106,7 +284,9 @@ mod trade {
         }
     }
 
+    ///
     /// Calcs the same way as pd.Series(...).ewm(span=len, adjust=False).mean()
+    ///
     pub fn calc_emas(prices: &Vec<f64>, len: i32) -> Vec<f64> {
         let len_f64 = len as f64;
         let smoothing = 2.0;
@@ -119,21 +299,13 @@ mod trade {
         emas
     }
 
-    struct StrategySignal {}
-
-    impl StrategySignal {
-        fn new() -> Self {
-            Self {}
-        }
-    }
-
-    struct Strategy {
+    struct StrategyEmas {
         ema_len: usize,
         prices_len: usize,
         prices: RingBuffer,
     }
 
-    impl Strategy {
+    impl StrategyEmas {
         fn new() -> Self {
             let ema_len = 12;
             let prices_len = ema_len + 30; // 12 means ema(12)
@@ -148,17 +320,17 @@ mod trade {
             self.prices.add(candle.close);
         }
 
-        fn fire(&self, ticker: &FlatTicker) -> Option<StrategySignal> {
+        fn fire_with_res(&self, ticker: &FlatTicker) -> std::result::Result<(), ()> {
             if self.prices.all().len() < self.prices_len {
-                return None;
+                return Err(());
             }
             let ema = self.calc_ema();
             let eps = 0.001;
             let p = ticker.data_last_price;
             if p - p * eps <= ema && ema <= p + p * eps {
-                return Some(StrategySignal::new());
+                return Ok(());
             }
-            None
+            Err(())
         }
 
         fn calc_ema(&self) -> f64 {
@@ -167,183 +339,11 @@ mod trade {
         }
     }
 
-    pub fn run_trading() {
-        unimplemented!()
-    }
-
-    pub async fn run_backtest() {
-        let config = BacktestConfig::new_from_envs();
-        log::info!(
-            "fetch tickers for [{}, {}]",
-            config.start_timestamp.to_string(),
-            config.end_timestamp.to_string()
-        );
-        let tickers = TradesTPortClickhouse::new_and_connect()
-            .fetch(
-                &config.start_timestamp.to_string(),
-                &config.end_timestamp.to_string(),
-            )
-            .await;
-        log::info!(
-            "divide tickers on (hist, backtest) tickers.len={}",
-            tickers.len()
-        );
-        let mut hist_tickers = vec![];
-        let mut backtest_tickers = vec![];
-        for ticker in tickers.iter() {
-            if ticker.ts_millis <= config.trading_start_timestamp.and_utc().timestamp_millis() {
-                hist_tickers.push(ticker.clone());
-            } else {
-                backtest_tickers.push(ticker.clone())
-            }
-        }
-        // TODO: calc "strength" on candles in strategy
-        let mut debug_candles = vec![];
-        let mut current_candle =
-            Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Hours(1));
-        log::info!(
-            "fill hist state (current_candle, strategy) hist_tickers.len={}",
-            hist_tickers.len(),
-        );
-        let mut strategy = {
-            let mut strategy_int = Strategy::new();
-            for ticker in hist_tickers {
-                if current_candle.expired(&ticker) {
-                    strategy_int.apply_candle(&current_candle);
-                    if config.save_debug_candles {
-                        debug_candles.push(current_candle);
-                    }
-                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
-                } else {
-                    current_candle.apply_ticker(&ticker)
-                }
-            }
-            strategy_int
-        };
-        let mut backtests = vec![];
-        let mut debug_emas = vec![];
-        let mut threshold: Option<TrailingThreshold> = None;
-        log::info!(
-            "run backtest backtest_tickers.len()={}",
-            backtest_tickers.len()
-        );
-        for ticker in backtest_tickers {
-            if current_candle.expired(&ticker) {
-                log::debug!("candle expired {:?}", current_candle);
-                strategy.apply_candle(&current_candle);
-                if config.save_debug_candles {
-                    debug_candles.push(current_candle);
-                }
-                if config.save_debug_emas {
-                    debug_emas.push(strategy.calc_ema());
-                }
-                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
-            } else {
-                current_candle.apply_ticker(&ticker)
-            }
-            match threshold {
-                Some(_) => match threshold.as_mut().unwrap().apply_and_make_decision(&ticker) {
-                    TrailingThresholdReason::ReachStopLoss(bottom_threshold) => {
-                        if config.save_backtest_outs {
-                            let t = threshold.unwrap();
-                            let b = serde_json::json!({
-                                "open_price": t.open_price,
-                                "open_timestamp_millis": t.open_timestamp_millis,
-                                "close_timestamp_millis": ticker.ts_millis,
-                                "bottom_threshold": bottom_threshold,
-                                "reason": "reach-stop-loss",
-                            })
-                            .to_string();
-                            backtests.push(b);
-                        }
-                        threshold = None;
-                    }
-                    TrailingThresholdReason::ReachThrailingStop(trailing_threshold) => {
-                        if config.save_backtest_outs {
-                            let t = threshold.unwrap();
-                            let b = serde_json::json!({
-                                "open_price": t.open_price,
-                                "open_timestamp_millis": t.open_timestamp_millis,
-                                "close_timestamp_millis": ticker.ts_millis,
-                                "trailing_threshold": trailing_threshold,
-                                "reason": "reach-thrailing-stop",
-                            })
-                            .to_string();
-                            backtests.push(b);
-                        }
-                        threshold = None;
-                    }
-                    TrailingThresholdReason::Continue => {}
-                },
-                None => match strategy.fire(&ticker) {
-                    Some(_) => {
-                        threshold = Some(TrailingThreshold::new(
-                            ticker.data_last_price,
-                            ticker.ts_millis,
-                        ))
-                    }
-                    None => {}
-                },
-            }
-        }
-        // TODO: save config to run debug
-        // TODO: figure out how to document strategy + what are the inputs for the strategy in (Strategy, ThrailingThreshold) + find the optimal and compare profits
-        // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
-        // TODO: speed up loading of tickers
-        // TODO: read matplotlib and mplfinance doc
-        // TODO: what's rust iter() diff with into_iter() and what are the ways to iterate through array
-        // TODO: what are ref and deref
-        // TODO: use https://github.com/rust-lang/rust-clippy
-        log::info!(
-            "finish run_id={} debug_candles.len()={} backtests.len()={}",
-            config.run_id,
-            debug_candles.len(),
-            backtests.len()
-        );
-        let debugs_port = exchanges_arbitrage::DebugsPortClickhouse::new_and_connect();
-        if config.save_debug_candles && debug_candles.len() > 0 {
-            log::info!("save debug_candles to default.debugs");
-            let vec = debug_candles
-                .iter()
-                .map(|x| exchanges_arbitrage::DebugsRow {
-                    run_id: config.run_id.clone(),
-                    kind: "candle".into(),
-                    content: x.to_json_string(),
-                })
-                .collect::<Vec<_>>();
-            let _ = debugs_port.insert_batch(&vec).await;
-        }
-        if config.save_backtest_outs && backtests.len() > 0 {
-            log::info!("save backtests to default.debugs");
-            let vec = backtests
-                .iter()
-                .map(|x| exchanges_arbitrage::DebugsRow {
-                    run_id: config.run_id.clone(),
-                    kind: "backtest".into(),
-                    content: x.into(),
-                })
-                .collect::<Vec<_>>();
-            let _ = debugs_port.insert_batch(&vec).await;
-        }
-        if config.save_debug_emas && debug_emas.len() > 0 {
-            log::info!("save debug_emas to default.debugs");
-            let vec = debug_emas
-                .iter()
-                .map(|x| exchanges_arbitrage::DebugsRow {
-                    run_id: config.run_id.clone(),
-                    kind: "ema".into(),
-                    content: x.to_string(),
-                })
-                .collect::<Vec<_>>();
-            let _ = debugs_port.insert_batch(&vec).await;
-        }
-    }
-
     #[cfg(test)]
     mod tests {
         use exchanges_arbitrage::{Candle, CandleTimeframe, FlatTicker};
 
-        use crate::trade::{RingBuffer, Strategy};
+        use crate::trade::{RingBuffer, StrategyEmas};
 
         fn l_to_str(l: &Vec<f64>) -> String {
             l.iter()
@@ -543,25 +543,25 @@ mod trade {
                     )
                 })
                 .collect::<Vec<Candle>>();
-            let mut strategy = Strategy::new();
+            let mut strategy = StrategyEmas::new();
             for candle in candles.iter() {
                 strategy.apply_candle(&candle);
             }
-            match strategy.fire(&create_ticker_on_price(67269.0)) {
-                Some(_) => assert_eq!(0, 1),
-                _ => {}
+            match strategy.fire_with_res(&create_ticker_on_price(67269.0)) {
+                Ok(_) => assert_eq!(0, 1),
+                Err(_) => {}
             }
-            match strategy.fire(&create_ticker_on_price(67270.0)) {
-                Some(_) => {}
-                _ => assert_eq!(0, 1),
+            match strategy.fire_with_res(&create_ticker_on_price(67270.0)) {
+                Ok(_) => {}
+                Err(_) => assert_eq!(0, 1),
             }
-            match strategy.fire(&create_ticker_on_price(67400.0)) {
-                Some(_) => {}
-                _ => assert_eq!(0, 1),
+            match strategy.fire_with_res(&create_ticker_on_price(67400.0)) {
+                Ok(_) => {}
+                Err(_) => assert_eq!(0, 1),
             }
-            match strategy.fire(&create_ticker_on_price(67404.0)) {
-                Some(_) => assert_eq!(0, 1),
-                _ => {}
+            match strategy.fire_with_res(&create_ticker_on_price(67404.0)) {
+                Ok(_) => assert_eq!(0, 1),
+                Err(_) => {}
             }
         }
     }

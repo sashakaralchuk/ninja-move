@@ -126,6 +126,7 @@ impl Binance {
     }
 }
 
+#[allow(dead_code)]
 enum BinanceDataKind {
     Trades,
     Klines,
@@ -141,6 +142,7 @@ impl RedpandaPort {
     /// RedpandaPort::connect_produce_messages_chunked("trades", &vec).await;
     /// ```
     ///
+    #[allow(dead_code)]
     async fn connect_produce_messages_chunked(topic_name: &str, vec: &Vec<String>) {
         let mut threads = vec![];
         let n = 25;
@@ -210,14 +212,15 @@ fn gen_dates_range(start_iso: &str, end_iso: &str) -> Vec<String> {
     out
 }
 
-async fn fetch_parse_produce(
-    producer: &FutureProducer,
-    symbol: &str,
-    date_iso: &str,
-    topic_name: &str,
-) {
-    unimplemented!("error in parsing below exists");
-    log::debug!("fetch file url");
+#[allow(dead_code)]
+async fn fetch_parse_produce_klines() {
+    let symbol = "BTCUSDT";
+    let date_iso = "2024-04-07";
+    let topic_name = "trades";
+    let producer: &FutureProducer = &ClientConfig::new()
+        .set("bootstrap.servers", "127.0.0.1:9092")
+        .create()
+        .expect("Producer creation failed");
     let url_file = {
         let url_meta = "https://www.binance.com/bapi/bigdata\
                         /v1/public/bigdata/finance/exchange/listDownloadData2";
@@ -372,36 +375,6 @@ impl TradeRaw {
             .unwrap(),
         }
     }
-}
-
-struct Kline {
-    // open_time: u64,
-    // open: f64,
-    // high: f64,
-    // low: f64,
-    // close: f64,
-    // volume: f64,
-    // kline_close_time: f64,
-    // quote_asset_volume: f64,
-    // number_of_trades: u64,
-    // taker_buy_base_asset_volume: f64,
-    // taker_buy_quote_asset_volume: f64,
-    // t: u64,
-    // queue
-    // open_time: u64,
-    // open: f64,
-    // high: f64,
-    // low: f64,
-    // close: f64,
-    // volume: f64,
-    // kline_close_time: f64,
-    // quote_asset_volume: f64,
-    // number_of_trades: u64,
-    // taker_buy_base_asset_volume: f64,
-    // taker_buy_quote_asset_volume: f64,
-    // t: u64,
-    // symbol: String,
-    // date_iso: String,
 }
 
 #[derive(Debug, serde::Serialize)]
