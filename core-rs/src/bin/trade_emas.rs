@@ -14,6 +14,7 @@ async fn main() {
         "debug-read-calc-write-emas" => debug::read_calc_write_emas(),
         "debug-read-save-tickers-to-database" => debug::read_save_tickers_to_database(),
         "debug-calc-2024-04-07-candles" => debug::calc_2024_04_07_candles(),
+        "debug-workout-mlflow" => debug::workout_mlflow().await,
         _ => log::error!("unknown command"),
     }
 }
@@ -27,7 +28,7 @@ struct RunArgs {
 
 mod trade {
     use exchanges_arbitrage::{
-        Candle, CandleTimeframe, FlatTicker, TradesTPortClickhouse, TrailingThreshold,
+        Candle, CandleTimeframe, FlatTicker, MlflowPort, TradesTPortClickhouse, TrailingThreshold,
         TrailingThresholdReason,
     };
 
@@ -170,6 +171,28 @@ mod trade {
             };
             let _ = debugs_port.insert_batch(&vec![row]).await;
         }
+        {
+            let params = vec![
+                ("model_name", "trade_emas".to_string()),
+                ("commit_hash", config.commit_hash.clone()),
+                ("start_timestamp", config.start_timestamp.to_string()),
+                ("end_timestamp", config.end_timestamp.to_string()),
+            ];
+            let metrics = vec![
+                ("debug_candles.len", debug_candles.len() as f64),
+                ("backtests.len", backtests.len() as f64),
+                ("profit", -1.0),
+            ];
+            let mut mlflow_port = MlflowPort::new();
+            mlflow_port.set_experiment(&config.experiment_name).await;
+            mlflow_port.start_run().await;
+            for (k, v) in params {
+                mlflow_port.log_parameter(k, &v).await;
+            }
+            for (k, v) in metrics {
+                mlflow_port.log_metric(k, v).await;
+            }
+        }
         if config.save_debug_candles && debug_candles.len() > 0 {
             log::info!("save debug_candles to default.debugs");
             let vec = debug_candles
@@ -215,6 +238,7 @@ mod trade {
         save_debug_emas: bool,
         run_id: String,
         commit_hash: String,
+        experiment_name: String,
         start_timestamp: chrono::NaiveDateTime,
         end_timestamp: chrono::NaiveDateTime,
         trading_start_timestamp: chrono::NaiveDateTime,
@@ -229,6 +253,7 @@ mod trade {
             let save_debug_emas = Self::parse_bool_from_int("TRADE_EMAS_BACKTEST_SAVE_DEBUG_EMAS");
             let run_id = uuid::Uuid::new_v4().to_string();
             let commit_hash = std::env::var("COMMIT_HASH_STR").unwrap();
+            let experiment_name = std::env::var("TRADE_EMAS_BACKTEST_EXPERIMENT_NAME").unwrap();
             let start_timestamp = Self::parse_timestamp("TRADE_EMAS_BACKTEST_START_TIMESTAMP");
             let end_timestamp = Self::parse_timestamp("TRADE_EMAS_BACKTEST_END_TIMESTAMP");
             let trading_start_timestamp =
@@ -239,6 +264,7 @@ mod trade {
                 save_debug_emas,
                 run_id,
                 commit_hash,
+                experiment_name,
                 start_timestamp,
                 end_timestamp,
                 trading_start_timestamp,
@@ -574,6 +600,7 @@ mod debug {
     use exchanges_arbitrage::{domain::bybit, Candle, CandleTimeframe, FlatTicker, TickersPort};
     use plotters::prelude::*;
     use polars::prelude::*;
+    use rand::Rng;
     use std::{
         io::{Read, Seek, SeekFrom, Write},
         str::FromStr,
@@ -924,5 +951,23 @@ mod debug {
     #[derive(serde::Deserialize)]
     struct DebugClosePrices {
         close_prices: Vec<f64>,
+    }
+
+    pub async fn workout_mlflow() {
+        let mut mlflow_port = exchanges_arbitrage::MlflowPort::new();
+        mlflow_port.set_experiment("t_experiemnt_name_t_2").await;
+        mlflow_port.start_run().await;
+        mlflow_port
+            .log_parameter("model_name", "t_model_name_t")
+            .await;
+        mlflow_port
+            .log_parameter("commit_hash", "commit_hash")
+            .await;
+        mlflow_port.log_parameter("start_timestamp", "ts1").await;
+        mlflow_port.log_parameter("end_timestamp", "ts2").await;
+        log::info!("calc something");
+        mlflow_port
+            .log_metric("profit", rand::thread_rng().gen::<f64>())
+            .await;
     }
 }

@@ -1,5 +1,6 @@
 use chrono::Datelike;
 use postgres::{Client, NoTls};
+use rand::Rng;
 use std::collections::HashMap;
 use std::env;
 use std::thread;
@@ -603,6 +604,161 @@ impl TradesTPortClickhouse {
             );
             insert.end().await.unwrap();
         }
+    }
+}
+
+pub struct MlflowPort {
+    experiment_id: Option<String>,
+    run_id: Option<String>,
+    base_url: String,
+}
+
+impl MlflowPort {
+    pub fn new() -> Self {
+        let base_url = "http://127.0.0.1:5000/api/2.0/mlflow".into();
+        Self {
+            experiment_id: None,
+            run_id: None,
+            base_url,
+        }
+    }
+
+    ///
+    /// Fetches experiment metadata.
+    /// If experiemnt doesn't exist creates it.
+    ///
+    pub async fn set_experiment(&mut self, experiment_name: &str) {
+        let url_experiments_get_by_name = format!(
+            "{}/experiments/get-by-name?experiment_name={}",
+            self.base_url, experiment_name
+        );
+        let url_experiments_create = format!("{}/experiments/create", self.base_url);
+        let res_get_experiment = reqwest::get(url_experiments_get_by_name)
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        let error_code_default = serde_json::json!("");
+        let error_code_get_experiment = res_get_experiment
+            .get("error_code")
+            .unwrap_or(&error_code_default)
+            .as_str()
+            .unwrap();
+        if error_code_get_experiment == "RESOURCE_DOES_NOT_EXIST" {
+            log::debug!("experiment={} haven't found -> create", experiment_name);
+            let body = serde_json::json!({
+                "name": experiment_name,
+            })
+            .to_string();
+            let res_create_experiment = reqwest::Client::new()
+                .post(url_experiments_create)
+                .body(body)
+                .header("Content-Type", "application/json")
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap();
+            let res_experiment_id = res_create_experiment
+                .get("experiment_id")
+                .unwrap()
+                .as_str()
+                .unwrap();
+            self.experiment_id = Some(res_experiment_id.into());
+        } else {
+            log::debug!("already exists experiment={}", experiment_name);
+            let res_experiment_id = res_get_experiment
+                .get("experiment")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("experiment_id")
+                .unwrap()
+                .as_str()
+                .unwrap();
+            self.experiment_id = Some(res_experiment_id.into());
+        }
+        log::debug!("experiment_id={}", self.experiment_id.as_ref().unwrap());
+    }
+
+    ///
+    /// Create run in experiment.
+    ///
+    pub async fn start_run(&mut self) {
+        // Create run: curl -X POST -H "Content-type: application/json" --data '{"experiment_id":"943332787305382786","run_name":"run-name-t","start_time":1728229927587}' 'http://127.0.0.1:5000/api/2.0/mlflow/runs/create'
+        let url_runs_create = format!("{}/runs/create", self.base_url);
+        // let mut rng = rand::thread_rng();
+        let run_name = format!("run-name-{}", rand::thread_rng().gen::<u32>().to_string());
+        let body = serde_json::json!({
+            "experiment_id": self.experiment_id.as_ref().unwrap(),
+            "run_name": run_name,
+            "start_time": (timestamp_secs() * 1000.0) as u64,
+        })
+        .to_string();
+        let res_create_run = reqwest::Client::new()
+            .post(url_runs_create)
+            .body(body)
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        let run_id = res_create_run
+            .get("run")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .get("info")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .get("run_id")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        self.run_id = Some(run_id.into());
+        log::debug!("mlflow run_id={:#?}", run_id);
+    }
+
+    pub async fn log_parameter(&self, key: &str, value: &str) {
+        let url_runs_log_parameter = format!("{}/runs/log-parameter", self.base_url);
+        let body = serde_json::json!({
+            "run_id": self.run_id.as_ref().unwrap(),
+            "key": key,
+            "value": value,
+        })
+        .to_string();
+        let _ = reqwest::Client::new()
+            .post(url_runs_log_parameter)
+            .body(body)
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .unwrap();
+        log::debug!("log_parameter key={key} value={value}");
+    }
+
+    pub async fn log_metric(&self, key: &str, value: f64) {
+        let url_runs_log_metric = format!("{}/runs/log-metric", self.base_url);
+        let body = serde_json::json!({
+            "run_id": self.run_id.as_ref().unwrap(),
+            "key": key,
+            "value": value,
+            "timestamp": (timestamp_secs() * 1000.0) as u64,
+        })
+        .to_string();
+        let _ = reqwest::Client::new()
+            .post(url_runs_log_metric)
+            .body(body)
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .unwrap();
+        log::debug!("log_metric key={key} value={value}");
     }
 }
 

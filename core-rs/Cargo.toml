@@ -43,6 +43,7 @@ clickhouse = { version = "0.13.0", features = ["time"] }
 time = { version = "0.3.36", features = ["parsing", "macros"]}
 struct-field-names-as-array = "0.3.0"
 clap = { version = "4.5.8", features = ["derive"] }
+rand = "0.8.5"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }

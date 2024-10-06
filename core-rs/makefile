@@ -47,6 +47,7 @@ run-trade-emas-collect-bybit-tickers:
 run-trade-emas-run-backtest:
 	RUST_LOG=info \
 	COMMIT_HASH_STR=${commit_hash} \
+	TRADE_EMAS_BACKTEST_EXPERIMENT_NAME="experiemnt-trade-emas-2024-10-06" \
 	TRADE_EMAS_BACKTEST_SAVE_BACKTESTS_OUTS=1 \
 	TRADE_EMAS_BACKTEST_SAVE_DEBUG_CANDLES=1 \
 	TRADE_EMAS_BACKTEST_SAVE_DEBUG_EMAS=0 \

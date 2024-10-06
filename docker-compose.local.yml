@@ -35,3 +35,8 @@ services:
     volumes:
     - ./.var/data_clickhouse:/var/lib/clickhouse/
     mem_limit: 16gb
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    command: mlflow server --host 0.0.0.0
+    ports:
+    - 5000:5000
