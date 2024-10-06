@@ -54,7 +54,7 @@ mod trade {
         );
         let mut hist_tickers = vec![];
         let mut backtest_tickers = vec![];
-        for ticker in tickers.iter() {
+        for ticker in tickers {
             if ticker.ts_millis <= config.trading_start_timestamp.and_utc().timestamp_millis() {
                 hist_tickers.push(ticker.clone());
             } else {
@@ -152,9 +152,11 @@ mod trade {
         // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
         // TODO: speed up loading of tickers
         // TODO: read matplotlib and mplfinance doc
-        // TODO: what's rust iter() diff with into_iter() and what are the ways to iterate through array
-        // TODO: what are ref and deref
         // TODO: use https://github.com/rust-lang/rust-clippy
+        // TODO: as_ref, as_mut, as_deref etc, to_owned, try_into, std Any, TypeId
+        //       std::any::*, Box, Box::pin, Rc::new, t.drop, what's the slice
+        //       (dbg!, dbgr!) what are other macroses, how to_sql exists on vec![]
+        //       vec![].into_boxed_slice, how to implement linked list
         let debugs_port = exchanges_arbitrage::DebugsPortClickhouse::new_and_connect();
         {
             let content = serde_json::json!({
