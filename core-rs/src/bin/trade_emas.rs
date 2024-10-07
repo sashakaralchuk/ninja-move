@@ -75,8 +75,9 @@ mod trade {
             }
         }
         for config in runs_configs {
-            let run_id = run_backtest(Some(&config)).await;
-            println!("timeframe={:?} run_id={}", config.candle_timeframe, run_id);
+            log::warn!("start");
+            let _ = run_backtest(Some(&config)).await;
+            log::warn!("end run_id={}", config.run_id);
         }
     }
 
