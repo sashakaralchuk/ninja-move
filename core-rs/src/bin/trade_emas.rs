@@ -68,7 +68,7 @@ mod trade {
             hist_tickers.len(),
         );
         let mut strategy = {
-            let mut strategy_int = StrategyEmas::new(config.ema_len);
+            let mut strategy_int = StrategyEmas::new(config.ema_len, &config.candle_close_dest);
             for ticker in hist_tickers {
                 if current_candle.expired(&ticker) {
                     strategy_int.apply_candle(&current_candle);
@@ -251,6 +251,7 @@ mod trade {
         stop_loss_rel_val: f64,
         trailing_threshold_rel_val: f64,
         trailing_threshold_min_incr_rel_val: f64,
+        candle_close_dest: StrategyEmasCandlePrice,
     }
 
     impl BacktestConfig {
@@ -295,6 +296,15 @@ mod trade {
                     .unwrap()
                     .parse::<f64>()
                     .unwrap();
+            let candle_close_dest_raw =
+                std::env::var("TRADE_EMAS_BACKTEST_CANDLE_CLOSE_DEST").unwrap();
+            let candle_close_dest = match candle_close_dest_raw.as_str() {
+                "open" => StrategyEmasCandlePrice::Open,
+                "close" => StrategyEmasCandlePrice::Close,
+                "high" => StrategyEmasCandlePrice::High,
+                "low" => StrategyEmasCandlePrice::Low,
+                _ => panic!("unknown candle_close_dest_raw={}", candle_close_dest_raw),
+            };
             Self {
                 save_backtest_outs,
                 save_debug_candles,
@@ -310,6 +320,7 @@ mod trade {
                 stop_loss_rel_val,
                 trailing_threshold_rel_val,
                 trailing_threshold_min_incr_rel_val,
+                candle_close_dest,
             }
         }
 
@@ -373,23 +384,31 @@ mod trade {
         ema_len: usize,
         prices_len: usize,
         prices: RingBuffer,
+        candle_price_dest: StrategyEmasCandlePrice,
     }
 
     impl StrategyEmas {
         ///
         /// let _ = StrategyEmas::new(12); // 12 means ema(12)
         ///
-        fn new(ema_len: usize) -> Self {
+        fn new(ema_len: usize, candle_price_dest: &StrategyEmasCandlePrice) -> Self {
             let prices_len = ema_len + 30;
             Self {
                 prices: RingBuffer::new(prices_len),
                 ema_len,
                 prices_len,
+                candle_price_dest: candle_price_dest.clone(),
             }
         }
 
         fn apply_candle(&mut self, candle: &Candle) {
-            self.prices.add(candle.close);
+            let price = match self.candle_price_dest {
+                StrategyEmasCandlePrice::Open => candle.open,
+                StrategyEmasCandlePrice::Close => candle.close,
+                StrategyEmasCandlePrice::High => candle.high,
+                StrategyEmasCandlePrice::Low => candle.low,
+            };
+            self.prices.add(price);
         }
 
         fn fire_with_res(&self, ticker: &FlatTicker) -> std::result::Result<(), ()> {
@@ -411,11 +430,21 @@ mod trade {
         }
     }
 
+    #[derive(Clone, Debug, serde::Serialize)]
+    enum StrategyEmasCandlePrice {
+        Open,
+        Close,
+        High,
+        Low,
+    }
+
     #[cfg(test)]
     mod tests {
         use exchanges_arbitrage::{Candle, CandleTimeframe, FlatTicker};
 
         use crate::trade::{RingBuffer, StrategyEmas};
+
+        use super::StrategyEmasCandlePrice;
 
         fn l_to_str(l: &Vec<f64>) -> String {
             l.iter()
@@ -615,7 +644,7 @@ mod trade {
                     )
                 })
                 .collect::<Vec<Candle>>();
-            let mut strategy = StrategyEmas::new(12);
+            let mut strategy = StrategyEmas::new(12, &StrategyEmasCandlePrice::Close);
             for candle in candles.iter() {
                 strategy.apply_candle(&candle);
             }
@@ -1013,5 +1042,18 @@ mod debug {
         mlflow_port
             .log_metric("profit", rand::thread_rng().gen::<f64>())
             .await;
+    }
+
+    #[allow(dead_code)]
+    pub fn gen_backtest_inputs() {
+        let _ = r#"
+            * candle timeframe: 1m, 15m, 1h, 4h, 1d
+            * strategy
+                * ema-len: 12, 26, 12/21, 50, 200
+                * calc ema on (close, open, high, low)
+            * threshold
+                * stop-loss-threshold
+                * trailing-stop-threshold from start
+        "#;
     }
 }
