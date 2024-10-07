@@ -224,13 +224,11 @@ mod trade {
             let _ = debugs_port.insert_batch(&vec![row]).await;
         }
         {
-            let params = vec![
-                ("model_name", "trade_emas".to_string()),
-                ("commit_hash", config.commit_hash.clone()),
-                ("start_timestamp", config.timestamp_start.to_string()),
-                ("end_timestamp", config.timestamp_end.to_string()),
-                ("run_id", config.run_id.clone()),
-            ];
+            let params = config
+                .to_tuples()
+                .into_iter()
+                .chain(vec![("model_name".into(), "trade_emas".into())])
+                .collect::<Vec<_>>();
             let metrics = vec![
                 ("debug_candles.len", debug_candles.len() as f64),
                 ("backtests.len", backtests.len() as f64),
@@ -240,7 +238,7 @@ mod trade {
             mlflow_port.set_experiment(&config.experiment_name).await;
             mlflow_port.start_run().await;
             for (k, v) in params {
-                mlflow_port.log_parameter(k, &v).await;
+                mlflow_port.log_parameter(&k, &v).await;
             }
             for (k, v) in metrics {
                 mlflow_port.log_metric(k, v).await;
@@ -374,7 +372,7 @@ mod trade {
             }
         }
 
-        pub fn patch_for_batch(
+        fn patch_for_batch(
             &mut self,
             candle_timeframe_raw: &str,
             ema_len: usize,
@@ -404,6 +402,40 @@ mod trade {
             self.stop_loss_rel_val = stop_loss_rel_val;
             self.trailing_threshold_rel_val = trailing_threshold_rel_val;
             self.trailing_threshold_min_incr_rel_val = trailing_threshold_min_incr_rel_val;
+        }
+
+        fn to_tuples(&self) -> Vec<(String, String)> {
+            vec![
+                ("run_id".into(), self.run_id.clone()),
+                ("commit_hash".into(), self.commit_hash.clone()),
+                ("timestamp_start".into(), self.timestamp_start.to_string()),
+                ("timestamp_end".into(), self.timestamp_end.to_string()),
+                (
+                    "timestamp_trading_start".into(),
+                    self.timestamp_trading_start.to_string(),
+                ),
+                (
+                    "candle_timeframe".into(),
+                    serde_json::to_string(&self.candle_timeframe).unwrap(),
+                ),
+                ("ema_len".into(), self.ema_len.to_string()),
+                (
+                    "stop_loss_rel_val".into(),
+                    self.stop_loss_rel_val.to_string(),
+                ),
+                (
+                    "trailing_threshold_rel_val".into(),
+                    self.trailing_threshold_rel_val.to_string(),
+                ),
+                (
+                    "trailing_threshold_min_incr_rel_val".into(),
+                    self.trailing_threshold_min_incr_rel_val.to_string(),
+                ),
+                (
+                    "candle_close_dest".into(),
+                    serde_json::to_string(&self.candle_close_dest).unwrap(),
+                ),
+            ]
         }
 
         fn parse_timestamp(key: &str) -> chrono::NaiveDateTime {
