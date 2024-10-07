@@ -5,8 +5,11 @@ async fn main() {
     env_logger::init();
     let run_args = RunArgs::parse();
     match run_args.command.as_str() {
-        "run-backtest" => trade::run_backtest().await,
         "run-trading" => trade::run_trading(),
+        "run-backtest" => {
+            let _ = trade::run_backtest(None).await;
+        }
+        "run-backtest-batch" => trade::run_backtest_batch().await,
         "debug-trades-download-write" => debug::trades_download_write(),
         "debug-trades-read-agg-write" => debug::trades_read_agg_write(),
         "debug-draw-chart-on-klines" => debug::draw_chart_on_klines(None),
@@ -36,8 +39,52 @@ mod trade {
         unimplemented!()
     }
 
-    pub async fn run_backtest() {
-        let config = BacktestConfig::new_from_envs();
+    pub async fn run_backtest_batch() {
+        let _candles_timeframes = vec!["1m", "15m", "1h", "4h", "1d"];
+        let _emas_lens = vec![12, 21, 26, 50, 200];
+        let _candles_close_dests = vec!["close", "open", "high", "low"];
+        let _stop_loss_rel_vals = vec![
+            0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05,
+        ];
+        let _trailing_threshold_rel_vals = vec![
+            0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8,
+        ];
+        let _trailing_threshold_min_incr_rel_vals = vec![
+            0.001, 0.0015, 0.002, 0.0025, 0.003, 0.0035, 0.004, 0.0045, 0.005,
+        ];
+        let candles_timeframes = vec!["15m", "1h", "4h"];
+        let emas_lens = vec![12, 21, 50];
+        let candles_close_dests = vec!["close"];
+        let stop_loss_rel_vals = vec![0.005, 0.01, 0.05];
+        let trailing_threshold_rel_vals = vec![0.5, 0.8];
+        let trailing_threshold_min_incr_rel_vals = vec![0.001, 0.002];
+        let mut runs_configs = vec![];
+        for t1 in &candles_timeframes {
+            for t2 in &emas_lens {
+                for t3 in &candles_close_dests {
+                    for t4 in &stop_loss_rel_vals {
+                        for t5 in &trailing_threshold_rel_vals {
+                            for t6 in &trailing_threshold_min_incr_rel_vals {
+                                let mut config = BacktestConfig::new_from_envs();
+                                config.patch_for_batch(*t1, *t2, *t3, *t4, *t5, *t6);
+                                runs_configs.push(config);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for config in runs_configs {
+            let run_id = run_backtest(Some(&config)).await;
+            println!("timeframe={:?} run_id={}", config.candle_timeframe, run_id);
+        }
+    }
+
+    pub async fn run_backtest(config: Option<&BacktestConfig>) -> String {
+        let config = match config {
+            Some(c) => c,
+            None => &BacktestConfig::new_from_envs(),
+        };
         log::info!(
             "fetch tickers for [{}, {}]",
             config.timestamp_start,
@@ -181,6 +228,7 @@ mod trade {
                 ("commit_hash", config.commit_hash.clone()),
                 ("start_timestamp", config.timestamp_start.to_string()),
                 ("end_timestamp", config.timestamp_end.to_string()),
+                ("run_id", config.run_id.clone()),
             ];
             let metrics = vec![
                 ("debug_candles.len", debug_candles.len() as f64),
@@ -233,10 +281,11 @@ mod trade {
                 .collect::<Vec<_>>();
             let _ = debugs_port.insert_batch(&vec).await;
         }
+        config.run_id.clone()
     }
 
     #[derive(Debug, serde::Serialize)]
-    struct BacktestConfig {
+    pub struct BacktestConfig {
         save_backtest_outs: bool,
         save_debug_candles: bool,
         save_debug_emas: bool,
@@ -322,6 +371,38 @@ mod trade {
                 trailing_threshold_min_incr_rel_val,
                 candle_close_dest,
             }
+        }
+
+        pub fn patch_for_batch(
+            &mut self,
+            candle_timeframe_raw: &str,
+            ema_len: usize,
+            candle_close_dest_raw: &str,
+            stop_loss_rel_val: f64,
+            trailing_threshold_rel_val: f64,
+            trailing_threshold_min_incr_rel_val: f64,
+        ) {
+            let candle_timeframe = match candle_timeframe_raw {
+                "1m" => CandleTimeframe::Minutes(1),
+                "15m" => CandleTimeframe::Minutes(15),
+                "1h" => CandleTimeframe::Hours(1),
+                "4h" => CandleTimeframe::Hours(4),
+                "1d" => CandleTimeframe::Days(1),
+                _ => panic!("unknown candle_timeframe_raw={}", candle_timeframe_raw),
+            };
+            let candle_close_dest = match candle_close_dest_raw {
+                "open" => StrategyEmasCandlePrice::Open,
+                "close" => StrategyEmasCandlePrice::Close,
+                "high" => StrategyEmasCandlePrice::High,
+                "low" => StrategyEmasCandlePrice::Low,
+                _ => panic!("unknown candle_close_dest_raw={}", candle_close_dest_raw),
+            };
+            self.candle_timeframe = candle_timeframe;
+            self.ema_len = ema_len;
+            self.candle_close_dest = candle_close_dest;
+            self.stop_loss_rel_val = stop_loss_rel_val;
+            self.trailing_threshold_rel_val = trailing_threshold_rel_val;
+            self.trailing_threshold_min_incr_rel_val = trailing_threshold_min_incr_rel_val;
         }
 
         fn parse_timestamp(key: &str) -> chrono::NaiveDateTime {
@@ -1042,18 +1123,5 @@ mod debug {
         mlflow_port
             .log_metric("profit", rand::thread_rng().gen::<f64>())
             .await;
-    }
-
-    #[allow(dead_code)]
-    pub fn gen_backtest_inputs() {
-        let _ = r#"
-            * candle timeframe: 1m, 15m, 1h, 4h, 1d
-            * strategy
-                * ema-len: 12, 26, 12/21, 50, 200
-                * calc ema on (close, open, high, low)
-            * threshold
-                * stop-loss-threshold
-                * trailing-stop-threshold from start
-        "#;
     }
 }
