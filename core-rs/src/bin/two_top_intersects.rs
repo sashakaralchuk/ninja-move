@@ -151,13 +151,13 @@ fn trade() {
         }
         let start_ticker = Candle::wait_for_next(&rx_tickers_calc_signals);
         let mut current_candle =
-            Candle::new_from_ticker(&start_ticker, CandleTimeframe::Minutes(1));
+            Candle::new_from_ticker(&start_ticker, &CandleTimeframe::Minutes(1));
         loop {
             let ticker = rx_tickers_calc_signals.recv().unwrap();
             if current_candle.expired(&ticker) {
                 log::debug!("candle expired {:?}", current_candle);
                 two_top_intersection.apply_candle(&current_candle);
-                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+                current_candle = Candle::new_from_ticker(&ticker, &CandleTimeframe::Minutes(1));
             } else {
                 current_candle.apply_ticker(&ticker)
             }
@@ -209,7 +209,7 @@ fn trade() {
                     rx_tickers_trade_signals.recv().unwrap();
                 }
             };
-            let mut threshold = TrailingThreshold::new(order.avg_fill_price, -1);
+            let mut threshold = TrailingThreshold::new(order.avg_fill_price, -1, 0.005, 0.5, 0.002);
             loop {
                 let ticker = rx_tickers_trade_signals.recv().unwrap();
                 match threshold.apply_and_make_decision(&ticker) {
@@ -269,13 +269,13 @@ fn listen_save_candles() {
             "bybit",
         )
         .unwrap(),
-        CandleTimeframe::Minutes(1),
+        &CandleTimeframe::Minutes(1),
     );
     let on_message = |event: bybit::EventWs| match event {
         bybit::EventWs::Ticker(ticker) => {
             if current_candle.expired(&ticker) {
                 log::info!("candle expired: {:?}", current_candle);
-                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+                current_candle = Candle::new_from_ticker(&ticker, &CandleTimeframe::Minutes(1));
                 candles_port.insert_candle(&current_candle).unwrap();
             } else {
                 current_candle.apply_ticker(&ticker)

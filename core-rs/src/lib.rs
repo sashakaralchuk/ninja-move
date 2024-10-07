@@ -240,10 +240,11 @@ pub struct FlatDepth {
     pub bids: Vec<[String; 2]>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum CandleTimeframe {
     Hours(i64),
     Minutes(i64),
+    Days(i64),
 }
 
 #[derive(Debug)]
@@ -281,7 +282,7 @@ impl Candle {
         }
     }
 
-    pub fn new_from_ticker(ticker: &FlatTicker, timeframe: CandleTimeframe) -> Self {
+    pub fn new_from_ticker(ticker: &FlatTicker, timeframe: &CandleTimeframe) -> Self {
         Self {
             exchange: ticker.exchange.clone(),
             symbol: ticker.data_symbol.clone(),
@@ -290,7 +291,7 @@ impl Candle {
             close: ticker.data_last_price,
             high: ticker.data_last_price,
             low: ticker.data_last_price,
-            timeframe,
+            timeframe: timeframe.clone(),
         }
     }
 
@@ -304,6 +305,7 @@ impl Candle {
         let interval_millis = match self.timeframe {
             CandleTimeframe::Minutes(n) => n * 60 * 1000,
             CandleTimeframe::Hours(n) => n * 60 * 60 * 1000,
+            CandleTimeframe::Days(n) => n * 24 * 60 * 60 * 1000,
         };
         let current_start_min = ticker.ts_millis / interval_millis;
         let candle_start_min = self.open_time / interval_millis;
@@ -333,6 +335,7 @@ impl Candle {
         let timeframe = match self.timeframe {
             CandleTimeframe::Minutes(n) => format!("{n}m"),
             CandleTimeframe::Hours(n) => format!("{n}h"),
+            CandleTimeframe::Days(n) => format!("{n}d"),
         };
         serde_json::json!({
             "exchange": self.exchange,
@@ -506,10 +509,8 @@ impl TradesTPortClickhouse {
 
     ///
     /// Example:
-    /// ```
     /// let _ = TradesTPortClickhouse::new_and_connect()
     ///     .fetch("2024-01-01", "2025-01-01").await;
-    /// ```
     ///
     pub async fn fetch(&mut self, start_time_iso: &str, end_time_iso: &str) -> Vec<FlatTicker> {
         let query = format!(
@@ -687,9 +688,7 @@ impl MlflowPort {
     /// Create run in experiment.
     ///
     pub async fn start_run(&mut self) {
-        // Create run: curl -X POST -H "Content-type: application/json" --data '{"experiment_id":"943332787305382786","run_name":"run-name-t","start_time":1728229927587}' 'http://127.0.0.1:5000/api/2.0/mlflow/runs/create'
         let url_runs_create = format!("{}/runs/create", self.base_url);
-        // let mut rng = rand::thread_rng();
         let run_name = format!("run-name-{}", rand::thread_rng().gen::<u32>().to_string());
         let body = serde_json::json!({
             "experiment_id": self.experiment_id.as_ref().unwrap(),
@@ -791,35 +790,50 @@ pub enum TrailingThresholdReason {
 
 #[derive(Copy, Clone)]
 pub struct TrailingThreshold {
+    pub trailing_threshold: Option<f64>,
     pub open_price: f64,
     pub open_timestamp_millis: i64,
-    pub trailing_threshold: Option<f64>,
+    stop_loss_rel_val: f64,
+    trailing_threshold_rel_val: f64,
+    trailing_threshold_min_incr_rel_val: f64,
 }
 
 impl TrailingThreshold {
-    pub fn new(open_price: f64, open_timestamp_millis: i64) -> Self {
+    ///
+    /// * `stop_loss_rel_val` - Percent from open-price decreasing to fire stop-loss. `0.005` means `0.5%` of open-price decrease will fire stop-loss event.
+    /// * `trailing_threshold_rel_val` - Percent from `ticker-price - open-price` to increase and then decrease to fire trailing-threshold. `0.5` means  situation when price ups for `50%` of `ticker-price - open-price` then decreases below this mark will fire trailing-threshold event.
+    /// * `trailing_threshold_min_incr_rel_val` - Percent of open-price after which thrailing-threshold will start to calculate. `0.002` means on a moment when ticker price ups `0.2%` of open-price trailing-threshold wil be started to calculate, till this moment trailing-threshold is idle.
+    ///
+    pub fn new(
+        open_price: f64,
+        open_timestamp_millis: i64,
+        stop_loss_rel_val: f64,
+        trailing_threshold_rel_val: f64,
+        trailing_threshold_min_incr_rel_val: f64,
+    ) -> Self {
         Self {
+            trailing_threshold: None,
             open_price,
             open_timestamp_millis,
-            trailing_threshold: None,
+            stop_loss_rel_val,
+            trailing_threshold_rel_val,
+            trailing_threshold_min_incr_rel_val,
         }
     }
 
     pub fn apply_and_make_decision(&mut self, ticker: &FlatTicker) -> TrailingThresholdReason {
-        let stop_loss_rel_val = 0.005; // TODO: calc this on prev data
-        let stop_loss_abs_val = self.open_price * (1.0 - stop_loss_rel_val);
+        let stop_loss_abs_val = self.open_price * (1.0 - self.stop_loss_rel_val);
         if ticker.data_last_price <= stop_loss_abs_val {
             return TrailingThresholdReason::ReachStopLoss(stop_loss_abs_val);
         }
         if ticker.data_last_price <= self.open_price {
             return TrailingThresholdReason::Continue;
         }
-        let trailing_rel_val = 0.5;
-        let trailing_threshold_rel_val = 0.002; // TODO: calc this on prev data
-        let next_threshold =
-            self.open_price + (ticker.data_last_price - self.open_price) * trailing_rel_val;
+        let next_threshold = self.open_price
+            + (ticker.data_last_price - self.open_price) * self.trailing_threshold_rel_val;
         if self.trailing_threshold.is_none() {
-            let calc_start_abs_val = self.open_price * (1.0 + trailing_threshold_rel_val);
+            let calc_start_abs_val =
+                self.open_price * (1.0 + self.trailing_threshold_min_incr_rel_val);
             if ticker.data_last_price > calc_start_abs_val {
                 self.trailing_threshold = Some(next_threshold);
             }
@@ -973,13 +987,13 @@ mod test {
         for i in 0..(3 * 60 * 60 * 1000) {
             tickers.push(create_ticker_on_ts(start_millis + i));
         }
-        let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+        let mut current_candle = Candle::new_from_ticker(&tickers[0], &CandleTimeframe::Minutes(1));
         let mut candles = vec![];
         assert_eq!(tickers.len(), 10800000);
         for ticker in tickers {
             if current_candle.expired(&ticker) {
                 candles.push(current_candle);
-                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+                current_candle = Candle::new_from_ticker(&ticker, &CandleTimeframe::Minutes(1));
             } else {
                 current_candle.apply_ticker(&ticker)
             }
@@ -994,13 +1008,13 @@ mod test {
         for i in 0..(3 * 60 * 60 * 1000) {
             tickers.push(create_ticker_on_ts(start_millis + i));
         }
-        let mut current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Hours(1));
+        let mut current_candle = Candle::new_from_ticker(&tickers[0], &CandleTimeframe::Hours(1));
         let mut candles = vec![];
         assert_eq!(tickers.len(), 10800000);
         for ticker in tickers {
             if current_candle.expired(&ticker) {
                 candles.push(current_candle);
-                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
+                current_candle = Candle::new_from_ticker(&ticker, &CandleTimeframe::Hours(1));
             } else {
                 current_candle.apply_ticker(&ticker)
             }
@@ -1016,7 +1030,7 @@ mod test {
             .map(|i| create_ticker_on_ts(start_millis + i))
             .collect::<Vec<FlatTicker>>();
         {
-            let current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+            let current_candle = Candle::new_from_ticker(&tickers[0], &CandleTimeframe::Minutes(1));
             let mut expired_amount = 0;
             for i in 0..tickers.len() {
                 let ticker = &tickers[i];
@@ -1027,7 +1041,7 @@ mod test {
             assert_eq!(expired_amount, 1);
         }
         {
-            let current_candle = Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+            let current_candle = Candle::new_from_ticker(&tickers[0], &CandleTimeframe::Minutes(1));
             let mut expired_amount = 0;
             for i in 0..(tickers.len() - 1) {
                 let ticker = &tickers[i];
@@ -1054,7 +1068,7 @@ mod test {
 
     #[test]
     fn test_trailing_threshold_reach_trailing_threshold() {
-        let mut t = TrailingThreshold::new(60_000_f64, 0);
+        let mut t = TrailingThreshold::new(60_000_f64, 0, 0.005, 0.5, 0.002);
         match t.apply_and_make_decision(&create_ticker_on_price(60_119_f64)) {
             TrailingThresholdReason::Continue => {}
             _ => assert_eq!(0, 1),
@@ -1100,7 +1114,7 @@ mod test {
 
     #[test]
     fn test_trailing_threshold_reach_stop_loss() {
-        let mut t = TrailingThreshold::new(60_000_f64, 0);
+        let mut t = TrailingThreshold::new(60_000_f64, 0, 0.005, 0.5, 0.002);
         match t.apply_and_make_decision(&create_ticker_on_price(59_701_f64)) {
             TrailingThresholdReason::Continue => {}
             _ => assert_eq!(0, 1),
@@ -1140,7 +1154,7 @@ mod test {
             [64398.31, 64012.5, 64000.01, 64494.03],
             [64012.49, 63818.01, 62953.9, 64124.0],
         ];
-        let mut t = TrailingThreshold::new(62073.39, 0);
+        let mut t = TrailingThreshold::new(62073.39, 0, 0.005, 0.5, 0.002);
         for candle_prices in candles.iter() {
             for price in candle_prices.iter() {
                 let decision = match t.apply_and_make_decision(&create_ticker_on_price(*price)) {

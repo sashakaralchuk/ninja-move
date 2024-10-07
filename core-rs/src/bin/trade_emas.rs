@@ -40,12 +40,12 @@ mod trade {
         let config = BacktestConfig::new_from_envs();
         log::info!(
             "fetch tickers for [{}, {}]",
-            config.start_timestamp,
-            config.end_timestamp
+            config.timestamp_start,
+            config.timestamp_end
         );
         let tickers = TradesTPortClickhouse::fetch_in_parallel(
-            &config.start_timestamp,
-            &config.end_timestamp,
+            &config.timestamp_start,
+            &config.timestamp_end,
         );
         log::info!(
             "divide tickers on (hist, backtest) tickers.len={}",
@@ -54,7 +54,7 @@ mod trade {
         let mut hist_tickers = vec![];
         let mut backtest_tickers = vec![];
         for ticker in tickers {
-            if ticker.ts_millis <= config.trading_start_timestamp.and_utc().timestamp_millis() {
+            if ticker.ts_millis <= config.timestamp_trading_start.and_utc().timestamp_millis() {
                 hist_tickers.push(ticker.clone());
             } else {
                 backtest_tickers.push(ticker.clone())
@@ -62,20 +62,20 @@ mod trade {
         }
         let mut debug_candles = vec![];
         let mut current_candle =
-            Candle::new_from_ticker(&hist_tickers[0], CandleTimeframe::Hours(1));
+            Candle::new_from_ticker(&hist_tickers[0], &config.candle_timeframe);
         log::info!(
             "fill hist state (current_candle, strategy) hist_tickers.len={}",
             hist_tickers.len(),
         );
         let mut strategy = {
-            let mut strategy_int = StrategyEmas::new();
+            let mut strategy_int = StrategyEmas::new(config.ema_len);
             for ticker in hist_tickers {
                 if current_candle.expired(&ticker) {
                     strategy_int.apply_candle(&current_candle);
                     if config.save_debug_candles {
                         debug_candles.push(current_candle);
                     }
-                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
+                    current_candle = Candle::new_from_ticker(&ticker, &config.candle_timeframe);
                 } else {
                     current_candle.apply_ticker(&ticker)
                 }
@@ -99,7 +99,7 @@ mod trade {
                 if config.save_debug_emas {
                     debug_emas.push(strategy.calc_ema());
                 }
-                current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Hours(1));
+                current_candle = Candle::new_from_ticker(&ticker, &config.candle_timeframe);
             } else {
                 current_candle.apply_ticker(&ticker)
             }
@@ -142,12 +142,16 @@ mod trade {
                         threshold = Some(TrailingThreshold::new(
                             ticker.data_last_price,
                             ticker.ts_millis,
+                            config.stop_loss_rel_val,
+                            config.trailing_threshold_rel_val,
+                            config.trailing_threshold_min_incr_rel_val,
                         ))
                     }
                     Err(_) => {}
                 },
             }
         }
+        // TODO: why do comment with code in ``` executes on cargo test
         // TODO: read matplotlib and mplfinance doc
         // TODO: why do clickhouse gives bytes back slowly
         // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
@@ -158,8 +162,8 @@ mod trade {
         let debugs_port = exchanges_arbitrage::DebugsPortClickhouse::new_and_connect();
         {
             let content = serde_json::json!({
-                "debug_candles.len()": debug_candles.len(),
-                "backtests.len()": backtests.len(),
+                "debug_candles.len": debug_candles.len(),
+                "backtests.len": backtests.len(),
                 "config": serde_json::to_string(&config).unwrap(),
             })
             .to_string();
@@ -175,8 +179,8 @@ mod trade {
             let params = vec![
                 ("model_name", "trade_emas".to_string()),
                 ("commit_hash", config.commit_hash.clone()),
-                ("start_timestamp", config.start_timestamp.to_string()),
-                ("end_timestamp", config.end_timestamp.to_string()),
+                ("start_timestamp", config.timestamp_start.to_string()),
+                ("end_timestamp", config.timestamp_end.to_string()),
             ];
             let metrics = vec![
                 ("debug_candles.len", debug_candles.len() as f64),
@@ -239,9 +243,14 @@ mod trade {
         run_id: String,
         commit_hash: String,
         experiment_name: String,
-        start_timestamp: chrono::NaiveDateTime,
-        end_timestamp: chrono::NaiveDateTime,
-        trading_start_timestamp: chrono::NaiveDateTime,
+        timestamp_start: chrono::NaiveDateTime,
+        timestamp_end: chrono::NaiveDateTime,
+        timestamp_trading_start: chrono::NaiveDateTime,
+        candle_timeframe: CandleTimeframe,
+        ema_len: usize,
+        stop_loss_rel_val: f64,
+        trailing_threshold_rel_val: f64,
+        trailing_threshold_min_incr_rel_val: f64,
     }
 
     impl BacktestConfig {
@@ -254,10 +263,38 @@ mod trade {
             let run_id = uuid::Uuid::new_v4().to_string();
             let commit_hash = std::env::var("COMMIT_HASH_STR").unwrap();
             let experiment_name = std::env::var("TRADE_EMAS_BACKTEST_EXPERIMENT_NAME").unwrap();
-            let start_timestamp = Self::parse_timestamp("TRADE_EMAS_BACKTEST_START_TIMESTAMP");
-            let end_timestamp = Self::parse_timestamp("TRADE_EMAS_BACKTEST_END_TIMESTAMP");
-            let trading_start_timestamp =
-                Self::parse_timestamp("TRADE_EMAS_BACKTEST_TRADING_START_TIMESTAMP");
+            let timestamp_start = Self::parse_timestamp("TRADE_EMAS_BACKTEST_TIMESTAMP_START");
+            let timestamp_end = Self::parse_timestamp("TRADE_EMAS_BACKTEST_TIMESTAMP_END");
+            let timestamp_trading_start =
+                Self::parse_timestamp("TRADE_EMAS_BACKTEST_TIMESTAMP_TRADING_START");
+            let candle_timeframe_raw =
+                std::env::var("TRADE_EMAS_BACKTEST_CANDLE_TIMEFRAME").unwrap();
+            let candle_timeframe = match candle_timeframe_raw.as_str() {
+                "1m" => CandleTimeframe::Minutes(1),
+                "15m" => CandleTimeframe::Minutes(15),
+                "1h" => CandleTimeframe::Hours(1),
+                "4h" => CandleTimeframe::Hours(4),
+                "1d" => CandleTimeframe::Days(1),
+                _ => panic!("unknown candle_timeframe_raw={}", candle_timeframe_raw),
+            };
+            let ema_len = std::env::var("TRADE_EMAS_BACKTEST_EMA_LEN")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let stop_loss_rel_val = std::env::var("TRADE_EMAS_BACKTEST_STOP_LOSS_REL_VAL")
+                .unwrap()
+                .parse::<f64>()
+                .unwrap();
+            let trailing_threshold_rel_val =
+                std::env::var("TRADE_EMAS_BACKTEST_TRAILING_THRESHOLD_REL_VAL")
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap();
+            let trailing_threshold_min_incr_rel_val =
+                std::env::var("TRADE_EMAS_BACKTEST_TRAILING_THRESHOLD_MIN_INCR_REL_VAL")
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap();
             Self {
                 save_backtest_outs,
                 save_debug_candles,
@@ -265,9 +302,14 @@ mod trade {
                 run_id,
                 commit_hash,
                 experiment_name,
-                start_timestamp,
-                end_timestamp,
-                trading_start_timestamp,
+                timestamp_start,
+                timestamp_end,
+                timestamp_trading_start,
+                candle_timeframe,
+                ema_len,
+                stop_loss_rel_val,
+                trailing_threshold_rel_val,
+                trailing_threshold_min_incr_rel_val,
             }
         }
 
@@ -334,9 +376,11 @@ mod trade {
     }
 
     impl StrategyEmas {
-        fn new() -> Self {
-            let ema_len = 12;
-            let prices_len = ema_len + 30; // 12 means ema(12)
+        ///
+        /// let _ = StrategyEmas::new(12); // 12 means ema(12)
+        ///
+        fn new(ema_len: usize) -> Self {
+            let prices_len = ema_len + 30;
             Self {
                 prices: RingBuffer::new(prices_len),
                 ema_len,
@@ -571,7 +615,7 @@ mod trade {
                     )
                 })
                 .collect::<Vec<Candle>>();
-            let mut strategy = StrategyEmas::new();
+            let mut strategy = StrategyEmas::new(12);
             for candle in candles.iter() {
                 strategy.apply_candle(&candle);
             }
@@ -920,13 +964,13 @@ mod debug {
             let mut out = vec![];
             let mut threshold_ts = tickers[0].ts_millis + interval_1h_millis;
             let mut current_candle =
-                Candle::new_from_ticker(&tickers[0], CandleTimeframe::Minutes(1));
+                Candle::new_from_ticker(&tickers[0], &CandleTimeframe::Minutes(1));
             for ticker in tickers.iter() {
                 if ticker.ts_millis < threshold_ts {
                     current_candle.apply_ticker(&ticker);
                 } else {
                     out.push(current_candle);
-                    current_candle = Candle::new_from_ticker(&ticker, CandleTimeframe::Minutes(1));
+                    current_candle = Candle::new_from_ticker(&ticker, &CandleTimeframe::Minutes(1));
                     threshold_ts += interval_1h_millis;
                 }
             }
