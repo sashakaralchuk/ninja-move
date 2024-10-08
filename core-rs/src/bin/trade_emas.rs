@@ -261,7 +261,7 @@ mod trade {
                 }
             }
         }
-        // TODO: why do comment with code in ``` executes on cargo test
+        // TODO: why do comment with code in ``` executes on cargo test (Doc-test) + add clippy to ci + add tests run to ci
         // TODO: read matplotlib and mplfinance doc
         // TODO: why do clickhouse gives bytes back slowly
         // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
