@@ -19,7 +19,7 @@ pub fn timestamp_secs() -> f64 {
         .as_secs_f64()
 }
 
-pub fn pool(threads: &Vec<thread::JoinHandle<()>>) {
+pub fn pool(threads: &[thread::JoinHandle<()>]) {
     loop {
         thread::sleep(Duration::from_millis(1000));
         if threads.iter().any(|x| x.is_finished()) {
@@ -35,8 +35,8 @@ pub struct OrderBookCache {
     last_update_id: u64,
 }
 
-impl OrderBookCache {
-    pub fn new() -> Self {
+impl Default for OrderBookCache {
+    fn default() -> Self {
         let bids = HashMap::<String, f64>::new();
         let asks = HashMap::<String, f64>::new();
         Self {
@@ -44,6 +44,12 @@ impl OrderBookCache {
             asks,
             last_update_id: 0,
         }
+    }
+}
+
+impl OrderBookCache {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn apply_orders(&mut self, u: u64, bids: &Vec<[String; 2]>, asks: &Vec<[String; 2]>) {
@@ -68,7 +74,7 @@ impl OrderBookCache {
     }
 
     pub fn get_last_bid(&self) -> Option<[f64; 2]> {
-        if self.bids.len() == 0 {
+        if self.bids.is_empty() {
             return None;
         }
         let mut bids: Vec<[f64; 2]> = self
@@ -81,7 +87,7 @@ impl OrderBookCache {
     }
 
     pub fn get_last_ask(&self) -> Option<[f64; 2]> {
-        if self.asks.len() == 0 {
+        if self.asks.is_empty() {
             return None;
         }
         let mut asks: Vec<[f64; 2]> = self
@@ -144,11 +150,11 @@ impl TelegramBotPort {
         log::debug!("response_text: {}", response_text);
     }
 
-    pub fn notify_markdown<'a>(&self, message: &'a str) {
+    pub fn notify_markdown(&self, message: &str) {
         let message_formatted = format!("```%0A{}```", message)
             // XXX: create issue in reqwest repository
             //      \n in encoded variant should %0A, not %20
-            .replace("\n", "%0A");
+            .replace('\n', "%0A");
         self.notify(message_formatted.as_str(), Some("Markdown"));
     }
 
@@ -185,11 +191,11 @@ impl Args {
                 "--write" => write_needed = true,
                 "--show-binance" => show_binance = true,
                 "--symbols-amount" => symbols_amount = Some(args[i + 1].parse::<usize>().unwrap()),
-                "--command" => command = args[i + 1].clone(),
+                "--command" => command.clone_from(&args[i + 1]),
                 _ => {}
             }
         }
-        if command.len() == 0 {
+        if command.is_empty() {
             panic!("--command must be passed");
         }
         Self {
@@ -217,7 +223,7 @@ impl FlatTicker {
         data_last_price: f64,
         exchange: &str,
     ) -> Result<Self, String> {
-        let year = chrono::DateTime::from_timestamp_millis(ts_millis as i64)
+        let year = chrono::DateTime::from_timestamp_millis(ts_millis)
             .unwrap()
             .year();
         if year < 2000 {
@@ -260,6 +266,7 @@ pub struct Candle {
 }
 
 impl Candle {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         exchange: String,
         symbol: String,
@@ -394,18 +401,15 @@ impl TickersPort {
     pub fn insert(&mut self, x: &FlatTicker) -> Result<(), String> {
         let query = format!(
             "INSERT INTO public.tickers(exchange, symbol, timestamp, last_price)
-            VALUES {};",
-            format!(
-                "('{}','{}',to_timestamp({})::timestamp,{})",
-                x.exchange,
-                x.data_symbol,
-                x.ts_millis / 1000,
-                x.data_last_price
-            ),
+            VALUES ('{}','{}',to_timestamp({})::timestamp,{});",
+            x.exchange,
+            x.data_symbol,
+            x.ts_millis / 1000,
+            x.data_last_price
         );
         match self.client_postgres.batch_execute(query.as_str()) {
-            Ok(v) => return Ok(v),
-            Err(error) => return Err(format!("error: {}", error)),
+            Ok(v) => Ok(v),
+            Err(error) => Err(format!("error: {}", error)),
         }
     }
 
@@ -417,7 +421,7 @@ impl TickersPort {
         Ok(())
     }
 
-    pub fn insert_batch(&mut self, list: &Vec<FlatTicker>) -> Result<(), String> {
+    pub fn insert_batch(&mut self, list: &[FlatTicker]) -> Result<(), String> {
         let n = 1_000_000;
         for i in 0..(list.len() / n + 1) {
             let (j, k) = (i * n, usize::min(i * n + n, list.len()));
@@ -547,7 +551,7 @@ impl TradesTPortClickhouse {
         let step_millis = interval_millis / n;
         let cache = vec![vec![]; n as usize];
         let cache_arc = std::sync::Arc::new(std::sync::Mutex::new(cache));
-        let _ = (0..n)
+        (0..n)
             .map(|i| {
                 let l = start_millis + step_millis * i + 1000;
                 let r = start_millis + step_millis * (i + 1);
@@ -580,12 +584,12 @@ impl TradesTPortClickhouse {
             .lock()
             .unwrap()
             .iter()
-            .cloned()
             .flatten()
+            .cloned()
             .collect::<Vec<_>>();
     }
 
-    pub async fn insert_batch_chunked(&self, vec: &Vec<TradesRow>) {
+    pub async fn insert_batch_chunked(&self, vec: &[TradesRow]) {
         let slice_size = 100_000;
         let mut i = 0;
         while i < vec.len() {
@@ -614,14 +618,20 @@ pub struct MlflowPort {
     base_url: String,
 }
 
-impl MlflowPort {
-    pub fn new() -> Self {
+impl Default for MlflowPort {
+    fn default() -> Self {
         let base_url = "http://127.0.0.1:5000/api/2.0/mlflow".into();
         Self {
             experiment_id: None,
             run_id: None,
             base_url,
         }
+    }
+}
+
+impl MlflowPort {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     ///
@@ -689,7 +699,7 @@ impl MlflowPort {
     ///
     pub async fn start_run(&mut self) {
         let url_runs_create = format!("{}/runs/create", self.base_url);
-        let run_name = format!("run-name-{}", rand::thread_rng().gen::<u32>().to_string());
+        let run_name = format!("run-name-{}", rand::thread_rng().gen::<u32>());
         let body = serde_json::json!({
             "experiment_id": self.experiment_id.as_ref().unwrap(),
             "run_name": run_name,
@@ -778,7 +788,7 @@ impl MlflowPort {
             .await
             .unwrap();
         let res_runs = res_runs_search.get("runs").unwrap().as_array().unwrap();
-        res_runs.iter().cloned().collect::<Vec<_>>()
+        res_runs.to_vec()
     }
 }
 
@@ -871,7 +881,7 @@ impl TrailingThreshold {
             );
             self.trailing_threshold = Some(next_threshold);
         }
-        return TrailingThresholdReason::Continue;
+        TrailingThresholdReason::Continue
     }
 }
 
@@ -891,11 +901,12 @@ pub struct HistoryRow {
 }
 
 impl HistoryRow {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         strategy: &str,
         cause: &str,
-        exchange: &String,
-        symbol: &String,
+        exchange: &str,
+        symbol: &str,
         open_price: f64,
         trailing_threshold: f64,
         spread: f64,
@@ -911,8 +922,8 @@ impl HistoryRow {
         Self {
             strategy: strategy.to_string(),
             cause: cause.to_string(),
-            exchange: exchange.clone(),
-            symbol: symbol.clone(),
+            exchange: exchange.to_string(),
+            symbol: symbol.to_string(),
             created_at,
             commit_hash,
             trailing_threshold,
@@ -964,26 +975,23 @@ impl HistoryPort {
             "INSERT INTO public.history_trades
                 (created_at, exchange, symbol, commit_hash, strategy, cause, open_price, \
                     trailing_threshold, profit_abs, profit_rel, last_price, spread)
-            VALUES {};",
-            format!(
-                "(to_timestamp({})::timestamp, '{}','{}','{}','{}','{}',{},{},{},{},{},{})",
-                x.created_at / 1000,
-                x.exchange,
-                x.symbol,
-                x.commit_hash,
-                x.strategy,
-                x.cause,
-                x.open_price,
-                x.trailing_threshold,
-                x.profit_abs,
-                x.profit_rel,
-                x.last_price,
-                x.spread,
-            ),
+            VALUES (to_timestamp({})::timestamp, '{}','{}','{}','{}','{}',{},{},{},{},{},{});",
+            x.created_at / 1000,
+            x.exchange,
+            x.symbol,
+            x.commit_hash,
+            x.strategy,
+            x.cause,
+            x.open_price,
+            x.trailing_threshold,
+            x.profit_abs,
+            x.profit_rel,
+            x.last_price,
+            x.spread,
         );
         match self.client.batch_execute(query.as_str()) {
-            Ok(v) => return Ok(v),
-            Err(error) => return Err(format!("error: {}", error)),
+            Ok(v) => Ok(v),
+            Err(error) => Err(format!("error: {}", error)),
         }
     }
 }

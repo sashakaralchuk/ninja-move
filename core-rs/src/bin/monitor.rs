@@ -29,7 +29,7 @@ impl Default for PrecisionF64 {
 }
 
 impl PrecisionF64 {
-    pub fn str_to_u64(&self, v: &String) -> u64 {
+    pub fn str_to_u64(&self, v: &str) -> u64 {
         (v.parse::<f64>().unwrap() * self.target) as u64
     }
 
@@ -48,11 +48,7 @@ struct CachedWriteV1 {
 }
 
 impl CachedWriteV1 {
-    pub fn new(
-        exchange: String,
-        repository: monitoring::RepositoryV2,
-        streams: &Vec<String>,
-    ) -> Self {
+    pub fn new(exchange: String, repository: monitoring::RepositoryV2, streams: &[String]) -> Self {
         let threshold_to_write = 1000;
         let precision = PrecisionF64::default();
         let last_prices = streams
@@ -236,13 +232,13 @@ pub fn monitor_v1_binance(symbols_amount: Option<usize>, write_needed: bool, sho
                 table.add_row(row![symbol, "-", "-", "-", "-", "-"]);
             }
         }
-        print!("{esc}[2J{esc}[1;10H\n", esc = 27 as char);
+        println!("{esc}[2J{esc}[1;10H", esc = 27 as char);
         table.printstd();
     };
     let handle_write = move || {
         let symbol_from_stream = |stream: &String| {
             stream
-                .split("@")
+                .split('@')
                 .collect::<Vec<&str>>()
                 .first()
                 .unwrap()
@@ -314,7 +310,7 @@ pub fn monitor_v1_gateio(symbols_amount: Option<usize>, write_needed: bool) {
     };
     let handle_write = move || {
         // XXX: do pause at the beginning to avoid fancy prices in table
-        let symbol_from_stream = |stream: &String| stream.replace("_", "").to_uppercase();
+        let symbol_from_stream = |stream: &String| stream.replace('_', "").to_uppercase();
         let mut cached_write = CachedWriteV1::new(
             String::from("gateio"),
             monitoring::RepositoryV2::new_and_connect(),
@@ -338,7 +334,7 @@ pub fn monitor_v1_gateio(symbols_amount: Option<usize>, write_needed: bool) {
 fn monitor_v1(args: &Args) {
     let args_binance = args.clone();
     let args_gateio = args.clone();
-    pool(&vec![
+    pool(&[
         thread::spawn(move || {
             monitor_v1_binance(
                 args_binance.symbols_amount,
@@ -383,10 +379,7 @@ fn monitor_v2_binance() {
         }
     };
 
-    pool(&vec![
-        thread::spawn(handle_listen),
-        thread::spawn(handle_write),
-    ]);
+    pool(&[thread::spawn(handle_listen), thread::spawn(handle_write)]);
 }
 
 fn monitor_v2_gateio() {
@@ -395,7 +388,7 @@ fn monitor_v2_gateio() {
     let handle_listen = move || {
         let precision = PrecisionF64::default();
         let on_message = |ticker: gateio::Ticker| {
-            let symbol = ticker.result.currency_pair.replace("_", "").to_uppercase();
+            let symbol = ticker.result.currency_pair.replace('_', "").to_uppercase();
             let param = monitoring::InsertParamV2Ticker {
                 symbol,
                 exchange: "gateio".to_string(),
@@ -406,7 +399,7 @@ fn monitor_v2_gateio() {
             };
             tx.send(param).unwrap();
         };
-        let symbols = SYMBOLS_GATEIO.iter().cloned().collect::<Vec<&str>>();
+        let symbols = SYMBOLS_GATEIO.to_vec();
         gateio::TradingWs::listen_mini_tickers(&symbols, on_message);
     };
     let handle_write = move || {
@@ -420,16 +413,13 @@ fn monitor_v2_gateio() {
         }
     };
 
-    pool(&vec![
-        thread::spawn(handle_listen),
-        thread::spawn(handle_write),
-    ]);
+    pool(&[thread::spawn(handle_listen), thread::spawn(handle_write)]);
 }
 
 fn monitor_v2(_args: &Args) {
-    pool(&vec![
-        thread::spawn(move || monitor_v2_binance()),
-        thread::spawn(move || monitor_v2_gateio()),
+    pool(&[
+        thread::spawn(monitor_v2_binance),
+        thread::spawn(monitor_v2_gateio),
     ]);
 }
 

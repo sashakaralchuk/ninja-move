@@ -54,8 +54,8 @@ fn perform() {
 
     let ticker_price_gateio = trading_http_gateio.ticker_price(symbol_gateio.as_str());
 
-    trading_http_gateio.assert_balance(&vec![("USDT", ticker_price_gateio * asset_amount)]);
-    trading_binance.assert_balance(&vec![("ARB", asset_amount)]);
+    trading_http_gateio.assert_balance(&[("USDT", ticker_price_gateio * asset_amount)]);
+    trading_binance.assert_balance(&[("ARB", asset_amount)]);
     let order_id_gateio = trading_http_gateio
         .create_limit_order(
             symbol_gateio.as_str(),
@@ -97,7 +97,7 @@ fn perform() {
                 }
             }
         };
-        binance::TradingWs::listen_depth(&vec![stream], on_message);
+        binance::TradingWs::listen_depth(&[stream], on_message);
     });
 
     let t_gateio = thread::spawn(move || {
@@ -169,15 +169,12 @@ fn perform() {
         }
     });
 
-    pool(&vec![t_binance, t_gateio, t_trading]);
+    pool(&[t_binance, t_gateio, t_trading]);
 }
 
 fn pool_env() {
-    let t = thread::spawn(move || perform());
-    match t.join() {
-        Ok(_) => {}
-        Err(_) => {}
-    }
+    let t = thread::spawn(perform);
+    t.join().unwrap_or_default();
     TelegramBotPort::new_from_envs()
         .notify_pretty("limit-market-v1".to_string(), "finished".to_string());
 }

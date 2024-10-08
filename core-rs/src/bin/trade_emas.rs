@@ -42,24 +42,24 @@ mod trade {
     }
 
     pub async fn run_backtest_batch() {
-        let _candles_timeframes = vec!["1m", "15m", "1h", "4h", "1d"];
-        let _emas_lens = vec![12, 21, 26, 50, 200];
-        let _candles_close_dests = vec!["close", "open", "high", "low"];
-        let _stop_loss_rel_vals = vec![
+        let _candles_timeframes = ["1m", "15m", "1h", "4h", "1d"];
+        let _emas_lens = [12, 21, 26, 50, 200];
+        let _candles_close_dests = ["close", "open", "high", "low"];
+        let _stop_loss_rel_vals = [
             0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05,
         ];
-        let _trailing_threshold_rel_vals = vec![
+        let _trailing_threshold_rel_vals = [
             0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8,
         ];
-        let _trailing_threshold_min_incr_rel_vals = vec![
+        let _trailing_threshold_min_incr_rel_vals = [
             0.001, 0.0015, 0.002, 0.0025, 0.003, 0.0035, 0.004, 0.0045, 0.005,
         ];
-        let candles_timeframes = vec!["15m", "1h", "4h"];
-        let emas_lens = vec![12, 21, 50];
-        let candles_close_dests = vec!["close"];
-        let stop_loss_rel_vals = vec![0.005, 0.01, 0.05];
-        let trailing_threshold_rel_vals = vec![0.5, 0.8];
-        let trailing_threshold_min_incr_rel_vals = vec![0.001, 0.002];
+        let candles_timeframes = ["15m", "1h", "4h"];
+        let emas_lens = [12, 21, 50];
+        let candles_close_dests = ["close"];
+        let stop_loss_rel_vals = [0.005, 0.01, 0.05];
+        let trailing_threshold_rel_vals = [0.5, 0.8];
+        let trailing_threshold_min_incr_rel_vals = [0.001, 0.002];
         let done_runs = {
             let config = BacktestConfig::new_from_envs();
             let mut mlflow_port = MlflowPort::new();
@@ -131,7 +131,7 @@ mod trade {
                         }
                     }
                     "ema_len" => t.1 = value.parse::<usize>().unwrap(),
-                    "candle_close_dest" => t.2 = value.to_string().replace("\"", "").to_lowercase(),
+                    "candle_close_dest" => t.2 = value.to_string().replace('\"', "").to_lowercase(),
                     "stop_loss_rel_val" => t.3 = value.parse::<f64>().unwrap(),
                     "trailing_threshold_rel_val" => t.4 = value.parse::<f64>().unwrap(),
                     "trailing_threshold_min_incr_rel_val" => t.5 = value.parse::<f64>().unwrap(),
@@ -248,8 +248,8 @@ mod trade {
                     }
                     TrailingThresholdReason::Continue => {}
                 },
-                None => match strategy.fire_with_res(&ticker) {
-                    Ok(_) => {
+                None => {
+                    if strategy.fire_with_res(&ticker).is_ok() {
                         threshold = Some(TrailingThreshold::new(
                             ticker.data_last_price,
                             ticker.ts_millis,
@@ -258,8 +258,7 @@ mod trade {
                             config.trailing_threshold_min_incr_rel_val,
                         ))
                     }
-                    Err(_) => {}
-                },
+                }
             }
         }
         // TODO: why do comment with code in ``` executes on cargo test
@@ -307,7 +306,7 @@ mod trade {
                 mlflow_port.log_metric(k, v).await;
             }
         }
-        if config.save_debug_candles && debug_candles.len() > 0 {
+        if config.save_debug_candles && debug_candles.is_empty() {
             log::info!("save debug_candles to default.debugs");
             let vec = debug_candles
                 .iter()
@@ -319,7 +318,7 @@ mod trade {
                 .collect::<Vec<_>>();
             let _ = debugs_port.insert_batch(&vec).await;
         }
-        if config.save_backtest_outs && backtests.len() > 0 {
+        if config.save_backtest_outs && backtests.is_empty() {
             log::info!("save backtests to default.debugs");
             let vec = backtests
                 .iter()
@@ -331,7 +330,7 @@ mod trade {
                 .collect::<Vec<_>>();
             let _ = debugs_port.insert_batch(&vec).await;
         }
-        if config.save_debug_emas && debug_emas.len() > 0 {
+        if config.save_debug_emas && debug_emas.is_empty() {
             log::info!("save debug_emas to default.debugs");
             let vec = debug_emas
                 .iter()
@@ -545,13 +544,13 @@ mod trade {
     ///
     /// Calcs the same way as pd.Series(...).ewm(span=len, adjust=False).mean()
     ///
-    pub fn calc_emas(prices: &Vec<f64>, len: i32) -> Vec<f64> {
+    pub fn calc_emas(prices: &[f64], len: i32) -> Vec<f64> {
         let len_f64 = len as f64;
         let smoothing = 2.0;
         let mut emas = vec![prices[0]];
-        for i in 1..prices.len() {
+        for p in prices.iter().skip(1) {
             let k = smoothing / (1.0 + len_f64);
-            let ema = prices[i] * k + *emas.last().unwrap() * (1.0 - k);
+            let ema = p * k + *emas.last().unwrap() * (1.0 - k);
             emas.push(ema);
         }
         emas
@@ -1107,9 +1106,10 @@ mod debug {
         let mut tickers_port = TickersPort::new_and_connect();
         tickers_port.create_table();
         let config = bybit::ConfigWs::new("BTCUSDT".to_string(), false, true);
-        let on_message = |event: bybit::EventWs| match event {
-            bybit::EventWs::Ticker(ticker) => tickers_port.insert(&ticker).unwrap(),
-            _ => {}
+        let on_message = |event: bybit::EventWs| {
+            if let bybit::EventWs::Ticker(ticker) = event {
+                tickers_port.insert(&ticker).unwrap();
+            }
         };
         bybit::TradingWs::listen_ws(&config, on_message);
     }
@@ -1121,7 +1121,7 @@ mod debug {
     pub fn read_save_tickers_to_database() {
         let start_date = chrono::NaiveDate::parse_from_str("2024-04-08", "%Y-%m-%d").unwrap();
         let end_date = chrono::Utc::now().date_naive() - chrono::Duration::try_days(1).unwrap();
-        let mut date = start_date.clone();
+        let mut date = start_date;
         let mut tickers_port = TickersPort::new_and_connect();
         while date <= end_date {
             log::info!("{:?}", date);
@@ -1173,10 +1173,10 @@ mod debug {
                 Candle::new_from_ticker(&tickers[0], &CandleTimeframe::Minutes(1));
             for ticker in tickers.iter() {
                 if ticker.ts_millis < threshold_ts {
-                    current_candle.apply_ticker(&ticker);
+                    current_candle.apply_ticker(ticker);
                 } else {
                     out.push(current_candle);
-                    current_candle = Candle::new_from_ticker(&ticker, &CandleTimeframe::Minutes(1));
+                    current_candle = Candle::new_from_ticker(ticker, &CandleTimeframe::Minutes(1));
                     threshold_ts += interval_1h_millis;
                 }
             }

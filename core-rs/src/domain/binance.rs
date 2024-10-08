@@ -1,7 +1,7 @@
 use tungstenite::connect;
 use url::Url;
 
-const URL_WS: &'static str = "wss://stream.binance.com:9443";
+const URL_WS: &str = "wss://stream.binance.com:9443";
 
 #[allow(non_snake_case)]
 #[derive(serde::Deserialize, Debug)]
@@ -28,18 +28,19 @@ pub struct MiniTicker {
     pub l: String,
 }
 
+#[derive(Default)]
 pub struct TradingHttp {}
 
 impl TradingHttp {
     pub fn new() -> Self {
-        Self {}
+        Self::default()
     }
 
     pub fn create_market_order(&self) {
         log::info!("NOTE: create_market_order will be implemented later")
     }
 
-    pub fn assert_balance(&self, _params: &Vec<(&'static str, f64)>) {
+    pub fn assert_balance(&self, _params: &[(&'static str, f64)]) {
         log::info!("NOTE: assert_balance will be implemented later")
     }
 }
@@ -47,7 +48,7 @@ impl TradingHttp {
 pub struct TradingWs {}
 
 impl TradingWs {
-    pub fn listen_depth(streams: &Vec<String>, on_message: impl Fn(Depth)) {
+    pub fn listen_depth(streams: &[String], on_message: impl Fn(Depth)) {
         let url_str = format!("{}/stream?streams={}", URL_WS, streams.join("/"));
         let url_obj = Url::parse(&url_str).unwrap();
         let (mut socket, _response) = connect(url_obj).unwrap();
@@ -57,10 +58,9 @@ impl TradingWs {
             let msg_text = msg.to_text().unwrap().to_string();
             match serde_json::from_str::<Depth>(&msg_text) {
                 Ok(msg_obj) => on_message(msg_obj),
-                Err(error) => log::error!(
-                    "[listen_depth] msg_text: {} error: {}",
-                    msg_text, error,
-                ),
+                Err(error) => {
+                    log::error!("[listen_depth] msg_text: {} error: {}", msg_text, error,)
+                }
             };
         }
     }

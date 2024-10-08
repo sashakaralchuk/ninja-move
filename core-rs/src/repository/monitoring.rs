@@ -6,8 +6,8 @@ use postgres::{Client, Error as PostgresError, NoTls, Row};
 
 fn wrap_result<T>(query: Result<T, PostgresError>) -> Result<T, String> {
     match query {
-        Ok(v) => return Ok(v),
-        Err(error) => return Err(format!("error: {}", error)),
+        Ok(v) => Ok(v),
+        Err(error) => Err(format!("error: {}", error)),
     }
 }
 
@@ -26,7 +26,7 @@ pub struct Repository {
 impl Repository {
     pub fn new_and_connect() -> Self {
         let conn_str = env::var("POSTGRES_DRIVER_STR").unwrap();
-        match Client::connect(&conn_str.as_str(), NoTls) {
+        match Client::connect(conn_str.as_str(), NoTls) {
             Ok(client) => Self { client },
             Err(error) => panic!("postgres connect error: {}", error),
         }
@@ -49,10 +49,7 @@ impl Repository {
             .unwrap();
     }
 
-    pub fn insert_batch(
-        &mut self,
-        list: &Vec<InsertParam>,
-    ) -> Result<(), String> {
+    pub fn insert_batch(&mut self, list: &[InsertParam]) -> Result<(), String> {
         let now_str = chrono::prelude::Utc::now().to_string();
         let values = list
             .iter()
@@ -72,16 +69,12 @@ impl Repository {
         wrap_result::<()>(self.client.batch_execute(query.as_str()))
     }
 
-    pub fn spread_mat_view(
-        &mut self,
-        start: &NaiveDateTime,
-        end: &NaiveDateTime,
-    ) {
+    pub fn spread_mat_view(&mut self, start: &NaiveDateTime, end: &NaiveDateTime) {
         let name = format!(
             "spread_{}_{}_{}",
-            start.format("%Y_%m_%d").to_string(),
-            start.format("%H").to_string(),
-            end.format("%H").to_string(),
+            start.format("%Y_%m_%d"),
+            start.format("%H"),
+            end.format("%H"),
         );
         let query_create = format!("
             create materialized view {}
@@ -130,8 +123,8 @@ impl Repository {
             )
             with data;",
             name,
-            start.format("%Y-%m-%d %H:%M:%S").to_string(),
-            end.format("%Y-%m-%d %H:%M:%S").to_string(),
+            start.format("%Y-%m-%d %H:%M:%S"),
+            end.format("%Y-%m-%d %H:%M:%S"),
         );
         match self
             .client
@@ -145,40 +138,32 @@ impl Repository {
         };
     }
 
-    pub fn start_end_dates(
-        &mut self,
-    ) -> Result<(NaiveDateTime, NaiveDateTime), ()> {
-        for row in self
-            .client
-            .query(
-                "
+    #[allow(clippy::result_unit_err)]
+    pub fn start_end_dates(&mut self) -> Result<(NaiveDateTime, NaiveDateTime), ()> {
+        let query = r#"
             select min(timestamp), max(timestamp)
             from monitoring_spread
-        ",
-                &[],
-            )
+        "#;
+        let rows = self.client.query(query, &[]).unwrap();
+        let row = rows.first().unwrap();
+        let min = row
+            .get::<usize, SystemTime>(0)
+            .duration_since(UNIX_EPOCH)
             .unwrap()
-        {
-            let min = row
-                .get::<usize, SystemTime>(0)
-                .duration_since(UNIX_EPOCH)
+            .as_millis();
+        let max = row
+            .get::<usize, SystemTime>(1)
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        Ok((
+            chrono::DateTime::from_timestamp_millis(min as i64)
                 .unwrap()
-                .as_millis();
-            let max = row
-                .get::<usize, SystemTime>(1)
-                .duration_since(UNIX_EPOCH)
+                .naive_utc(),
+            chrono::DateTime::from_timestamp_millis(max as i64)
                 .unwrap()
-                .as_millis();
-            return Ok((
-                chrono::DateTime::from_timestamp_millis(min as i64)
-                    .unwrap()
-                    .naive_utc(),
-                chrono::DateTime::from_timestamp_millis(max as i64)
-                    .unwrap()
-                    .naive_utc(),
-            ));
-        }
-        Err(())
+                .naive_utc(),
+        ))
     }
 
     pub fn symbols_amount(&mut self) -> Result<Vec<Row>, String> {
@@ -232,7 +217,7 @@ pub struct RepositoryV2 {
 impl RepositoryV2 {
     pub fn new_and_connect() -> Self {
         let conn_str = env::var("POSTGRES_DRIVER_STR").unwrap();
-        match Client::connect(&conn_str.as_str(), NoTls) {
+        match Client::connect(conn_str.as_str(), NoTls) {
             Ok(client) => Self { client },
             Err(error) => panic!("postgres connect error: {}", error),
         }
@@ -254,10 +239,7 @@ impl RepositoryV2 {
             .unwrap();
     }
 
-    pub fn insert_batch(
-        &mut self,
-        list: &Vec<InsertParamV2>,
-    ) -> Result<(), String> {
+    pub fn insert_batch(&mut self, list: &[InsertParamV2]) -> Result<(), String> {
         let values = list
             .iter()
             .map(|o| {
@@ -297,7 +279,7 @@ pub struct RepositoryV2Ticker {
 impl RepositoryV2Ticker {
     pub fn new_and_connect() -> Self {
         let conn_str = env::var("POSTGRES_DRIVER_STR").unwrap();
-        match Client::connect(&conn_str.as_str(), NoTls) {
+        match Client::connect(conn_str.as_str(), NoTls) {
             Ok(client) => Self { client },
             Err(error) => panic!("postgres connect error: {}", error),
         }
@@ -320,22 +302,14 @@ impl RepositoryV2Ticker {
             .unwrap();
     }
 
-    pub fn insert_batch(
-        &mut self,
-        list: &Vec<InsertParamV2Ticker>,
-    ) -> Result<(), String> {
+    pub fn insert_batch(&mut self, list: &[InsertParamV2Ticker]) -> Result<(), String> {
         let values = list
             .iter()
             .map(|x| {
                 let timestamp = x.timestamp as f64 / 1000.0; // need to be in secs
                 format!(
                     "('{}', '{}', {}, {}, {}, to_timestamp({})::timestamp)",
-                    x.symbol,
-                    x.exchange,
-                    x.close_price,
-                    x.high_price,
-                    x.low_price,
-                    timestamp,
+                    x.symbol, x.exchange, x.close_price, x.high_price, x.low_price, timestamp,
                 )
             })
             .collect::<Vec<String>>();

@@ -1,5 +1,5 @@
 // NOTE: symbols from https://api.binance.com/api/v3/exchangeInfo
-pub const SYMBOLS_BINANCE: [&'static str; 452] = [
+pub const SYMBOLS_BINANCE: [&str; 452] = [
     "BTCUSDT",
     "ETHUSDT",
     "BNBUSDT",
@@ -454,9 +454,8 @@ pub const SYMBOLS_BINANCE: [&'static str; 452] = [
     "WBETHUSDT",
 ];
 
-
 // NOTE: symbols from https://api.gateio.ws/api/v4/spot/currency_pairs
-pub const SYMBOLS_GATEIO: [&'static str; 1970] = [
+pub const SYMBOLS_GATEIO: [&str; 1970] = [
     "10SET_USDT",
     "1ART_USDT",
     "1EARTH_USDT",

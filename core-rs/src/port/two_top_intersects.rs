@@ -35,15 +35,12 @@ impl CandlesPort {
         let query = format!(
             "INSERT INTO public.candles_1m
                 (open_time, exchange, symbol, open, close, low, high)
-            VALUES {};",
-            format!(
-                "(to_timestamp({})::timestamp, '{}', '{}', {}, {}, {}, {})",
-                open_time, x.exchange, x.symbol, x.open, x.close, x.low, x.high,
-            ),
+            VALUES (to_timestamp({})::timestamp, '{}', '{}', {}, {}, {}, {});",
+            open_time, x.exchange, x.symbol, x.open, x.close, x.low, x.high,
         );
         match self.client.batch_execute(query.as_str()) {
-            Ok(v) => return Ok(v),
-            Err(error) => return Err(format!("error: {}", error)),
+            Ok(v) => Ok(v),
+            Err(error) => Err(format!("error: {}", error)),
         }
     }
 
@@ -86,10 +83,10 @@ pub struct SpreadRow {
 }
 
 impl SpreadRow {
-    pub fn new(exchange: &String, symbol: &String, value_abs: f64) -> Self {
+    pub fn new(exchange: &str, symbol: &str, value_abs: f64) -> Self {
         Self {
-            exchange: exchange.clone(),
-            symbol: symbol.clone(),
+            exchange: exchange.to_string(),
+            symbol: symbol.to_string(),
             value_abs,
         }
     }
@@ -125,12 +122,12 @@ impl SpreadPort {
         let query = format!(
             "INSERT INTO public.spreads
                 (created_at, exchange, symbol, value_abs)
-            VALUES {};",
-            format!("(now(), '{}', '{}', {})", x.exchange, x.symbol, x.value_abs),
+            VALUES (now(),'{}','{}',{});",
+            x.exchange, x.symbol, x.value_abs,
         );
         match self.client.batch_execute(query.as_str()) {
-            Ok(v) => return Ok(v),
-            Err(error) => return Err(format!("error: {}", error)),
+            Ok(v) => Ok(v),
+            Err(error) => Err(format!("error: {}", error)),
         }
     }
 }

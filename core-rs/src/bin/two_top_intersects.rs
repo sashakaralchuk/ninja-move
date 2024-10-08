@@ -105,9 +105,8 @@ impl<'a> TwoTopIntersection<'a> {
             "close order open_price={} trailing_threshold={} profit_abs={:.2} profit_rel={:.4}",
             order.avg_fill_price, threshold, profit_abs, profit_rel,
         );
-        match self.telegram_port {
-            Some(p) => p.notify_pretty(m.clone(), strategy_str.to_string()),
-            _ => {}
+        if let Some(p) = self.telegram_port {
+            p.notify_pretty(m.clone(), strategy_str.to_string())
         }
         log::debug!("{}", m);
     }
@@ -147,7 +146,7 @@ fn trade() {
         let prev_candles =
             CandlesPort::new_and_connect().fetch_last_candles(200, "bybit", symbol_calc.as_str());
         for candle in prev_candles.iter() {
-            two_top_intersection.apply_candle(&candle)
+            two_top_intersection.apply_candle(candle)
         }
         let start_ticker = Candle::wait_for_next(&rx_tickers_calc_signals);
         let mut current_candle =
@@ -161,9 +160,8 @@ fn trade() {
             } else {
                 current_candle.apply_ticker(&ticker)
             }
-            match two_top_intersection.fire(ticker.data_last_price) {
-                Some(signal) => tx_calc_trade_signals.send(signal).unwrap(),
-                None => {}
+            if let Some(signal) = two_top_intersection.fire(ticker.data_last_price) {
+                tx_calc_trade_signals.send(signal).unwrap();
             }
         }
     };
@@ -244,7 +242,7 @@ fn trade() {
             }
         }
     };
-    pool(&vec![
+    pool(&[
         thread::spawn(receive_tickers),
         thread::spawn(calc_signals),
         thread::spawn(trade_signals),
@@ -271,8 +269,8 @@ fn listen_save_candles() {
         .unwrap(),
         &CandleTimeframe::Minutes(1),
     );
-    let on_message = |event: bybit::EventWs| match event {
-        bybit::EventWs::Ticker(ticker) => {
+    let on_message = |event: bybit::EventWs| {
+        if let bybit::EventWs::Ticker(ticker) = event {
             if current_candle.expired(&ticker) {
                 log::info!("candle expired: {:?}", current_candle);
                 current_candle = Candle::new_from_ticker(&ticker, &CandleTimeframe::Minutes(1));
@@ -281,7 +279,6 @@ fn listen_save_candles() {
                 current_candle.apply_ticker(&ticker)
             }
         }
-        _ => {}
     };
     let config = bybit::ConfigWs::new(symbol, false, true);
     bybit::TradingWs::listen_ws(&config, on_message);
@@ -291,15 +288,14 @@ fn listen_save_spreads() {
     let symbol = "BTCUSDC".to_string();
     let mut order_book = OrderBookCache::new();
     let mut spread_port = SpreadPort::new_and_connect();
-    let on_message = |event: bybit::EventWs| match event {
-        bybit::EventWs::Depth(depth) => {
+    let on_message = |event: bybit::EventWs| {
+        if let bybit::EventWs::Depth(depth) = event {
             order_book.apply_orders(depth.update_id, &depth.bids, &depth.asks);
             if let Some(spread_abs) = order_book.calc_spread_abs() {
-                let row = SpreadRow::new(&"bybit".to_string(), &symbol, spread_abs);
+                let row = SpreadRow::new("bybit", &symbol, spread_abs);
                 spread_port.insert_spread(&row).unwrap();
             }
         }
-        _ => {}
     };
     let config = bybit::ConfigWs::new(symbol.clone(), true, false);
     bybit::TradingWs::listen_ws(&config, on_message);

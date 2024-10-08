@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{FlatDepth, FlatTicker};
 
-const URL_WS: &'static str = "wss://stream.bybit.com/v5/public/spot";
+const URL_WS: &str = "wss://stream.bybit.com/v5/public/spot";
 
 #[allow(non_snake_case)]
 #[derive(serde::Deserialize)]
@@ -74,11 +74,12 @@ impl ConfigWs {
     }
 }
 
+#[derive(Default)]
 pub struct TradingWs {}
 
 impl TradingWs {
     pub fn new() -> Self {
-        Self {}
+        Self::default()
     }
 
     pub fn listen_tickers(on_message: impl Fn(FlatTicker), symbol: &String) {
@@ -93,9 +94,8 @@ impl TradingWs {
         loop {
             let msg = socket.read_message().unwrap();
             let msg_str = msg.to_text().unwrap();
-            match serde_json::from_str::<RawTicker>(msg_str) {
-                Ok(o) => on_message(o.to_flat()),
-                Err(_) => {}
+            if let Ok(o) = serde_json::from_str::<RawTicker>(msg_str) {
+                on_message(o.to_flat());
             }
         }
     }
@@ -110,9 +110,8 @@ impl TradingWs {
         loop {
             let msg = socket.read_message().unwrap();
             let msg_str = msg.to_text().unwrap();
-            match serde_json::from_str::<RawDepth>(msg_str) {
-                Ok(o) => on_message(o),
-                Err(_) => {}
+            if let Ok(o) = serde_json::from_str::<RawDepth>(msg_str) {
+                on_message(o);
             }
         }
     }
@@ -141,13 +140,11 @@ impl TradingWs {
         loop {
             let msg = socket.read_message().unwrap();
             let msg_str = msg.to_text().unwrap();
-            match serde_json::from_str::<RawDepth>(msg_str) {
-                Ok(o) => f(EventWs::Depth(o.to_flat())),
-                Err(_) => {}
+            if let Ok(o) = serde_json::from_str::<RawDepth>(msg_str) {
+                f(EventWs::Depth(o.to_flat()));
             }
-            match serde_json::from_str::<RawTicker>(msg_str) {
-                Ok(o) => f(EventWs::Ticker(o.to_flat())),
-                Err(_) => {}
+            if let Ok(o) = serde_json::from_str::<RawTicker>(msg_str) {
+                f(EventWs::Ticker(o.to_flat()));
             }
         }
     }
@@ -301,7 +298,7 @@ impl TradingHttp {
             .unwrap()
             .as_millis()
             .to_string();
-        let signature = self.gen_signature(&timestamp, &format!(""));
+        let signature = self.gen_signature(&timestamp, &String::new());
         let res = self
             .gen_request(
                 HttpMethod::Get,
@@ -329,9 +326,9 @@ impl TradingHttp {
                         return Ok(o);
                     }
                 }
-                return Err("order have not found");
+                Err("order have not found")
             }
-            Err(_) => return Err("order get error"),
+            Err(_) => Err("order get error"),
         }
     }
 }
@@ -390,9 +387,9 @@ impl TradingHttpTrait for TradingHttp {
                         _ => {}
                     }
                 }
-                return Ok(balance);
+                Ok(balance)
             }
-            Err(_) => return Err("response error"),
+            Err(_) => Err("response error"),
         }
     }
 
@@ -442,9 +439,9 @@ impl TradingHttpTrait for TradingHttp {
                         Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
                     };
                 }
-                return Err("backoff order havent successed");
+                Err("backoff order havent successed")
             }
-            Err(_) => return Err("order place response error"),
+            Err(_) => Err("order place response error"),
         }
     }
 }

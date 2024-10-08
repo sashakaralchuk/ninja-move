@@ -10,8 +10,8 @@ use url::Url;
 
 use crate::timestamp_secs;
 
-const URL_WS: &'static str = "wss://api.gateio.ws/ws/v4/";
-const URL_HTTP: &'static str = "https://api.gateio.ws";
+const URL_WS: &str = "wss://api.gateio.ws/ws/v4/";
+const URL_HTTP: &str = "https://api.gateio.ws";
 
 #[derive(serde::Deserialize, Debug)]
 pub struct DepthResult {
@@ -88,10 +88,10 @@ impl Signer {
         Self::new(key, secret)
     }
 
-    pub fn sign_http<'b>(
+    pub fn sign_http(
         &self,
-        method: &'static str,
-        path: &'b str,
+        method: &str,
+        path: &str,
         query: &String,
         body: &String,
     ) -> (String, f64) {
@@ -120,10 +120,8 @@ impl Signer {
         event: &'static str,
         timestamp: &u64,
     ) -> (String, String) {
-        let mut mac =
-            Hmac::<Sha512>::new_from_slice(self.secret.as_bytes()).unwrap();
-        let payload =
-            format!("channel={}&event={}&time={}", channel, event, timestamp,);
+        let mut mac = Hmac::<Sha512>::new_from_slice(self.secret.as_bytes()).unwrap();
+        let payload = format!("channel={}&event={}&time={}", channel, event, timestamp,);
         mac.update(payload.as_bytes());
         let signature = hex::encode(mac.finalize().into_bytes());
         (self.key.clone(), signature)
@@ -140,9 +138,9 @@ impl TradingHttp {
         Self { signer }
     }
 
-    pub fn create_limit_order<'a>(
+    pub fn create_limit_order(
         &self,
-        symbol: &'a str,
+        symbol: &str,
         amount: f64,
         price: f64,
     ) -> Result<String, Box<dyn std::error::Error>> {
@@ -156,12 +154,10 @@ impl TradingHttp {
             "price": price.to_string(),
         })
         .to_string();
-        let (signature, timestamp) =
-            self.signer.sign_http("POST", path, &"".to_string(), &body);
-
+        let (signature, timestamp) = self.signer.sign_http("POST", path, &"".to_string(), &body);
         let request_start = timestamp_secs();
         let response = reqwest::blocking::Client::new()
-            .post(&format!("{}{}", URL_HTTP, path))
+            .post(format!("{}{}", URL_HTTP, path))
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .header("KEY", &self.signer.key)
@@ -169,24 +165,19 @@ impl TradingHttp {
             .header("SIGN", &signature)
             .body(body)
             .send();
-
         match response {
             Ok(v) => {
                 let request_end = timestamp_secs();
                 let status_code = v.status().as_u16();
                 let response_body: serde_json::Value = v.json().unwrap();
                 if status_code != 201 {
-                    let message = format!(
-                        "wrong status_code, error: {:?}",
-                        response_body,
-                    );
+                    let message = format!("wrong status_code, error: {:?}", response_body,);
                     return Err(Box::new(TradingError {
                         message,
                         status_code,
                     }));
                 }
-                let order_id =
-                    response_body["id"].as_str().unwrap().to_string();
+                let order_id = response_body["id"].as_str().unwrap().to_string();
                 log::info!(
                     "limit order made, order_id: {}, \
                     status_code: {}, duration(s): {:.2}",
@@ -194,15 +185,15 @@ impl TradingHttp {
                     status_code,
                     request_end - request_start,
                 );
-                return Ok(order_id);
+                Ok(order_id)
             }
-            Err(error) => return Err(Box::new(error)),
+            Err(error) => Err(Box::new(error)),
         }
     }
 
-    pub fn amend_order<'a>(
+    pub fn amend_order(
         &self,
-        symbol: &'a str,
+        symbol: &str,
         order_id: &String,
         price: f64,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -212,10 +203,9 @@ impl TradingHttp {
         let (signature, timestamp) =
             self.signer
                 .sign_http("PATCH", path.as_str(), &query_str, &body);
-
         let request_start = timestamp_secs();
         let response = reqwest::blocking::Client::new()
-            .patch(&format!("{}{}?{}", URL_HTTP, path, query_str))
+            .patch(format!("{}{}?{}", URL_HTTP, path, query_str))
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .header("KEY", &self.signer.key)
@@ -223,7 +213,6 @@ impl TradingHttp {
             .header("SIGN", &signature)
             .body(body)
             .send();
-
         match response {
             Ok(v) => {
                 let request_end = timestamp_secs();
@@ -231,10 +220,7 @@ impl TradingHttp {
                 let response_body: serde_json::Value = v.json().unwrap();
                 let order_id = response_body["id"].to_string();
                 if status_code != 200 {
-                    let message = format!(
-                        "wrong status_code, error: {:?}",
-                        response_body,
-                    );
+                    let message = format!("wrong status_code, error: {:?}", response_body,);
                     return Err(Box::new(TradingError {
                         message,
                         status_code,
@@ -247,23 +233,20 @@ impl TradingHttp {
                     status_code,
                     request_end - request_start,
                 );
-                return Ok(());
+                Ok(())
             }
-            Err(error) => return Err(Box::new(error)),
+            Err(error) => Err(Box::new(error)),
         }
     }
 
-    pub fn assert_balance(&self, params: &Vec<(&'static str, f64)>) {
+    pub fn assert_balance(&self, params: &[(&'static str, f64)]) {
         let accounts = {
             let path = "/api/v4/spot/accounts";
-            let (signature, timestamp) = self.signer.sign_http(
-                "GET",
-                path,
-                &"".to_string(),
-                &"".to_string(),
-            );
+            let (signature, timestamp) =
+                self.signer
+                    .sign_http("GET", path, &"".to_string(), &"".to_string());
             let response = reqwest::blocking::Client::new()
-                .get(&format!("{}{}", URL_HTTP, path))
+                .get(format!("{}{}", URL_HTTP, path))
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .header("KEY", &self.signer.key)
@@ -280,29 +263,25 @@ impl TradingHttp {
                 .map(|x| {
                     (
                         x["currency"].as_str().unwrap().to_string(),
-                        x["available"]
-                            .as_str()
-                            .unwrap()
-                            .parse::<f64>()
-                            .unwrap(),
+                        x["available"].as_str().unwrap().parse::<f64>().unwrap(),
                     )
                 })
                 .collect::<HashMap<String, f64>>()
         };
         let tokens_to_check = params
             .iter()
-            .map(|(token, amount)| (token.to_string(), amount.clone()))
+            .map(|(token, amount)| (token.to_string(), *amount))
             .collect::<HashMap<String, f64>>();
         for token in tokens_to_check.keys() {
             assert!(tokens_to_check[token] < accounts[token])
         }
     }
 
-    pub fn ticker_price<'a>(&self, symbol: &'a str) -> f64 {
+    pub fn ticker_price(&self, symbol: &str) -> f64 {
         let path = "/api/v4/spot/tickers";
         let query_str = format!("currency_pair={}", symbol);
         let response = reqwest::blocking::Client::new()
-            .get(&format!("{}{}?{}", URL_HTTP, path, query_str))
+            .get(format!("{}{}?{}", URL_HTTP, path, query_str))
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .send();
@@ -337,11 +316,7 @@ impl TradingWs {
         Self { signer }
     }
 
-    pub fn listen_orders<'a>(
-        &self,
-        symbol: &'a str,
-        on_message: impl Fn(String),
-    ) {
+    pub fn listen_orders(&self, symbol: &str, on_message: impl Fn(String)) {
         let channel = "spot.orders";
         let event = "subscribe";
         let timestamp = SystemTime::now()
@@ -364,8 +339,7 @@ impl TradingWs {
         let listen = async {
             let (stream, _) = connect_async(URL_WS).await.unwrap();
             let (mut write, mut read) = stream.split();
-            let m =
-                async_tungstenite::tungstenite::Message::text(subscribe_text);
+            let m = async_tungstenite::tungstenite::Message::text(subscribe_text);
             write.send(m).await.unwrap();
             let response = serde_json::from_str::<WsSubscribeResponse>(
                 read.next().await.unwrap().unwrap().to_string().as_str(),
@@ -384,8 +358,7 @@ impl TradingWs {
             let loop_pong = async {
                 loop {
                     tokio::time::sleep(Duration::from_secs(5)).await;
-                    let m =
-                        async_tungstenite::tungstenite::Message::Pong(vec![]);
+                    let m = async_tungstenite::tungstenite::Message::Pong(vec![]);
                     write.send(m).await.unwrap();
                 }
             };
@@ -397,7 +370,7 @@ impl TradingWs {
         tokio::runtime::Runtime::new().unwrap().block_on(listen);
     }
 
-    pub fn listen_depth(symbols: &Vec<String>, on_message: impl Fn(Depth)) {
+    pub fn listen_depth(symbols: &[String], on_message: impl Fn(Depth)) {
         let url_obj = Url::parse(URL_WS).unwrap();
         let (mut socket, _response) = connect(url_obj).unwrap();
         for symbol in symbols.iter() {
@@ -419,17 +392,13 @@ impl TradingWs {
         loop {
             let msg = socket.read_message().unwrap();
             let msg_text = msg.to_text().unwrap();
-            match serde_json::from_str::<Depth>(msg_text) {
-                Ok(msg_obj) => on_message(msg_obj),
-                Err(_) => {}
+            if let Ok(msg_obj) = serde_json::from_str::<Depth>(msg_text) {
+                on_message(msg_obj);
             }
         }
     }
 
-    pub fn listen_mini_tickers(
-        symbols: &Vec<&str>,
-        on_message: impl Fn(Ticker),
-    ) {
+    pub fn listen_mini_tickers(symbols: &Vec<&str>, on_message: impl Fn(Ticker)) {
         let url_obj = Url::parse(URL_WS).unwrap();
         let (mut socket, _response) = connect(url_obj).unwrap();
         let subscribe_text = serde_json::json!({
@@ -449,9 +418,8 @@ impl TradingWs {
         loop {
             let msg = socket.read_message().unwrap();
             let msg_text = msg.to_text().unwrap();
-            match serde_json::from_str::<Ticker>(msg_text) {
-                Ok(msg_obj) => on_message(msg_obj),
-                Err(_) => {}
+            if let Ok(msg_obj) = serde_json::from_str::<Ticker>(msg_text) {
+                on_message(msg_obj);
             }
         }
     }
@@ -494,11 +462,10 @@ mod tests {
     fn hex_to_str_and_vise_versa() {
         let s = "6668ed2f7d016c5f12d7808fc4f2d1dc4851622d7f15616de947a823b3ee67d761b953f09560da301f832902020dd1c64f496df37eb7ac4fd2feeeb67d77ba9b";
         let s_bytes_expected: [u8; 64] = [
-            102, 104, 237, 47, 125, 1, 108, 95, 18, 215, 128, 143, 196, 242,
-            209, 220, 72, 81, 98, 45, 127, 21, 97, 109, 233, 71, 168, 35, 179,
-            238, 103, 215, 97, 185, 83, 240, 149, 96, 218, 48, 31, 131, 41, 2,
-            2, 13, 209, 198, 79, 73, 109, 243, 126, 183, 172, 79, 210, 254,
-            238, 182, 125, 119, 186, 155,
+            102, 104, 237, 47, 125, 1, 108, 95, 18, 215, 128, 143, 196, 242, 209, 220, 72, 81, 98,
+            45, 127, 21, 97, 109, 233, 71, 168, 35, 179, 238, 103, 215, 97, 185, 83, 240, 149, 96,
+            218, 48, 31, 131, 41, 2, 2, 13, 209, 198, 79, 73, 109, 243, 126, 183, 172, 79, 210,
+            254, 238, 182, 125, 119, 186, 155,
         ];
 
         assert_eq!(hex::decode(s).unwrap(), s_bytes_expected[..]);
@@ -511,8 +478,7 @@ mod tests {
         let key = "hello";
         let data = "world";
         let signature = {
-            let mut mac =
-                Hmac::<Sha512>::new_from_slice(key.as_bytes()).unwrap();
+            let mut mac = Hmac::<Sha512>::new_from_slice(key.as_bytes()).unwrap();
             mac.update(data.as_bytes());
             hex::encode(mac.finalize().into_bytes())
         };
@@ -538,8 +504,7 @@ mod tests {
             method, path, "", hashed_payload, timestamp,
         );
         let signature = {
-            let mut mac =
-                Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
+            let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
             mac.update(payload.as_bytes());
             hex::encode(mac.finalize().into_bytes())
         };
@@ -556,12 +521,8 @@ mod tests {
         let event = "";
         let timestamp = 1690384535;
         let signature = {
-            let mut mac =
-                Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
-            let payload = format!(
-                "channel={}&event={}&time={}",
-                channel, event, timestamp
-            );
+            let mut mac = Hmac::<Sha512>::new_from_slice(secret.as_bytes()).unwrap();
+            let payload = format!("channel={}&event={}&time={}", channel, event, timestamp);
             mac.update(payload.as_bytes());
             hex::encode(mac.finalize().into_bytes())
         };

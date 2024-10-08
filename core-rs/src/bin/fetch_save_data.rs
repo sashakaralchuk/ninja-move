@@ -101,9 +101,9 @@ impl Binance {
         l[0].url.clone()
     }
 
-    async fn fetch_csv_content(&self, url_file: &String) -> String {
+    async fn fetch_csv_content(&self, url_file: &str) -> String {
         let csv_zip_bytes = reqwest::Client::new()
-            .get(url_file.as_str())
+            .get(url_file)
             .send()
             .await
             .unwrap()
@@ -143,7 +143,7 @@ impl RedpandaPort {
     /// ```
     ///
     #[allow(dead_code)]
-    async fn connect_produce_messages_chunked(topic_name: &str, vec: &Vec<String>) {
+    async fn connect_produce_messages_chunked(topic_name: &str, vec: &[String]) {
         let mut threads = vec![];
         let n = 25;
         log::debug!(
@@ -155,7 +155,7 @@ impl RedpandaPort {
         );
         let vec_chunked: Vec<_> = vec.chunks(vec.len() / n + 1).collect();
         for i in 0..n {
-            let chunk = vec_chunked[i].iter().cloned().collect::<Vec<_>>();
+            let chunk = vec_chunked[i].to_vec();
             let topic_name_cloned = topic_name.to_string().clone();
             let t = std::thread::spawn(move || {
                 futures::executor::block_on(RedpandaPort::connect_produce_messages(
@@ -170,7 +170,7 @@ impl RedpandaPort {
         }
     }
 
-    async fn connect_produce_messages(topic_name: &str, vec: &Vec<String>) {
+    async fn connect_produce_messages(topic_name: &str, vec: &[String]) {
         log::debug!(
             "RedpandaPort::connect_produce_messages push trades to topic={} len={}",
             topic_name,
@@ -181,12 +181,12 @@ impl RedpandaPort {
             .create()
             .expect("Producer creation failed");
         let futures = vec
-            .into_iter()
+            .iter()
             .map(|m| async move {
                 producer
                     .clone()
                     .send(
-                        FutureRecord::to(&topic_name.to_string())
+                        FutureRecord::to(topic_name)
                             .payload(&m.to_string())
                             .key(&"".to_string()),
                         5_000,
@@ -207,7 +207,7 @@ fn gen_dates_range(start_iso: &str, end_iso: &str) -> Vec<String> {
     while left_date < right_date {
         let date_iso = left_date.format("%Y-%m-%d").to_string();
         out.push(date_iso);
-        left_date += chrono::TimeDelta::try_seconds(1 * 24 * 60 * 60).unwrap();
+        left_date += chrono::TimeDelta::try_seconds(24 * 60 * 60).unwrap();
     }
     out
 }
@@ -300,7 +300,7 @@ async fn fetch_parse_produce_klines() {
             producer
                 .clone()
                 .send(
-                    FutureRecord::to(&topic_name.to_string())
+                    FutureRecord::to(topic_name)
                         .payload(&m.to_string())
                         .key(&"".to_string()),
                     5_000,
