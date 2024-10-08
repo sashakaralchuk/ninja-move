@@ -30,6 +30,8 @@ struct RunArgs {
 }
 
 mod trade {
+    use std::collections::HashSet;
+
     use exchanges_arbitrage::{
         Candle, CandleTimeframe, FlatTicker, MlflowPort, TradesTPortClickhouse, TrailingThreshold,
         TrailingThresholdReason,
@@ -58,15 +60,30 @@ mod trade {
         let stop_loss_rel_vals = vec![0.005, 0.01, 0.05];
         let trailing_threshold_rel_vals = vec![0.5, 0.8];
         let trailing_threshold_min_incr_rel_vals = vec![0.001, 0.002];
+        let done_runs = {
+            let config = BacktestConfig::new_from_envs();
+            let mut mlflow_port = MlflowPort::new();
+            mlflow_port.set_experiment(&config.experiment_name).await;
+            let res_runs = mlflow_port.runs_search().await;
+            parse_mlflow_runs_to_done_runs(&res_runs)
+        };
         let mut runs_configs = vec![];
+        let mut all_runs = 0;
+        let mut skipped_runs = 0;
         for t1 in &candles_timeframes {
             for t2 in &emas_lens {
                 for t3 in &candles_close_dests {
                     for t4 in &stop_loss_rel_vals {
                         for t5 in &trailing_threshold_rel_vals {
                             for t6 in &trailing_threshold_min_incr_rel_vals {
+                                all_runs += 1;
+                                let t = (*t1, *t2, *t3, *t4, *t5, *t6);
+                                if done_runs.contains(&format!("{:?}", &t)) {
+                                    skipped_runs += 1;
+                                    continue;
+                                }
                                 let mut config = BacktestConfig::new_from_envs();
-                                config.patch_for_batch(*t1, *t2, *t3, *t4, *t5, *t6);
+                                config.patch_for_batch(t.0, t.1, t.2, t.3, t.4, t.5);
                                 runs_configs.push(config);
                             }
                         }
@@ -74,11 +91,57 @@ mod trade {
                 }
             }
         }
+        assert_eq!(runs_configs.len() + skipped_runs, all_runs);
+        log::warn!(
+            "where are runs_configs={} all_runs={}",
+            runs_configs.len(),
+            all_runs
+        );
         for config in runs_configs {
             log::warn!("start");
             let _ = run_backtest(Some(&config)).await;
             log::warn!("end run_id={}", config.run_id);
         }
+    }
+
+    fn parse_mlflow_runs_to_done_runs(res_runs: &Vec<serde_json::Value>) -> HashSet<String> {
+        let mut done_runs = HashSet::new();
+        for run in res_runs {
+            let params = run
+                .get("data")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("params")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            let mut t = ("".to_string(), 0, "".to_string(), 0.0, 0.0, 0.0);
+            for param in params {
+                let key = param.get("key").unwrap().as_str().unwrap();
+                let value = param.get("value").unwrap().as_str().unwrap();
+                match key {
+                    "candle_timeframe" => {
+                        t.0 = match value {
+                            "{\"Minutes\":15}" => "15m".into(),
+                            _ => {
+                                log::debug!("unknown candle_timeframe={value}");
+                                "".into()
+                            }
+                        }
+                    }
+                    "ema_len" => t.1 = value.parse::<usize>().unwrap(),
+                    "candle_close_dest" => t.2 = value.to_string().replace("\"", "").to_lowercase(),
+                    "stop_loss_rel_val" => t.3 = value.parse::<f64>().unwrap(),
+                    "trailing_threshold_rel_val" => t.4 = value.parse::<f64>().unwrap(),
+                    "trailing_threshold_min_incr_rel_val" => t.5 = value.parse::<f64>().unwrap(),
+                    _ => {}
+                }
+            }
+            log::debug!("t={:?}", &t);
+            done_runs.insert(format!("{:?}", &t));
+        }
+        done_runs
     }
 
     pub async fn run_backtest(config: Option<&BacktestConfig>) -> String {

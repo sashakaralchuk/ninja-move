@@ -44,8 +44,8 @@ run-trade-emas:
 run-trade-emas-collect-bybit-tickers:
 	${env_vars} cargo run --bin trade_emas -- --command collect-bybit-tickers
 
-run-trade-emas-run-backtest:
-	RUST_LOG=info \
+TRADE_EMAS_ENVS := \
+	RUST_LOG=warn \
 	COMMIT_HASH_STR=${commit_hash} \
 	TRADE_EMAS_BACKTEST_EXPERIMENT_NAME="experiemnt-trade-emas-2024-10-06" \
 	TRADE_EMAS_BACKTEST_SAVE_BACKTESTS_OUTS=1 \
@@ -59,9 +59,13 @@ run-trade-emas-run-backtest:
 	TRADE_EMAS_BACKTEST_STOP_LOSS_REL_VAL=0.005 \
 	TRADE_EMAS_BACKTEST_TRAILING_THRESHOLD_REL_VAL=0.5 \
 	TRADE_EMAS_BACKTEST_TRAILING_THRESHOLD_MIN_INCR_REL_VAL=0.002 \
-	TRADE_EMAS_BACKTEST_TRAILING_THRESHOLD_MIN_INCR_REL_VAL=0.002 \
 	TRADE_EMAS_BACKTEST_CANDLE_CLOSE_DEST=close \
-	cargo run --bin trade_emas -- --command run-backtest
+
+run-trade-emas-run-backtest:
+	${TRADE_EMAS_ENVS} cargo run --bin trade_emas -- --command run-backtest
+
+run-trade-emas-run-backtest-batch:
+	${TRADE_EMAS_ENVS} cargo run --bin trade_emas -- --command run-backtest-batch
 
 run-trade-emas-upload-tickers-to-database:
 	${env_vars} cargo run --bin trade_emas -- --command upload-tickers-to-database

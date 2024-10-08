@@ -759,6 +759,27 @@ impl MlflowPort {
             .unwrap();
         log::debug!("log_metric key={key} value={value}");
     }
+
+    pub async fn runs_search(&self) -> Vec<serde_json::Value> {
+        let url_runs_search = format!("{}/runs/search", self.base_url);
+        let body = serde_json::json!({
+            "experiment_ids": [self.experiment_id.as_ref().unwrap()],
+            "max_results": 50000,
+        })
+        .to_string();
+        let res_runs_search = reqwest::Client::new()
+            .post(url_runs_search)
+            .body(body)
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        let res_runs = res_runs_search.get("runs").unwrap().as_array().unwrap();
+        res_runs.iter().cloned().collect::<Vec<_>>()
+    }
 }
 
 #[derive(
