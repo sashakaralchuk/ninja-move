@@ -124,6 +124,8 @@ mod trade {
                     "candle_timeframe" => {
                         t.0 = match value {
                             "{\"Minutes\":15}" => "15m".into(),
+                            "{\"Hours\":1}" => "1h".into(),
+                            "{\"Hours\":4}" => "4h".into(),
                             _ => {
                                 log::debug!("unknown candle_timeframe={value}");
                                 "".into()

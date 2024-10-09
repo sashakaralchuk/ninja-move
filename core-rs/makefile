@@ -45,7 +45,7 @@ run-trade-emas-collect-bybit-tickers:
 	${env_vars} cargo run --bin trade_emas -- --command collect-bybit-tickers
 
 TRADE_EMAS_ENVS := \
-	RUST_LOG=warn \
+	RUST_LOG=info \
 	COMMIT_HASH_STR=${commit_hash} \
 	TRADE_EMAS_BACKTEST_EXPERIMENT_NAME="experiemnt-trade-emas-2024-10-06" \
 	TRADE_EMAS_BACKTEST_SAVE_BACKTESTS_OUTS=1 \
