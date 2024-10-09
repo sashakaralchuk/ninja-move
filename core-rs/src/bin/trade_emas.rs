@@ -92,15 +92,15 @@ mod trade {
             }
         }
         assert_eq!(runs_configs.len() + skipped_runs, all_runs);
-        log::warn!(
+        log::info!(
             "where are runs_configs={} all_runs={}",
             runs_configs.len(),
             all_runs
         );
         for config in runs_configs {
-            log::warn!("start");
+            log::info!("start");
             let _ = run_backtest(Some(&config)).await;
-            log::warn!("end run_id={}", config.run_id);
+            log::info!("end run_id={}", config.run_id);
         }
     }
 
