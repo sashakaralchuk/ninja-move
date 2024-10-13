@@ -512,9 +512,16 @@ impl TradesTPortClickhouse {
     }
 
     ///
-    /// Example:
-    /// let _ = TradesTPortClickhouse::new_and_connect()
-    ///     .fetch("2024-01-01", "2025-01-01").await;
+    /// ### Examples
+    /// ```no_run
+    /// use exchanges_arbitrage::TradesTPortClickhouse;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let _ = TradesTPortClickhouse::new_and_connect()
+    ///         .fetch("2024-01-01", "2025-01-01").await;
+    /// }
+    /// ```
     ///
     pub async fn fetch(&mut self, start_time_iso: &str, end_time_iso: &str) -> Vec<FlatTicker> {
         let query = format!(

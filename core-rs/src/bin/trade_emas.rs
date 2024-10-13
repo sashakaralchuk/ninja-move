@@ -263,10 +263,9 @@ mod trade {
                 }
             }
         }
-        // TODO: why do comment with code in ``` executes on cargo test (Doc-test) + add clippy to ci + add tests run to ci
+        // TODO: workout how librdkafka works (what's the approach to write in parallel data to queue?)
         // TODO: read matplotlib and mplfinance doc
         // TODO: why do clickhouse gives bytes back slowly
-        // TODO: workout how librdkafka works (and why redpanda problem exists? not enought disk? what's the approach to write in parallel data to queue?)
         // TODO: as_ref, as_mut, as_deref etc, to_owned, try_into, std Any, TypeId
         //       std::any::*, Box, Box::pin, Rc::new, t.drop, what's the slice
         //       (dbg!, dbgr!) what are other macroses, how to_sql exists on vec![]

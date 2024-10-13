@@ -24,6 +24,7 @@ services:
     command: redpanda start
     volumes:
     - ./config-redpanda.yaml:/etc/redpanda/redpanda.yaml
+    - ./.var/redpanda-data:/var/lib/redpanda/data
     ports:
     - 9092:9092
     - 9644:9644
