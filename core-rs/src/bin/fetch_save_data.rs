@@ -234,6 +234,7 @@ impl RedpandaPort {
             .set("bootstrap.servers", "127.0.0.1:9092")
             .set("queue.buffering.max.ms", "100")
             .set("queue.buffering.max.messages", "10000000")
+            .set("queue.buffering.max.kbytes", "2147483647")
             .create()
             .unwrap();
         log::debug!("produce len={}", messages.len());
