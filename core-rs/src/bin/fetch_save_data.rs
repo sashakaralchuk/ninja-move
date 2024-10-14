@@ -1,6 +1,6 @@
 use exchanges_arbitrage::{TradesRow, TradesTPortClickhouse};
 use rdkafka::config::ClientConfig;
-use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::producer::{BaseProducer, BaseRecord, FutureProducer, FutureRecord};
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use clap::Parser;
@@ -35,9 +35,8 @@ async fn main() {
                                 serde_json::to_string(&o).unwrap()
                             })
                             .collect::<Vec<_>>();
-                        log::debug!("insert trades to repanda");
-                        RedpandaPort::connect_produce_messages_chunked("trades2", &vec_redpanda)
-                            .await;
+                        log::debug!("insert trades to redpanda");
+                        RedpandaPort::connect_produce_messages_sync("trades-v2", &vec_redpanda);
                     }
                     _ => panic!("unknown destination={destination}"),
                 }
@@ -158,10 +157,11 @@ impl RedpandaPort {
     ///
     /// ### Examples
     /// ```no_run
-    /// let vec = vec!["message str".to_string()];
+    /// let vec = vec!["m".to_string()];
     /// RedpandaPort::connect_produce_messages_chunked("trades", &vec).await;
     /// ```
     ///
+    #[allow(dead_code)]
     async fn connect_produce_messages_chunked(topic_name: &str, vec: &[String]) {
         let mut threads = vec![];
         let n = 25;
@@ -216,6 +216,38 @@ impl RedpandaPort {
         for future in futures {
             future.await.unwrap().unwrap();
         }
+    }
+
+    ///
+    /// ### Examples
+    /// ```no_run
+    /// let topic_name = "t-produce-1";
+    /// let messages = (0..2_500_000)
+    ///     .collect::<Vec<_>>()
+    ///     .iter()
+    ///     .map(|i| i.to_string())
+    ///     .collect::<Vec<_>>();
+    /// let _ = RedpandaPort::connect_produce_messages_sync(topic_name, &messages);
+    /// ```
+    ///
+    fn connect_produce_messages_sync(topic_name: &str, messages: &[String]) {
+        let producer: &BaseProducer = &ClientConfig::new()
+            .set("bootstrap.servers", "127.0.0.1:9092")
+            .set("queue.buffering.max.ms", "100")
+            .set("queue.buffering.max.messages", "3000000")
+            .create()
+            .unwrap();
+        log::info!("produce len={}", messages.len());
+        for m in messages.iter() {
+            let o = BaseRecord::to(topic_name).payload(m).key("");
+            producer.send(o).unwrap();
+        }
+        log::debug!("poll");
+        // NOTE: possibly i need to wait for all poll callbacks
+        producer.poll(std::time::Duration::from_millis(100));
+        log::debug!("flush");
+        producer.flush(std::time::Duration::from_secs(1));
+        log::debug!("end");
     }
 }
 
