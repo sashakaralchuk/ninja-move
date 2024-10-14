@@ -5,13 +5,11 @@ use log4rs::append::rolling_file::policy::compound::{
     roll::fixed_window::FixedWindowRoller, trigger::size::SizeTrigger,
 };
 use log4rs::append::rolling_file::RollingFileAppender;
-use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Logger, Root};
+use log4rs::encode::pattern::PatternEncoder;
 use log4rs::Config;
 
-
 const LOG_PATTERN: &'static str = "{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {f}:{L} — {m}{n}";
-
 
 fn _symbol(date: &str, symbol: &str) -> (Appender, Logger) {
     let format_roller = format!(".logs/difference/{}/{}/{{}}", symbol, date);
@@ -31,14 +29,12 @@ fn _symbol(date: &str, symbol: &str) -> (Appender, Logger) {
         .encoder(Box::new(PatternEncoder::new(LOG_PATTERN)))
         .build(format_default.as_str(), compound_policy)
         .unwrap();
-    let appender = Appender::builder()
-        .build(format_appender.as_str(), Box::new(roller_appender));
+    let appender = Appender::builder().build(format_appender.as_str(), Box::new(roller_appender));
     let logger = Logger::builder()
         .appender(format_appender.as_str())
         .build(format_step.as_str(), LevelFilter::Debug);
     (appender, logger)
 }
-
 
 fn _config(date: &str, symbols: &[&str]) -> Config {
     let mut builder = Config::builder();
@@ -54,10 +50,7 @@ fn _config(date: &str, symbols: &[&str]) -> Config {
 
 fn main() {
     let symbols = ["ETHUSDT", "BNBUSDT"];
-    let handle = log4rs::init_config(
-        _config("2023-06-12", &symbols),
-    ).unwrap();
-
+    let handle = log4rs::init_config(_config("2023-06-12", &symbols)).unwrap();
     let log = |target: &str, i: i32| {
         log::debug!(target: target, "debug {}", i);
         log::info!(target: target, "info");
@@ -65,7 +58,6 @@ fn main() {
         log::error!(target: target, "error");
         log::trace!(target: target, "trace");
     };
-
     let n1 = 10_i32.pow(6);
     for i in 1..n1 {
         log("step_ETHUSDT", i);

@@ -73,8 +73,8 @@ run-trade-emas-upload-tickers-to-database:
 run-trade-show-2024-04-07-candles:
 	${env_vars} cargo run --bin trade_emas -- --command show-2024-04-07-candles
 
-test:
-	${env_vars} cargo test
+ci-lint:
+	cargo fmt --check || cargo test || cargo clippy || exit 1
 
 use-logger:
 	cargo run --example use_logger

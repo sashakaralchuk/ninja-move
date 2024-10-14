@@ -265,7 +265,6 @@ mod trade {
             }
         }
         // TODO: read matplotlib and mplfinance doc
-        // TODO: set up pre commit test + clippy commands
         // TODO: as_ref, as_mut, as_deref etc, to_owned, try_into, std Any, TypeId
         //       std::any::*, Box, Box::pin, Rc::new, t.drop, what's the slice
         //       (dbg!, dbgr!) what are other macroses, how to_sql exists on vec![]
