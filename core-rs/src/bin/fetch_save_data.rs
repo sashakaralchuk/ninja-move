@@ -172,14 +172,13 @@ impl RedpandaPort {
             vec.len(),
             n,
         );
-        let vec_chunked: Vec<_> = vec.chunks(vec.len() / n + 1).collect();
-        for i in 0..n {
-            let chunk = vec_chunked[i].to_vec();
+        for chunk in vec.chunks(vec.len() / n + 1) {
             let topic_name_cloned = topic_name.to_string().clone();
+            let c = chunk.to_vec();
             let t = std::thread::spawn(move || {
                 futures::executor::block_on(RedpandaPort::connect_produce_messages(
                     &topic_name_cloned,
-                    &chunk,
+                    &c,
                 ))
             });
             threads.push(t);

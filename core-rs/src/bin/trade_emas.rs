@@ -517,10 +517,7 @@ mod trade {
 
     impl RingBuffer {
         fn new(size: usize) -> Self {
-            let mut list = Vec::with_capacity(size);
-            unsafe {
-                list.set_len(size);
-            }
+            let list = (0..size).map(|_| 0.0).collect::<Vec<_>>();
             Self { p: -1, list }
         }
 
