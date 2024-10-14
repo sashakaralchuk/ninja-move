@@ -18,6 +18,7 @@ async fn main() {
         "debug-read-save-tickers-to-database" => debug::read_save_tickers_to_database(),
         "debug-calc-2024-04-07-candles" => debug::calc_2024_04_07_candles(),
         "debug-workout-mlflow" => debug::workout_mlflow().await,
+        "debug-fetch-clickhouse-table" => debug::fetch_clickhouse_table().await,
         _ => log::error!("unknown command"),
     }
 }
@@ -264,7 +265,7 @@ mod trade {
             }
         }
         // TODO: read matplotlib and mplfinance doc
-        // TODO: why do clickhouse gives bytes back slowly
+        // TODO: set up pre commit test + clippy commands
         // TODO: as_ref, as_mut, as_deref etc, to_owned, try_into, std Any, TypeId
         //       std::any::*, Box, Box::pin, Rc::new, t.drop, what's the slice
         //       (dbg!, dbgr!) what are other macroses, how to_sql exists on vec![]
@@ -843,7 +844,9 @@ mod trade {
 
 mod debug {
     use ::zip::ZipArchive;
-    use exchanges_arbitrage::{domain::bybit, Candle, CandleTimeframe, FlatTicker, TickersPort};
+    use exchanges_arbitrage::{
+        domain::bybit, Candle, CandleTimeframe, FlatTicker, TickersPort, TradesRow,
+    };
     use plotters::prelude::*;
     use polars::prelude::*;
     use rand::Rng;
@@ -851,6 +854,7 @@ mod debug {
         io::{Read, Seek, SeekFrom, Write},
         str::FromStr,
     };
+    use struct_field_names_as_array::FieldNamesAsArray;
 
     #[derive(serde::Deserialize)]
     struct ResTradesDataDownloadItem {
@@ -1216,5 +1220,32 @@ mod debug {
         mlflow_port
             .log_metric("profit", rand::thread_rng().gen::<f64>())
             .await;
+    }
+
+    pub async fn fetch_clickhouse_table() {
+        let client = clickhouse::Client::default().with_url("http://127.0.0.1:18123");
+        let query = format!(
+            "
+            SELECT {}
+            FROM default.trades_t_raw
+            WHERE time BETWEEN '2024-04-07' AND '2024-04-17'
+            ORDER BY id ASC
+            SETTINGS max_threads = 100, use_query_cache = true
+            ",
+            TradesRow::FIELD_NAMES_AS_ARRAY.join(","),
+        );
+        log::info!("fetch");
+        let _ = client
+            .query(query.as_str())
+            .fetch_all::<TradesRow>()
+            .await
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let ts_millis = (x.time.unix_timestamp_nanos() / 1_000_000) as i64;
+                FlatTicker::new_with_millis(ts_millis, &x.symbol, x.price, &x.exchange).unwrap()
+            })
+            .collect::<Vec<_>>();
+        log::info!("done");
     }
 }
