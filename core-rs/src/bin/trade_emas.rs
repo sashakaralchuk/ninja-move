@@ -263,7 +263,6 @@ mod trade {
                 }
             }
         }
-        // TODO: workout how librdkafka works (what's the approach to write in parallel data to queue?)
         // TODO: read matplotlib and mplfinance doc
         // TODO: why do clickhouse gives bytes back slowly
         // TODO: as_ref, as_mut, as_deref etc, to_owned, try_into, std Any, TypeId

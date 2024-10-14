@@ -35,7 +35,7 @@ async fn main() {
                                 serde_json::to_string(&o).unwrap()
                             })
                             .collect::<Vec<_>>();
-                        log::debug!("insert trades to redpanda");
+                        log::info!("insert trades to redpanda len={}", vec_redpanda.len());
                         RedpandaPort::connect_produce_messages_sync("trades-v2", &vec_redpanda);
                     }
                     _ => panic!("unknown destination={destination}"),
@@ -234,17 +234,18 @@ impl RedpandaPort {
         let producer: &BaseProducer = &ClientConfig::new()
             .set("bootstrap.servers", "127.0.0.1:9092")
             .set("queue.buffering.max.ms", "100")
-            .set("queue.buffering.max.messages", "3000000")
+            .set("queue.buffering.max.messages", "10000000")
             .create()
             .unwrap();
-        log::info!("produce len={}", messages.len());
+        log::debug!("produce len={}", messages.len());
         for m in messages.iter() {
             let o = BaseRecord::to(topic_name).payload(m).key("");
             producer.send(o).unwrap();
         }
         log::debug!("poll");
-        // NOTE: possibly i need to wait for all poll callbacks
-        producer.poll(std::time::Duration::from_millis(100));
+        for _ in 0..10 {
+            producer.poll(std::time::Duration::from_millis(100));
+        }
         log::debug!("flush");
         producer.flush(std::time::Duration::from_secs(1));
         log::debug!("end");
