@@ -2,7 +2,7 @@ use exchanges_arbitrage::RedpandaPort;
 
 const _: &str = r#"
 -- redpanda
-rpk topic create tickers-spot-futures-arbitrage
+rpk topic create -c retention.ms=900000 -c segment.ms=900000 -c segment.bytes=67108864 -c retention.bytes=67108864 tickers-spot-futures-arbitrage
 -- clickhouse
 CREATE TABLE default.trade_spot_feature_arbitrage_v1
 (
@@ -43,6 +43,37 @@ SELECT
     toDateTime(JSONExtractUInt(data, 'ts') / 1000) timestamp,
     JSONExtractFloat(data, 'p') price
 FROM default.trade_spot_feature_arbitrage_v1_queue;
+-- last price on spot vs last price on derivatives in last 60 seconds
+WITH t AS (
+    SELECT
+        exchange,
+        symbol,
+        kind,
+        price,
+        timestamp,
+        replaceRegexpOne(symbol, '(10*)', '') symbol_int_1,
+        ROW_NUMBER() OVER(
+            PARTITION BY exchange, symbol_int_1, kind
+            ORDER BY timestamp DESC
+        ) _rownum
+    FROM default.trade_spot_feature_arbitrage_v1
+    FINAL
+    WHERE timestamp >= (now() - toIntervalSecond(60))
+        AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
+)
+SELECT
+    t1.symbol_int_1,
+    floor(t2.price - t1.price, 2) der_spot_abs,
+    floor(der_spot_abs / t1.price * 100, 2) der_spot_rel,
+    [t1.symbol, t2.symbol] symbols,
+    [t1.exchange, t2.exchange] exchanges,
+    [t1.price, t2.price] prices,
+    [t1.kind, t2.kind] kinds
+FROM (SELECT * FROM t WHERE _rownum = 1 AND kind = 'spot') t1
+INNER JOIN (SELECT * FROM t WHERE _rownum = 1 AND kind = 'derivatives') t2
+    ON t1.symbol_int_1 = t2.symbol_int_1
+ORDER BY der_spot_rel
+LIMIT 25
 "#;
 
 fn main() {
@@ -65,7 +96,7 @@ fn main() {
                 continue;
             }
         }
-        if queue_tickers.len() == 250 {
+        if queue_tickers.len() == 500 {
             log::info!("produce len={}", queue_tickers.len());
             let queue_tickers_to_produce = queue_tickers
                 .iter()
