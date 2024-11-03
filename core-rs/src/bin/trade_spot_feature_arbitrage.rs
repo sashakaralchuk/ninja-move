@@ -1,4 +1,4 @@
-use exchanges_arbitrage::{domain, RedpandaPort};
+use exchanges_arbitrage::RedpandaPort;
 
 const _: &str = r#"
 -- redpanda
@@ -51,10 +51,10 @@ fn main() {
     let t1_tx = tx.clone();
     let t2_tx = tx.clone();
     let _ = std::thread::spawn(move || {
-        bybit_listen_derivative_tickers_stream(&t1_tx);
+        bybit_int::fetch_derivatives_tickers_from_api(&t1_tx);
     });
     let _ = std::thread::spawn(move || {
-        bybit_listen_spot_tickers_stream(&t2_tx);
+        bybit_int::fetch_spot_tickers_from_api(&t2_tx);
     });
     let mut queue_tickers = vec![];
     loop {
@@ -65,7 +65,7 @@ fn main() {
                 continue;
             }
         }
-        if queue_tickers.len() == 100 {
+        if queue_tickers.len() == 250 {
             log::info!("produce len={}", queue_tickers.len());
             let queue_tickers_to_produce = queue_tickers
                 .iter()
@@ -80,64 +80,165 @@ fn main() {
     }
 }
 
-fn bybit_listen_derivative_tickers_stream(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-    let url_obj = url::Url::parse(domain::bybit::URL_WS_V5_PUBLIC_LINEAR).unwrap();
-    let (mut socket, _response) = tungstenite::connect(url_obj).unwrap();
-    let subscribe_text = format!(
-        "{{\"op\": \"subscribe\", \"args\": [\"tickers.{}\"]}}",
-        "ETHUSDT",
-    );
-    socket
-        .write_message(tungstenite::Message::Text(subscribe_text))
-        .unwrap();
-    loop {
-        let msg = socket.read_message().unwrap();
-        let msg_str = msg.to_text().unwrap();
-        let val = serde_json::from_str::<serde_json::Value>(msg_str).unwrap();
-        let topic = match val.get("type") {
-            Some(v) => v.as_str().unwrap(),
-            _ => "",
-        };
-        if topic != "delta" {
-            continue;
-        }
-        let ts = val.get("ts").unwrap().as_i64().unwrap();
-        let data = val.get("data").unwrap().as_object().unwrap();
-        let data_symbol = data.get("symbol").unwrap().as_str().unwrap();
-        let data_bid1_price = match data.get("bid1Price") {
-            Some(v) => v.as_str().unwrap(),
-            _ => continue,
-        };
-        let ticker = QueueTicker::new("bybit", data_symbol, "derivatives", ts, data_bid1_price);
-        log::debug!("ticker={ticker:?}");
-        tx.send(ticker).unwrap();
-    }
-}
+///
+/// On 2024-11-03 in websocket stream some symbols are absent => i had to do http requests in busy loop.
+///
+mod bybit_int {
+    use crate::QueueTicker;
+    use exchanges_arbitrage::domain;
 
-fn bybit_listen_spot_tickers_stream(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-    let url_obj = url::Url::parse(domain::bybit::URL_WS_V5_PUBLIC_SPOT).unwrap();
-    let (mut socket, _response) = tungstenite::connect(url_obj).unwrap();
-    let subscribe_text = format!(
-        "{{\"op\": \"subscribe\", \"args\": [\"tickers.{}\"]}}",
-        "ETHUSDT",
-    );
-    socket
-        .write_message(tungstenite::Message::Text(subscribe_text))
-        .unwrap();
-    loop {
-        let msg = socket.read_message().unwrap();
-        let msg_str = msg.to_text().unwrap();
-        let val = serde_json::from_str::<serde_json::Value>(msg_str).unwrap();
-        let ts = match val.get("ts") {
-            Some(v) => v.as_i64().unwrap(),
-            _ => continue,
-        };
-        let data = val.get("data").unwrap().as_object().unwrap();
-        let data_symbol = data.get("symbol").unwrap().as_str().unwrap();
-        let data_last_price = data.get("lastPrice").unwrap().as_str().unwrap();
-        let ticker = QueueTicker::new("bybit", data_symbol, "spot", ts, data_last_price);
-        log::debug!("ticker={ticker:?}");
-        tx.send(ticker).unwrap();
+    #[allow(dead_code)]
+    fn listen_derivatives_tickers_stream(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        let url_obj = url::Url::parse(domain::bybit::URL_WS_V5_PUBLIC_LINEAR).unwrap();
+        let (mut socket, _response) = tungstenite::connect(url_obj).unwrap();
+        let subscribe_text = format!(
+            "{{\"op\": \"subscribe\", \"args\": [\"tickers.{}\"]}}",
+            "ETHUSDT",
+        );
+        log::info!("subscribe_text={subscribe_text}");
+        socket
+            .write_message(tungstenite::Message::Text(subscribe_text))
+            .unwrap();
+        loop {
+            let msg = socket.read_message().unwrap();
+            let msg_str = msg.to_text().unwrap();
+            let val = serde_json::from_str::<serde_json::Value>(msg_str).unwrap();
+            let topic = match val.get("type") {
+                Some(v) => v.as_str().unwrap(),
+                _ => {
+                    log::debug!("msg_str={msg_str}");
+                    ""
+                }
+            };
+            if topic != "delta" {
+                continue;
+            }
+            let ts = val.get("ts").unwrap().as_i64().unwrap();
+            let data = val.get("data").unwrap().as_object().unwrap();
+            let data_symbol = data.get("symbol").unwrap().as_str().unwrap();
+            let data_bid1_price = match data.get("bid1Price") {
+                Some(v) => v.as_str().unwrap(),
+                _ => continue,
+            };
+            let ticker = QueueTicker::new("bybit", data_symbol, "derivatives", ts, data_bid1_price);
+            log::debug!("derivatives-ticker={ticker:?}");
+            tx.send(ticker).unwrap();
+        }
+    }
+
+    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        loop {
+            let res = domain::bybit::fetch_derivatives_tickers();
+            let ts = res.get("time").unwrap().as_i64().unwrap();
+            let derivatives_tickers = res
+                .get("result")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("list")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| {
+                    let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                    let bid1_price = x.get("bid1Price").unwrap().as_str().unwrap();
+                    QueueTicker::new("bybit", symbol, "derivatives", ts, bid1_price)
+                })
+                .collect::<Vec<_>>();
+            log::info!(
+                "derivatives tickers len={:?} => produce+sleep",
+                derivatives_tickers.len()
+            );
+            for ticker in derivatives_tickers {
+                tx.send(ticker).unwrap();
+            }
+            std::thread::sleep(std::time::Duration::from_secs(15));
+        }
+    }
+
+    #[allow(dead_code)]
+    fn listen_spot_tickers_stream(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        let url_obj = url::Url::parse(domain::bybit::URL_WS_V5_PUBLIC_SPOT).unwrap();
+        let (mut socket, _response) = tungstenite::connect(url_obj).unwrap();
+        let subscribe_text = format!(
+            "{{\"op\": \"subscribe\", \"args\": [\"tickers.{}\"]}}",
+            "ETHUSDT",
+        );
+        socket
+            .write_message(tungstenite::Message::Text(subscribe_text))
+            .unwrap();
+        loop {
+            let msg = socket.read_message().unwrap();
+            let msg_str = msg.to_text().unwrap();
+            let val = serde_json::from_str::<serde_json::Value>(msg_str).unwrap();
+            let ts = match val.get("ts") {
+                Some(v) => v.as_i64().unwrap(),
+                _ => continue,
+            };
+            let data = val.get("data").unwrap().as_object().unwrap();
+            let data_symbol = data.get("symbol").unwrap().as_str().unwrap();
+            let data_last_price = data.get("lastPrice").unwrap().as_str().unwrap();
+            let ticker = QueueTicker::new("bybit", data_symbol, "spot", ts, data_last_price);
+            log::debug!("spot-ticker={ticker:?}");
+            tx.send(ticker).unwrap();
+        }
+    }
+
+    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        loop {
+            let res = domain::bybit::fetch_spot_tickers();
+            let ts = res.get("time").unwrap().as_i64().unwrap();
+            let spot_tickers = res
+                .get("result")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("list")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| {
+                    let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                    let last_price = x.get("lastPrice").unwrap().as_str().unwrap();
+                    QueueTicker::new("bybit", symbol, "spot", ts, last_price)
+                })
+                .collect::<Vec<_>>();
+            log::info!("spot tickers len={:?} => produce+sleep", spot_tickers.len());
+            for ticker in spot_tickers {
+                tx.send(ticker).unwrap();
+            }
+            std::thread::sleep(std::time::Duration::from_secs(15));
+        }
+    }
+
+    #[allow(dead_code)]
+    fn bybit_print_all_spot_symbols() {
+        let url_str = "https://api.bybit.com/v5/market/instruments-info?category=spot";
+        let res = reqwest::blocking::get(url_str).unwrap();
+        let val = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
+        let symbols = val
+            .get("result")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .get("list")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap().to_string();
+                let base_coin = x.get("baseCoin").unwrap().as_str().unwrap();
+                let quote_coin = x.get("quoteCoin").unwrap().as_str().unwrap();
+                (symbol, base_coin, quote_coin)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter(|x| (*x).2 == "USDT")
+            .collect::<Vec<_>>();
+        log::info!("symbols={:?}", symbols);
     }
 }
 
