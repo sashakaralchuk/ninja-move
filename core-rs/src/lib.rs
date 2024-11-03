@@ -1,6 +1,8 @@
 use chrono::Datelike;
 use postgres::{Client, NoTls};
 use rand::Rng;
+use rdkafka::config::ClientConfig;
+use rdkafka::producer::{BaseProducer, BaseRecord, FutureProducer, FutureRecord};
 use std::collections::HashMap;
 use std::env;
 use std::thread;
@@ -1000,6 +1002,107 @@ impl HistoryPort {
             Ok(v) => Ok(v),
             Err(error) => Err(format!("error: {}", error)),
         }
+    }
+}
+
+pub struct RedpandaPort {}
+
+impl RedpandaPort {
+    ///
+    /// ### Examples
+    /// ```no_run
+    /// let vec = vec!["m".to_string()];
+    /// RedpandaPort::connect_produce_messages_chunked("trades", &vec).await;
+    /// ```
+    ///
+    #[allow(dead_code)]
+    pub async fn connect_produce_messages_chunked(topic_name: &str, vec: &[String]) {
+        let mut threads = vec![];
+        let n = 25;
+        log::debug!(
+            "RedpandaPort::produce_messages_chunked \
+            push trades to topic={} len={} in n={}",
+            topic_name,
+            vec.len(),
+            n,
+        );
+        for chunk in vec.chunks(vec.len() / n + 1) {
+            let topic_name_cloned = topic_name.to_string().clone();
+            let c = chunk.to_vec();
+            let t = std::thread::spawn(move || {
+                futures::executor::block_on(RedpandaPort::connect_produce_messages(
+                    &topic_name_cloned,
+                    &c,
+                ))
+            });
+            threads.push(t);
+        }
+        for t in threads {
+            t.join().unwrap();
+        }
+    }
+
+    pub async fn connect_produce_messages(topic_name: &str, vec: &[String]) {
+        log::debug!(
+            "RedpandaPort::connect_produce_messages push trades to topic={} len={}",
+            topic_name,
+            vec.len()
+        );
+        let producer: &FutureProducer = &ClientConfig::new()
+            .set("bootstrap.servers", "127.0.0.1:9092")
+            .create()
+            .expect("Producer creation failed");
+        let futures = vec
+            .iter()
+            .map(|m| async move {
+                producer
+                    .clone()
+                    .send(
+                        FutureRecord::to(topic_name)
+                            .payload(&m.to_string())
+                            .key(&"".to_string()),
+                        5_000,
+                    )
+                    .await
+            })
+            .collect::<Vec<_>>();
+        for future in futures {
+            future.await.unwrap().unwrap();
+        }
+    }
+
+    ///
+    /// ### Examples
+    /// ```no_run
+    /// let topic_name = "t-produce-1";
+    /// let messages = (0..2_500_000)
+    ///     .collect::<Vec<_>>()
+    ///     .iter()
+    ///     .map(|i| i.to_string())
+    ///     .collect::<Vec<_>>();
+    /// let _ = RedpandaPort::connect_produce_messages_sync(topic_name, &messages);
+    /// ```
+    ///
+    pub fn connect_produce_messages_sync(topic_name: &str, messages: &[String]) {
+        let producer: &BaseProducer = &ClientConfig::new()
+            .set("bootstrap.servers", "127.0.0.1:9092")
+            .set("queue.buffering.max.ms", "100")
+            .set("queue.buffering.max.messages", "10000000")
+            .set("queue.buffering.max.kbytes", "2147483647")
+            .create()
+            .unwrap();
+        log::debug!("produce len={}", messages.len());
+        for m in messages.iter() {
+            let o = BaseRecord::to(topic_name).payload(m).key("");
+            producer.send(o).unwrap();
+        }
+        log::debug!("poll");
+        for _ in 0..10 {
+            producer.poll(std::time::Duration::from_millis(100));
+        }
+        log::debug!("flush");
+        producer.flush(std::time::Duration::from_secs(1));
+        log::debug!("end");
     }
 }
 

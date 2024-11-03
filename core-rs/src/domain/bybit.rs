@@ -6,6 +6,8 @@ use url::Url;
 use crate::{FlatDepth, FlatTicker};
 
 const URL_WS: &str = "wss://stream.bybit.com/v5/public/spot";
+pub const URL_WS_V5_PUBLIC_SPOT: &str = "wss://stream.bybit.com/v5/public/spot";
+pub const URL_WS_V5_PUBLIC_LINEAR: &str = "wss://stream.bybit.com/v5/public/linear";
 
 #[allow(non_snake_case)]
 #[derive(serde::Deserialize)]
