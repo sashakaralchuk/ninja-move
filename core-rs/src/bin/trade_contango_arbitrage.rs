@@ -2,9 +2,9 @@ use exchanges_arbitrage::RedpandaPort;
 
 const _: &str = r#"
 -- redpanda
-rpk topic create -c retention.ms=900000 -c segment.ms=900000 -c segment.bytes=67108864 -c retention.bytes=67108864 tickers-spot-futures-arbitrage
+rpk topic create -c retention.ms=900000 -c segment.ms=900000 -c segment.bytes=67108864 -c retention.bytes=67108864 tickers-contango-arbitrage
 -- clickhouse
-CREATE TABLE default.trade_spot_feature_arbitrage_v1
+CREATE TABLE default.trade_contango_arbitrage_v1
 (
     read_topic String,
     read_error String,
@@ -20,19 +20,19 @@ ENGINE = ReplacingMergeTree
 -- XXX: squash duplicates based on ticker_id
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (exchange, symbol, kind, timestamp, price);
-CREATE TABLE default.trade_spot_feature_arbitrage_v1_queue
+CREATE TABLE default.trade_contango_arbitrage_v1_queue
 (data String)
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'redpanda-1:9093',
-         kafka_topic_list = 'tickers-spot-futures-arbitrage',
+         kafka_topic_list = 'tickers-contango-arbitrage',
          kafka_group_name = 'clickhouse-consumer',
          kafka_format = 'JSONAsString',
          kafka_thread_per_consumer = 0,
          kafka_num_consumers = 1,
          kafka_handle_error_mode = 'stream',
          kafka_max_block_size = 100000;
-CREATE MATERIALIZED VIEW default.trade_spot_feature_arbitrage_v1_mv
-TO default.trade_spot_feature_arbitrage_v1 AS
+CREATE MATERIALIZED VIEW default.trade_contango_arbitrage_v1_mv
+TO default.trade_contango_arbitrage_v1 AS
 SELECT
     _topic read_topic,
     _error read_error,
@@ -42,8 +42,9 @@ SELECT
     JSONExtractString(data, 'k') kind,
     toDateTime(JSONExtractUInt(data, 'ts') / 1000) timestamp,
     JSONExtractFloat(data, 'p') price
-FROM default.trade_spot_feature_arbitrage_v1_queue;
--- last price on spot vs last price on derivatives in last 60 seconds
+FROM default.trade_contango_arbitrage_v1_queue;
+-- last price on spot vs last price on derivatives in last 60 seconds for contango
+-- XXX: unify symbols
 WITH t AS (
     SELECT
         exchange,
@@ -56,7 +57,7 @@ WITH t AS (
             PARTITION BY exchange, symbol_int_1, kind
             ORDER BY timestamp DESC
         ) _rownum
-    FROM default.trade_spot_feature_arbitrage_v1
+    FROM default.trade_contango_arbitrage_v1
     FINAL
     WHERE timestamp >= (now() - toIntervalSecond(60))
         AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
@@ -77,16 +78,19 @@ LIMIT 25
 "#;
 
 fn main() {
+    // XXX: make process fall if error in threads appear
     env_logger::init();
     let (tx, rx) = std::sync::mpsc::channel();
-    let t1_tx = tx.clone();
-    let t2_tx = tx.clone();
-    let _ = std::thread::spawn(move || {
-        bybit_int::fetch_derivatives_tickers_from_api(&t1_tx);
-    });
-    let _ = std::thread::spawn(move || {
-        bybit_int::fetch_spot_tickers_from_api(&t2_tx);
-    });
+    let fns = vec![
+        bybit_int::fetch_derivatives_tickers_from_api,
+        bybit_int::fetch_spot_tickers_from_api,
+    ];
+    for f in fns {
+        let tx = tx.clone();
+        let _ = std::thread::spawn(move || {
+            f(&tx);
+        });
+    }
     let mut queue_tickers = vec![];
     loop {
         match rx.recv() {
@@ -103,7 +107,7 @@ fn main() {
                 .map(|x| serde_json::to_string(&x).unwrap())
                 .collect::<Vec<_>>();
             let _ = RedpandaPort::connect_produce_messages_sync(
-                "tickers-spot-futures-arbitrage",
+                "tickers-contango-arbitrage",
                 &queue_tickers_to_produce,
             );
             queue_tickers.clear();
@@ -173,8 +177,8 @@ mod bybit_int {
                 .iter()
                 .map(|x| {
                     let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                    let bid1_price = x.get("bid1Price").unwrap().as_str().unwrap();
-                    QueueTicker::new("bybit", symbol, "derivatives", ts, bid1_price)
+                    let bid_1_price = x.get("bid1Price").unwrap().as_str().unwrap();
+                    QueueTicker::new("bybit", symbol, "derivatives", ts, bid_1_price)
                 })
                 .collect::<Vec<_>>();
             log::info!(
@@ -232,8 +236,8 @@ mod bybit_int {
                 .iter()
                 .map(|x| {
                     let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                    let last_price = x.get("lastPrice").unwrap().as_str().unwrap();
-                    QueueTicker::new("bybit", symbol, "spot", ts, last_price)
+                    let ask_1_price = x.get("ask1Price").unwrap().as_str().unwrap();
+                    QueueTicker::new("bybit", symbol, "spot", ts, ask_1_price)
                 })
                 .collect::<Vec<_>>();
             log::info!("spot tickers len={:?} => produce+sleep", spot_tickers.len());
@@ -270,6 +274,78 @@ mod bybit_int {
             .filter(|x| (*x).2 == "USDT")
             .collect::<Vec<_>>();
         log::info!("symbols={:?}", symbols);
+    }
+}
+
+mod binance_int {
+    use crate::QueueTicker;
+
+    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://fapi.binance.com/fapi/v1/ticker/price'");
+    }
+
+    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://api.binance.com/api/v3/ticker/price'");
+    }
+}
+
+mod mexc_int {
+    use crate::QueueTicker;
+
+    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://contract.mexc.com/api/v1/contract/ticker'");
+    }
+
+    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://api.mexc.com/api/v3/ticker/price'");
+    }
+}
+
+mod kucoin_int {
+    use crate::QueueTicker;
+
+    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://api-futures.kucoin.com/api/v1/allTickers'");
+    }
+
+    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://api.kucoin.com/api/v1/market/allTickers'");
+    }
+}
+
+mod gateio_int {
+    use crate::QueueTicker;
+
+    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://fx-api.gateio.ws/api/v4/futures/usdt/tickers'");
+    }
+
+    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://api.gateio.ws/api/v4/spot/tickers'");
+    }
+}
+
+mod bingx_int {
+    use crate::QueueTicker;
+
+    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://open-api.bingx.com/openApi/swap/v2/quote/ticker'");
+    }
+
+    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://open-api.bingx.com/openApi/spot/v1/ticker/price'");
+    }
+}
+
+mod htx_int {
+    use crate::QueueTicker;
+
+    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://api.hbdm.com/v2/linear-swap-ex/market/detail/batch_merged'");
+    }
+
+    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+        unimplemented!("curl 'https://api.huobi.pro/market/tickers'");
     }
 }
 
