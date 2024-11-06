@@ -1,4 +1,4 @@
-use exchanges_arbitrage::RedpandaPort;
+use exchanges_arbitrage::{pool, RedpandaPort};
 
 const _: &str = r#"
 -- redpanda
@@ -78,41 +78,23 @@ LIMIT 25
 "#;
 
 fn main() {
-    // XXX: make process fall if error in threads appear
     env_logger::init();
     let (tx, rx) = std::sync::mpsc::channel();
     let fns = vec![
         bybit_int::fetch_derivatives_tickers_from_api,
         bybit_int::fetch_spot_tickers_from_api,
     ];
+    let mut threads = vec![std::thread::spawn(move || {
+        write_to_queue(rx);
+    })];
     for f in fns {
         let tx = tx.clone();
-        let _ = std::thread::spawn(move || {
+        let t = std::thread::spawn(move || {
             f(&tx);
         });
+        threads.push(t);
     }
-    let mut queue_tickers = vec![];
-    loop {
-        match rx.recv() {
-            Ok(v) => queue_tickers.push(v),
-            Err(e) => {
-                log::error!("e={:?}", e);
-                continue;
-            }
-        }
-        if queue_tickers.len() == 500 {
-            log::info!("produce len={}", queue_tickers.len());
-            let queue_tickers_to_produce = queue_tickers
-                .iter()
-                .map(|x| serde_json::to_string(&x).unwrap())
-                .collect::<Vec<_>>();
-            let _ = RedpandaPort::connect_produce_messages_sync(
-                "tickers-contango-arbitrage",
-                &queue_tickers_to_produce,
-            );
-            queue_tickers.clear();
-        }
-    }
+    pool(&threads);
 }
 
 ///
@@ -346,6 +328,31 @@ mod htx_int {
 
     pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
         unimplemented!("curl 'https://api.huobi.pro/market/tickers'");
+    }
+}
+
+fn write_to_queue(rx: std::sync::mpsc::Receiver<QueueTicker>) {
+    let mut queue_tickers = vec![];
+    loop {
+        match rx.recv() {
+            Ok(v) => queue_tickers.push(v),
+            Err(e) => {
+                log::error!("e={:?}", e);
+                continue;
+            }
+        }
+        if queue_tickers.len() == 500 {
+            log::info!("produce len={}", queue_tickers.len());
+            let queue_tickers_to_produce = queue_tickers
+                .iter()
+                .map(|x| serde_json::to_string(&x).unwrap())
+                .collect::<Vec<_>>();
+            let _ = RedpandaPort::connect_produce_messages_sync(
+                "tickers-contango-arbitrage",
+                &queue_tickers_to_produce,
+            );
+            queue_tickers.clear();
+        }
     }
 }
 
