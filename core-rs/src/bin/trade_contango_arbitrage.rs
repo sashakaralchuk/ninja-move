@@ -85,14 +85,17 @@ fn main() {
         bybit_int::fetch_spot_tickers_from_api,
         binance_int::fetch_derivatives_tickers_from_api,
         binance_int::fetch_spot_tickers_from_api,
+        mexc_int::fetch_derivatives_tickers_from_api,
+        mexc_int::fetch_spot_tickers_from_api,
     ];
     let mut threads = vec![std::thread::spawn(move || {
         write_to_queue(rx);
     })];
     for f in fns {
         let tx = tx.clone();
-        let t = std::thread::spawn(move || {
+        let t = std::thread::spawn(move || loop {
             f(&tx);
+            std::thread::sleep(std::time::Duration::from_secs(15));
         });
         threads.push(t);
     }
@@ -146,33 +149,30 @@ mod bybit_int {
     }
 
     pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        loop {
-            let res = domain::bybit::fetch_derivatives_tickers();
-            let ts = res.get("time").unwrap().as_i64().unwrap();
-            let derivatives_tickers = res
-                .get("result")
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .get("list")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|x| {
-                    let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                    let bid_1_price = x.get("bid1Price").unwrap().as_str().unwrap();
-                    QueueTicker::new("bybit", symbol, "derivatives", ts, bid_1_price)
-                })
-                .collect::<Vec<_>>();
-            log::info!(
-                "derivatives tickers len={:?} => produce+sleep",
-                derivatives_tickers.len()
-            );
-            for ticker in derivatives_tickers {
-                tx.send(ticker).unwrap();
-            }
-            std::thread::sleep(std::time::Duration::from_secs(15));
+        let res = domain::bybit::fetch_derivatives_tickers();
+        let ts = res.get("time").unwrap().as_i64().unwrap();
+        let derivatives_tickers = res
+            .get("result")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .get("list")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let bid_1_price = x.get("bid1Price").unwrap().as_str().unwrap();
+                QueueTicker::new("bybit", symbol, "derivatives", ts, bid_1_price)
+            })
+            .collect::<Vec<_>>();
+        log::info!(
+            "derivatives tickers len={:?} => produce+sleep",
+            derivatives_tickers.len()
+        );
+        for ticker in derivatives_tickers {
+            tx.send(ticker).unwrap();
         }
     }
 
@@ -205,30 +205,27 @@ mod bybit_int {
     }
 
     pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        loop {
-            let res = domain::bybit::fetch_spot_tickers();
-            let ts = res.get("time").unwrap().as_i64().unwrap();
-            let spot_tickers = res
-                .get("result")
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .get("list")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|x| {
-                    let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                    let ask_1_price = x.get("ask1Price").unwrap().as_str().unwrap();
-                    QueueTicker::new("bybit", symbol, "spot", ts, ask_1_price)
-                })
-                .collect::<Vec<_>>();
-            log::info!("spot tickers len={:?} => produce+sleep", spot_tickers.len());
-            for ticker in spot_tickers {
-                tx.send(ticker).unwrap();
-            }
-            std::thread::sleep(std::time::Duration::from_secs(15));
+        let res = domain::bybit::fetch_spot_tickers();
+        let ts = res.get("time").unwrap().as_i64().unwrap();
+        let spot_tickers = res
+            .get("result")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .get("list")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let ask_1_price = x.get("ask1Price").unwrap().as_str().unwrap();
+                QueueTicker::new("bybit", symbol, "spot", ts, ask_1_price)
+            })
+            .collect::<Vec<_>>();
+        log::info!("spot tickers len={:?} => produce+sleep", spot_tickers.len());
+        for ticker in spot_tickers {
+            tx.send(ticker).unwrap();
         }
     }
 
@@ -286,7 +283,6 @@ mod binance_int {
         for ticker in derivatives_tickers {
             tx.send(ticker).unwrap();
         }
-        std::thread::sleep(std::time::Duration::from_secs(15));
     }
 
     pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
@@ -311,7 +307,6 @@ mod binance_int {
         for ticker in spot_tickers {
             tx.send(ticker).unwrap();
         }
-        std::thread::sleep(std::time::Duration::from_secs(15));
     }
 }
 
@@ -319,11 +314,53 @@ mod mexc_int {
     use crate::QueueTicker;
 
     pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://contract.mexc.com/api/v1/contract/ticker'");
+        let url = "https://contract.mexc.com/api/v1/contract/ticker";
+        let res = reqwest::blocking::get(url).unwrap();
+        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
+            .unwrap()
+            .get("data")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let ask1 = match x.get("ask1") {
+                    Some(v) => v.as_f64().unwrap().to_string(),
+                    _ => "-1.0".into(),
+                };
+                let timestamp = x.get("timestamp").unwrap().as_i64().unwrap();
+                QueueTicker::new("mexc", symbol, "derivatives", timestamp, &ask1)
+            })
+            .collect::<Vec<_>>();
+        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
+        for ticker in derivatives_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 
     pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://api.mexc.com/api/v3/ticker/price'");
+        let url = "https://api.mexc.com/api/v3/ticker/price";
+        let res = reqwest::blocking::get(url).unwrap();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let spot_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let price = x.get("price").unwrap().as_str().unwrap();
+                QueueTicker::new("mexc", symbol, "spot", ts, price)
+            })
+            .collect::<Vec<_>>();
+        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
+        for ticker in spot_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 }
 
