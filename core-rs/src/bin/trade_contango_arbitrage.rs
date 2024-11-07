@@ -45,6 +45,7 @@ SELECT
 FROM default.trade_contango_arbitrage_v1_queue;
 -- last price on spot vs last price on derivatives in last 60 seconds for contango
 -- XXX: unify symbols
+-- XXX: calc how old every ticker is
 WITH t AS (
     SELECT
         exchange,
@@ -87,6 +88,8 @@ fn main() {
         binance_int::fetch_spot_tickers_from_api,
         mexc_int::fetch_derivatives_tickers_from_api,
         mexc_int::fetch_spot_tickers_from_api,
+        kucoin_int::fetch_derivatives_tickers_from_api,
+        kucoin_int::fetch_spot_tickers_from_api,
     ];
     let mut threads = vec![std::thread::spawn(move || {
         write_to_queue(rx);
@@ -368,11 +371,51 @@ mod kucoin_int {
     use crate::QueueTicker;
 
     pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://api-futures.kucoin.com/api/v1/allTickers'");
+        let url = "https://api-futures.kucoin.com/api/v1/allTickers";
+        let res = reqwest::blocking::get(url).unwrap();
+        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
+            .unwrap()
+            .get("data")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let ts = x.get("ts").unwrap().as_u64().unwrap();
+                let ts_str = (ts / 1_000_000) as i64;
+                let price = x.get("price").unwrap().as_str().unwrap();
+                QueueTicker::new("kucoin", symbol, "derivatives", ts_str, price)
+            })
+            .collect::<Vec<_>>();
+        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
+        for ticker in derivatives_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 
     pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://api.kucoin.com/api/v1/market/allTickers'");
+        let url = "https://api.kucoin.com/api/v1/market/allTickers";
+        let res = reqwest::blocking::get(url).unwrap();
+        let res = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
+        let res_data = res.get("data").unwrap();
+        let time = res_data.get("time").unwrap().as_i64().unwrap();
+        let spot_tickers = res_data
+            .get("ticker")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let price = x.get("high").unwrap().as_str().unwrap();
+                QueueTicker::new("kucoin", symbol, "spot", time, price)
+            })
+            .collect::<Vec<_>>();
+        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
+        for ticker in spot_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 }
 
