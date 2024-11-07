@@ -92,6 +92,8 @@ fn main() {
         kucoin_int::fetch_spot_tickers_from_api,
         gateio_int::fetch_derivatives_tickers_from_api,
         gateio_int::fetch_spot_tickers_from_api,
+        bingx_int::fetch_derivatives_tickers_from_api,
+        bingx_int::fetch_spot_tickers_from_api,
     ];
     let mut threads = vec![std::thread::spawn(move || {
         write_to_queue(rx);
@@ -478,11 +480,59 @@ mod bingx_int {
     use crate::QueueTicker;
 
     pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://open-api.bingx.com/openApi/swap/v2/quote/ticker'");
+        let url = "https://open-api.bingx.com/openApi/swap/v2/quote/ticker";
+        let res = reqwest::blocking::get(url).unwrap();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
+            .unwrap()
+            .get("data")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let price = x.get("bidPrice").unwrap().as_str().unwrap();
+                QueueTicker::new("bingx", symbol, "derivatives", ts, price)
+            })
+            .collect::<Vec<_>>();
+        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
+        for ticker in derivatives_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 
     pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://open-api.bingx.com/openApi/spot/v1/ticker/price'");
+        let url = "https://open-api.bingx.com/openApi/spot/v1/ticker/price";
+        let res = reqwest::blocking::get(url).unwrap();
+        let res = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
+        let spot_tickers = res
+            .get("data")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let trade = x
+                    .get("trades")
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .first()
+                    .unwrap();
+                let timestamp = trade.get("timestamp").unwrap().as_i64().unwrap();
+                let price = trade.get("price").unwrap().as_str().unwrap();
+                QueueTicker::new("gateio", symbol, "spot", timestamp, price)
+            })
+            .collect::<Vec<_>>();
+        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
+        for ticker in spot_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 }
 
