@@ -90,6 +90,8 @@ fn main() {
         mexc_int::fetch_spot_tickers_from_api,
         kucoin_int::fetch_derivatives_tickers_from_api,
         kucoin_int::fetch_spot_tickers_from_api,
+        gateio_int::fetch_derivatives_tickers_from_api,
+        gateio_int::fetch_spot_tickers_from_api,
     ];
     let mut threads = vec![std::thread::spawn(move || {
         write_to_queue(rx);
@@ -423,11 +425,52 @@ mod gateio_int {
     use crate::QueueTicker;
 
     pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://fx-api.gateio.ws/api/v4/futures/usdt/tickers'");
+        let url = "https://fx-api.gateio.ws/api/v4/futures/usdt/tickers";
+        let res = reqwest::blocking::get(url).unwrap();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("contract").unwrap().as_str().unwrap();
+                let highest_bid = x.get("highest_bid").unwrap().as_str().unwrap();
+                QueueTicker::new("gateio", symbol, "derivatives", ts, highest_bid)
+            })
+            .collect::<Vec<_>>();
+        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
+        for ticker in derivatives_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 
     pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
-        unimplemented!("curl 'https://api.gateio.ws/api/v4/spot/tickers'");
+        let url = "https://api.gateio.ws/api/v4/spot/tickers";
+        let res = reqwest::blocking::get(url).unwrap();
+        let res = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let spot_tickers = res
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                let symbol = x.get("currency_pair").unwrap().as_str().unwrap();
+                let price_raw = x.get("lowest_ask").unwrap().as_str().unwrap();
+                let price = if price_raw == "" { "-1.0" } else { price_raw };
+                QueueTicker::new("gateio", symbol, "spot", ts, price)
+            })
+            .collect::<Vec<_>>();
+        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
+        for ticker in spot_tickers {
+            tx.send(ticker).unwrap();
+        }
     }
 }
 
