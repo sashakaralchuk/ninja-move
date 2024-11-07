@@ -103,7 +103,12 @@ fn main() {
     for f in fns {
         let tx = tx.clone();
         let t = std::thread::spawn(move || loop {
-            f(&tx);
+            let tickers = f();
+            let t0 = &tickers[0];
+            log::info!("done {}_tickers len={} ex={}", t0.k, tickers.len(), t0.ex);
+            for ticker in tickers {
+                tx.send(ticker).unwrap();
+            }
             std::thread::sleep(std::time::Duration::from_secs(15));
         });
         threads.push(t);
@@ -157,11 +162,10 @@ mod bybit_int {
         }
     }
 
-    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QueueTicker> {
         let res = domain::bybit::fetch_derivatives_tickers();
         let ts = res.get("time").unwrap().as_i64().unwrap();
-        let derivatives_tickers = res
-            .get("result")
+        res.get("result")
             .unwrap()
             .as_object()
             .unwrap()
@@ -175,14 +179,7 @@ mod bybit_int {
                 let bid_1_price = x.get("bid1Price").unwrap().as_str().unwrap();
                 QueueTicker::new("bybit", symbol, "derivatives", ts, bid_1_price)
             })
-            .collect::<Vec<_>>();
-        log::info!(
-            "derivatives tickers len={:?} => produce+sleep",
-            derivatives_tickers.len()
-        );
-        for ticker in derivatives_tickers {
-            tx.send(ticker).unwrap();
-        }
+            .collect::<Vec<_>>()
     }
 
     #[allow(dead_code)]
@@ -213,11 +210,10 @@ mod bybit_int {
         }
     }
 
-    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_spot_tickers_from_api() -> Vec<QueueTicker> {
         let res = domain::bybit::fetch_spot_tickers();
         let ts = res.get("time").unwrap().as_i64().unwrap();
-        let spot_tickers = res
-            .get("result")
+        res.get("result")
             .unwrap()
             .as_object()
             .unwrap()
@@ -231,11 +227,7 @@ mod bybit_int {
                 let ask_1_price = x.get("ask1Price").unwrap().as_str().unwrap();
                 QueueTicker::new("bybit", symbol, "spot", ts, ask_1_price)
             })
-            .collect::<Vec<_>>();
-        log::info!("spot tickers len={:?} => produce+sleep", spot_tickers.len());
-        for ticker in spot_tickers {
-            tx.send(ticker).unwrap();
-        }
+            .collect::<Vec<_>>()
     }
 
     #[allow(dead_code)]
@@ -270,116 +262,101 @@ mod bybit_int {
 mod binance_int {
     use crate::QueueTicker;
 
-    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://fapi.binance.com/fapi/v1/ticker/price";
-        let res = reqwest::blocking::get(url).unwrap();
-        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let price = x.get("price").unwrap().as_str().unwrap();
-                let ts = x.get("time").unwrap().as_i64().unwrap();
-                QueueTicker::new("binance", symbol, "derivatives", ts, price)
-            })
-            .collect::<Vec<_>>();
-        log::info!(
-            "derivatives tickers len={:?} => produce+sleep",
-            derivatives_tickers.len()
-        );
-        for ticker in derivatives_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let price = x.get("price").unwrap().as_str().unwrap();
+            let ts = x.get("time").unwrap().as_i64().unwrap();
+            QueueTicker::new("binance", symbol, "derivatives", ts, price)
+        })
+        .collect::<Vec<_>>()
     }
 
-    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_spot_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://api.binance.com/api/v3/ticker/price";
-        let res = reqwest::blocking::get(url).unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let spot_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let price = x.get("price").unwrap().as_str().unwrap();
-                QueueTicker::new("binance", symbol, "spot", ts, price)
-            })
-            .collect::<Vec<_>>();
-        log::info!("spot tickers len={:?} => produce+sleep", spot_tickers.len());
-        for ticker in spot_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let price = x.get("price").unwrap().as_str().unwrap();
+            QueueTicker::new("binance", symbol, "spot", ts, price)
+        })
+        .collect::<Vec<_>>()
     }
 }
 
 mod mexc_int {
     use crate::QueueTicker;
 
-    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://contract.mexc.com/api/v1/contract/ticker";
-        let res = reqwest::blocking::get(url).unwrap();
-        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .get("data")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let ask1 = match x.get("ask1") {
-                    Some(v) => v.as_f64().unwrap().to_string(),
-                    _ => "-1.0".into(),
-                };
-                let timestamp = x.get("timestamp").unwrap().as_i64().unwrap();
-                QueueTicker::new("mexc", symbol, "derivatives", timestamp, &ask1)
-            })
-            .collect::<Vec<_>>();
-        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
-        for ticker in derivatives_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .get("data")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let ask1 = match x.get("ask1") {
+                Some(v) => v.as_f64().unwrap().to_string(),
+                _ => "-1.0".into(),
+            };
+            let timestamp = x.get("timestamp").unwrap().as_i64().unwrap();
+            QueueTicker::new("mexc", symbol, "derivatives", timestamp, &ask1)
+        })
+        .collect::<Vec<_>>()
     }
 
-    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_spot_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://api.mexc.com/api/v3/ticker/price";
-        let res = reqwest::blocking::get(url).unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let spot_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let price = x.get("price").unwrap().as_str().unwrap();
-                QueueTicker::new("mexc", symbol, "spot", ts, price)
-            })
-            .collect::<Vec<_>>();
-        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
-        for ticker in spot_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let price = x.get("price").unwrap().as_str().unwrap();
+            QueueTicker::new("mexc", symbol, "spot", ts, price)
+        })
+        .collect::<Vec<_>>()
     }
 }
 
 mod kucoin_int {
     use crate::QueueTicker;
 
-    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://api-futures.kucoin.com/api/v1/allTickers";
         let res = reqwest::blocking::get(url).unwrap();
-        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
+        serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
             .unwrap()
             .get("data")
             .unwrap()
@@ -393,20 +370,16 @@ mod kucoin_int {
                 let price = x.get("price").unwrap().as_str().unwrap();
                 QueueTicker::new("kucoin", symbol, "derivatives", ts_str, price)
             })
-            .collect::<Vec<_>>();
-        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
-        for ticker in derivatives_tickers {
-            tx.send(ticker).unwrap();
-        }
+            .collect::<Vec<_>>()
     }
 
-    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_spot_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://api.kucoin.com/api/v1/market/allTickers";
         let res = reqwest::blocking::get(url).unwrap();
         let res = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
         let res_data = res.get("data").unwrap();
         let time = res_data.get("time").unwrap().as_i64().unwrap();
-        let spot_tickers = res_data
+        res_data
             .get("ticker")
             .unwrap()
             .as_array()
@@ -417,189 +390,167 @@ mod kucoin_int {
                 let price = x.get("high").unwrap().as_str().unwrap();
                 QueueTicker::new("kucoin", symbol, "spot", time, price)
             })
-            .collect::<Vec<_>>();
-        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
-        for ticker in spot_tickers {
-            tx.send(ticker).unwrap();
-        }
+            .collect::<Vec<_>>()
     }
 }
 
 mod gateio_int {
     use crate::QueueTicker;
 
-    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://fx-api.gateio.ws/api/v4/futures/usdt/tickers";
-        let res = reqwest::blocking::get(url).unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("contract").unwrap().as_str().unwrap();
-                let highest_bid = x.get("highest_bid").unwrap().as_str().unwrap();
-                QueueTicker::new("gateio", symbol, "derivatives", ts, highest_bid)
-            })
-            .collect::<Vec<_>>();
-        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
-        for ticker in derivatives_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("contract").unwrap().as_str().unwrap();
+            let highest_bid = x.get("highest_bid").unwrap().as_str().unwrap();
+            QueueTicker::new("gateio", symbol, "derivatives", ts, highest_bid)
+        })
+        .collect::<Vec<_>>()
     }
 
-    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_spot_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://api.gateio.ws/api/v4/spot/tickers";
-        let res = reqwest::blocking::get(url).unwrap();
-        let res = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let spot_tickers = res
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("currency_pair").unwrap().as_str().unwrap();
-                let price_raw = x.get("lowest_ask").unwrap().as_str().unwrap();
-                let price = if price_raw == "" { "-1.0" } else { price_raw };
-                QueueTicker::new("gateio", symbol, "spot", ts, price)
-            })
-            .collect::<Vec<_>>();
-        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
-        for ticker in spot_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("currency_pair").unwrap().as_str().unwrap();
+            let price_raw = x.get("lowest_ask").unwrap().as_str().unwrap();
+            let price = if price_raw == "" { "-1.0" } else { price_raw };
+            QueueTicker::new("gateio", symbol, "spot", ts, price)
+        })
+        .collect::<Vec<_>>()
     }
 }
 
 mod bingx_int {
     use crate::QueueTicker;
 
-    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://open-api.bingx.com/openApi/swap/v2/quote/ticker";
-        let res = reqwest::blocking::get(url).unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .get("data")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let price = x.get("bidPrice").unwrap().as_str().unwrap();
-                QueueTicker::new("bingx", symbol, "derivatives", ts, price)
-            })
-            .collect::<Vec<_>>();
-        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
-        for ticker in derivatives_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .get("data")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let price = x.get("bidPrice").unwrap().as_str().unwrap();
+            QueueTicker::new("bingx", symbol, "derivatives", ts, price)
+        })
+        .collect::<Vec<_>>()
     }
 
-    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_spot_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://open-api.bingx.com/openApi/spot/v1/ticker/price";
-        let res = reqwest::blocking::get(url).unwrap();
-        let res = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
-        let spot_tickers = res
-            .get("data")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let trade = x
-                    .get("trades")
-                    .unwrap()
-                    .as_array()
-                    .unwrap()
-                    .first()
-                    .unwrap();
-                let timestamp = trade.get("timestamp").unwrap().as_i64().unwrap();
-                let price = trade.get("price").unwrap().as_str().unwrap();
-                QueueTicker::new("bingx", symbol, "spot", timestamp, price)
-            })
-            .collect::<Vec<_>>();
-        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
-        for ticker in spot_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .get("data")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let trade = x
+                .get("trades")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .first()
+                .unwrap();
+            let timestamp = trade.get("timestamp").unwrap().as_i64().unwrap();
+            let price = trade.get("price").unwrap().as_str().unwrap();
+            QueueTicker::new("bingx", symbol, "spot", timestamp, price)
+        })
+        .collect::<Vec<_>>()
     }
 }
 
 mod htx_int {
     use crate::QueueTicker;
 
-    pub fn fetch_derivatives_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://api.hbdm.com/v2/linear-swap-ex/market/detail/batch_merged";
-        let res = reqwest::blocking::get(url).unwrap();
-        let derivatives_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .get("ticks")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("contract_code").unwrap().as_str().unwrap();
-                let ts = x.get("ts").unwrap().as_i64().unwrap();
-                let bid_raw = x.get("bid").unwrap();
-                let price = if bid_raw.is_null() {
-                    x.get("close").unwrap().as_str().unwrap().to_string()
-                } else {
-                    bid_raw
-                        .as_array()
-                        .unwrap()
-                        .first()
-                        .unwrap()
-                        .as_f64()
-                        .unwrap()
-                        .to_string()
-                };
-                QueueTicker::new("htx", symbol, "derivatives", ts, &price)
-            })
-            .collect::<Vec<_>>();
-        log::info!("ders len={:?} => produce+sleep", derivatives_tickers.len());
-        for ticker in derivatives_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .get("ticks")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("contract_code").unwrap().as_str().unwrap();
+            let ts = x.get("ts").unwrap().as_i64().unwrap();
+            let bid_raw = x.get("bid").unwrap();
+            let price = if bid_raw.is_null() {
+                x.get("close").unwrap().as_str().unwrap().to_string()
+            } else {
+                bid_raw
+                    .as_array()
+                    .unwrap()
+                    .first()
+                    .unwrap()
+                    .as_f64()
+                    .unwrap()
+                    .to_string()
+            };
+            QueueTicker::new("htx", symbol, "derivatives", ts, &price)
+        })
+        .collect::<Vec<_>>()
     }
 
-    pub fn fetch_spot_tickers_from_api(tx: &std::sync::mpsc::Sender<QueueTicker>) {
+    pub fn fetch_spot_tickers_from_api() -> Vec<QueueTicker> {
         let url = "https://api.huobi.pro/market/tickers";
-        let res = reqwest::blocking::get(url).unwrap();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let spot_tickers = serde_json::from_str::<serde_json::Value>(&res.text().unwrap())
-            .unwrap()
-            .get("data")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let price = x.get("ask").unwrap().as_f64().unwrap().to_string();
-                QueueTicker::new("htx", symbol, "spot", ts, &price)
-            })
-            .collect::<Vec<_>>();
-        log::info!("spot_tickers len={:?} => produce+sleep", spot_tickers.len());
-        for ticker in spot_tickers {
-            tx.send(ticker).unwrap();
-        }
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .get("data")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let price = x.get("ask").unwrap().as_f64().unwrap().to_string();
+            QueueTicker::new("htx", symbol, "spot", ts, &price)
+        })
+        .collect::<Vec<_>>()
     }
 }
 
@@ -657,13 +608,49 @@ impl QueueTicker {
     }
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum QueueTickerType {
+    Spot,
+    Derivatives,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum QueueTickerExchange {
+    Bybit,
+    Binance,
+    Mexc,
+    Kucoin,
+    Gateio,
+    Bingx,
+    Htx,
+}
+
 #[cfg(test)]
 mod test {
     #[test]
-    fn validate_millis() {
+    fn test_validate_millis() {
         let t = 365 * 24 * 60 * 60 * 1000;
         assert_eq!(crate::QueueTicker::is_millis(t - 1), false);
         assert_eq!(crate::QueueTicker::is_millis(t), true);
         assert_eq!(crate::QueueTicker::is_millis(t + 1), true);
+    }
+
+    #[test]
+    fn test_enums_serialization() {
+        use crate::{QueueTickerExchange, QueueTickerType};
+        assert_eq!(
+            serde_json::to_string(&QueueTickerType::Spot).unwrap(),
+            "\"spot\""
+        );
+        assert_eq!(
+            serde_json::to_string(&QueueTickerType::Derivatives).unwrap(),
+            "\"derivatives\""
+        );
+        assert_eq!(
+            serde_json::to_string(&QueueTickerExchange::Bybit).unwrap(),
+            "\"bybit\""
+        );
     }
 }

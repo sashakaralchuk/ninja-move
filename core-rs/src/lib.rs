@@ -1011,8 +1011,9 @@ impl RedpandaPort {
     ///
     /// ### Examples
     /// ```no_run
+    /// use exchanges_arbitrage::RedpandaPort;
     /// let vec = vec!["m".to_string()];
-    /// RedpandaPort::connect_produce_messages_chunked("trades", &vec).await;
+    /// RedpandaPort::connect_produce_messages_chunked("trades", &vec);
     /// ```
     ///
     #[allow(dead_code)]
@@ -1074,6 +1075,7 @@ impl RedpandaPort {
     ///
     /// ### Examples
     /// ```no_run
+    /// use exchanges_arbitrage::RedpandaPort;
     /// let topic_name = "t-produce-1";
     /// let messages = (0..2_500_000)
     ///     .collect::<Vec<_>>()
