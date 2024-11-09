@@ -50,20 +50,21 @@ FROM default.trade_contango_arbitrage_v1_queue;
 -- calc for every ticker max/min prices on direvatives and spot in last 60s
 WITH t AS (
     SELECT
-        *,
-        UPPER(replaceRegexpAll(symbol, '[_-]?', '')) symbol_int_1
+        exchange,
+        kind,
+        UPPER(replaceRegexpAll(symbol, '[10*_-]?', '')) symbol_int_1,
+        price / COALESCE(toFloat64OrNull(regexpExtract(symbol, '10*', 0)), 1) price_int_1
     FROM default.trade_contango_arbitrage_v1
     FINAL
     WHERE timestamp >= (now() - toIntervalSecond(60))
         AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
-        AND length(replaceRegexpOne(symbol, '10*', '')) = length(symbol)
         AND volume > 0
         AND status = 'TRADING'
 )
 SELECT
     t1.symbol_int_1,
-    t1.price AS fut_price,
-    t2.price AS spot_price,
+    t1.price_int_1 AS fut_price,
+    t2.price_int_1 AS spot_price,
     t1.exchange AS der_ex,
     t2.exchange AS spot_ex,
     round(fut_price - spot_price, 4) AS diff_abs,
@@ -73,11 +74,11 @@ FROM (
     FROM (
         SELECT
             symbol_int_1,
-            price,
+            price_int_1,
             exchange,
             ROW_NUMBER() OVER(
                 PARTITION BY symbol_int_1, kind
-                ORDER BY price DESC
+                ORDER BY price_int_1 DESC
             ) _rownum
         FROM t
         WHERE kind = 'futures'
@@ -89,11 +90,11 @@ INNER JOIN (
     FROM (
         SELECT
             symbol_int_1,
-            price,
+            price_int_1,
             exchange,
             ROW_NUMBER() OVER(
                 PARTITION BY symbol_int_1, kind
-                ORDER BY price DESC
+                ORDER BY price_int_1 DESC
             ) _rownum
         FROM t
         WHERE kind = 'spot'
@@ -106,7 +107,6 @@ LIMIT 10
 "#;
 
 fn main() {
-    // -- TODO: for 10* figure out price for 1 token
     // -- TODO: debug price which i see here and price in UI
     // -- TODO: implement error print on error
     // -- TODO: implement re-try in requests
