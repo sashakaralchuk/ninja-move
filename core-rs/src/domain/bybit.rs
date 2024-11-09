@@ -448,18 +448,6 @@ impl TradingHttpTrait for TradingHttp {
     }
 }
 
-pub fn fetch_spot_tickers() -> serde_json::Value {
-    let url = "https://api.bybit.com/v5/market/tickers?category=spot";
-    let res = reqwest::blocking::get(url).unwrap();
-    serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap()
-}
-
-pub fn fetch_derivatives_tickers() -> serde_json::Value {
-    let url = "https://api.bybit.com/v5/market/tickers?category=linear";
-    let res = reqwest::blocking::get(url).unwrap();
-    serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap()
-}
-
 #[cfg(test)]
 mod tests {
     use hmac::{Hmac, Mac};

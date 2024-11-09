@@ -13,7 +13,9 @@ CREATE TABLE default.trade_contango_arbitrage_v1
     symbol String,
     kind String,
     timestamp DateTime,
-    price Float64
+    price Float64,
+    volume Float64,
+    status String
 )
 ENGINE = ReplacingMergeTree
 -- TODO: find out toYYYYMMDDhh, p.s. toYYYYMMDDhhmmss is exists
@@ -41,45 +43,75 @@ SELECT
     JSONExtractString(data, 's') symbol,
     JSONExtractString(data, 'k') kind,
     toDateTime(JSONExtractUInt(data, 'ts') / 1000) timestamp,
-    JSONExtractFloat(data, 'p') price
+    JSONExtractFloat(data, 'p') price,
+    JSONExtractFloat(data, 'v') volume,
+    JSONExtractString(data, 'st') status
 FROM default.trade_contango_arbitrage_v1_queue;
--- last price on spot vs last price on derivatives in last 60 seconds for contango
--- XXX: unify symbols
--- XXX: calc how old every ticker is
+-- calc for every ticker max/min prices on direvatives and spot in last 60s
 WITH t AS (
     SELECT
-        exchange,
-        symbol,
-        kind,
-        price,
-        timestamp,
-        replaceRegexpOne(symbol, '(10*)', '') symbol_int_1,
-        ROW_NUMBER() OVER(
-            PARTITION BY exchange, symbol_int_1, kind
-            ORDER BY timestamp DESC
-        ) _rownum
+        *,
+        UPPER(replaceRegexpAll(symbol, '[_-]?', '')) symbol_int_1
     FROM default.trade_contango_arbitrage_v1
     FINAL
     WHERE timestamp >= (now() - toIntervalSecond(60))
         AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
+        AND length(replaceRegexpOne(symbol, '10*', '')) = length(symbol)
+        AND volume > 0
+        AND status = 'TRADING'
 )
 SELECT
     t1.symbol_int_1,
-    floor(t2.price - t1.price, 2) der_spot_abs,
-    floor(der_spot_abs / t1.price * 100, 2) der_spot_rel,
-    [t1.symbol, t2.symbol] symbols,
-    [t1.exchange, t2.exchange] exchanges,
-    [t1.price, t2.price] prices,
-    [t1.kind, t2.kind] kinds
-FROM (SELECT * FROM t WHERE _rownum = 1 AND kind = 'spot') t1
-INNER JOIN (SELECT * FROM t WHERE _rownum = 1 AND kind = 'derivatives') t2
+    t1.price AS fut_price,
+    t2.price AS spot_price,
+    t1.exchange AS der_ex,
+    t2.exchange AS spot_ex,
+    round(fut_price - spot_price, 4) AS diff_abs,
+    round((fut_price - spot_price) / spot_price * 100, 2) AS diff_rel
+FROM (
+    SELECT *
+    FROM (
+        SELECT
+            symbol_int_1,
+            price,
+            exchange,
+            ROW_NUMBER() OVER(
+                PARTITION BY symbol_int_1, kind
+                ORDER BY price DESC
+            ) _rownum
+        FROM t
+        WHERE kind = 'futures'
+    )
+    WHERE _rownum = 1
+) t1
+INNER JOIN (
+    SELECT *
+    FROM (
+        SELECT
+            symbol_int_1,
+            price,
+            exchange,
+            ROW_NUMBER() OVER(
+                PARTITION BY symbol_int_1, kind
+                ORDER BY price DESC
+            ) _rownum
+        FROM t
+        WHERE kind = 'spot'
+    )
+    WHERE _rownum = 1
+) t2
     ON t1.symbol_int_1 = t2.symbol_int_1
-ORDER BY der_spot_rel
-LIMIT 25
+ORDER BY diff_rel DESC
+LIMIT 10
 "#;
 
 fn main() {
+    // -- TODO: for 10* figure out price for 1 token
+    // -- TODO: debug price which i see here and price in UI
+    // -- TODO: implement error print on error
+    // -- TODO: implement re-try in requests
     env_logger::init();
+    binance_int::fetch_write_config();
     let (tx, rx) = std::sync::mpsc::channel();
     let fns = vec![
         bybit_int::fetch_derivatives_tickers_from_api,
@@ -120,7 +152,7 @@ fn main() {
 /// On 2024-11-03 in websocket stream some symbols are absent => i had to do http requests in busy loop.
 ///
 mod bybit_int {
-    use crate::{QEx, QKind, QTicker};
+    use crate::{QEx, QKind, QSt, QTicker};
     use exchanges_arbitrage::domain;
 
     #[allow(dead_code)]
@@ -156,14 +188,26 @@ mod bybit_int {
                 Some(v) => v.as_str().unwrap(),
                 _ => continue,
             };
-            let ticker = QTicker::new(QEx::Bybit, data_symbol, QKind::Derivatives, ts, data_bid1);
+            let ticker = QTicker::new(
+                QEx::Bybit,
+                data_symbol,
+                QSt::Trading,
+                QKind::Futures,
+                ts,
+                data_bid1,
+                "0.0",
+            );
             log::debug!("derivatives-ticker={ticker:?}");
             tx.send(ticker).unwrap();
         }
     }
 
     pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
-        let res = domain::bybit::fetch_derivatives_tickers();
+        let url = "https://api.bybit.com/v5/market/tickers?category=linear";
+        let res = serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap();
         let ts = res.get("time").unwrap().as_i64().unwrap();
         res.get("result")
             .unwrap()
@@ -175,9 +219,10 @@ mod bybit_int {
             .unwrap()
             .iter()
             .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let bid_1_price = x.get("bid1Price").unwrap().as_str().unwrap();
-                QTicker::new(QEx::Bybit, symbol, QKind::Derivatives, ts, bid_1_price)
+                let s = x.get("symbol").unwrap().as_str().unwrap();
+                let p = x.get("bid1Price").unwrap().as_str().unwrap();
+                let v = x.get("volume24h").unwrap().as_str().unwrap();
+                QTicker::new(QEx::Bybit, s, QSt::Trading, QKind::Futures, ts, p, v)
             })
             .collect::<Vec<_>>()
     }
@@ -204,14 +249,26 @@ mod bybit_int {
             let data = val.get("data").unwrap().as_object().unwrap();
             let data_symbol = data.get("symbol").unwrap().as_str().unwrap();
             let data_last_price = data.get("lastPrice").unwrap().as_str().unwrap();
-            let ticker = QTicker::new(QEx::Bybit, data_symbol, QKind::Spot, ts, data_last_price);
+            let ticker = QTicker::new(
+                QEx::Bybit,
+                data_symbol,
+                QSt::Trading,
+                QKind::Spot,
+                ts,
+                data_last_price,
+                "0",
+            );
             log::debug!("spot-ticker={ticker:?}");
             tx.send(ticker).unwrap();
         }
     }
 
     pub fn fetch_spot_tickers_from_api() -> Vec<QTicker> {
-        let res = domain::bybit::fetch_spot_tickers();
+        let url = "https://api.bybit.com/v5/market/tickers?category=spot";
+        let res = serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap();
         let ts = res.get("time").unwrap().as_i64().unwrap();
         res.get("result")
             .unwrap()
@@ -223,9 +280,10 @@ mod bybit_int {
             .unwrap()
             .iter()
             .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let ask_1_price = x.get("ask1Price").unwrap().as_str().unwrap();
-                QTicker::new(QEx::Bybit, symbol, QKind::Spot, ts, ask_1_price)
+                let s = x.get("symbol").unwrap().as_str().unwrap();
+                let p = x.get("ask1Price").unwrap().as_str().unwrap();
+                let v = x.get("volume24h").unwrap().as_str().unwrap();
+                QTicker::new(QEx::Bybit, s, QSt::Trading, QKind::Spot, ts, p, v)
             })
             .collect::<Vec<_>>()
     }
@@ -260,28 +318,37 @@ mod bybit_int {
 }
 
 mod binance_int {
-    use crate::{QEx, QKind, QTicker};
+    use crate::{QEx, QKind, QSt, QTicker};
 
-    pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
-        let url = "https://fapi.binance.com/fapi/v1/ticker/price";
-        serde_json::from_str::<serde_json::Value>(
-            &reqwest::blocking::get(url).unwrap().text().unwrap(),
-        )
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|x| {
-            let symbol = x.get("symbol").unwrap().as_str().unwrap();
-            let price = x.get("price").unwrap().as_str().unwrap();
-            let ts = x.get("time").unwrap().as_i64().unwrap();
-            QTicker::new(QEx::Binance, symbol, QKind::Derivatives, ts, price)
-        })
-        .collect::<Vec<_>>()
+    static PATH_EXCHANGE_INFO: &str = "/tmp/binance_fapi_v1_exchange_info.json";
+
+    pub fn fetch_write_config() {
+        let path = std::path::Path::new(PATH_EXCHANGE_INFO);
+        fn fetch_write(p: &std::path::Path) {
+            let url = "https://fapi.binance.com/fapi/v1/exchangeInfo";
+            let res = reqwest::blocking::get(url).unwrap();
+            std::fs::write(p, res.text().unwrap()).unwrap();
+        }
+        if path.exists() {
+            let metadata = std::fs::metadata(path).unwrap();
+            let ts = metadata.modified().unwrap();
+            let updated_dur_secs = std::time::SystemTime::now()
+                .duration_since(ts)
+                .unwrap()
+                .as_secs();
+            if updated_dur_secs > (60 * 60) {
+                log::info!("file expired -> download and write");
+                fetch_write(&path);
+            }
+        } else {
+            log::info!("binance-config file not exists -> download and write");
+            fetch_write(&path);
+        }
     }
 
-    pub fn fetch_spot_tickers_from_api() -> Vec<QTicker> {
-        let url = "https://api.binance.com/api/v3/ticker/price";
+    pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
+        let symbol_status = read_symbol_status_confing();
+        let url = "https://fapi.binance.com/fapi/v1/ticker/24hr";
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -294,16 +361,69 @@ mod binance_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("symbol").unwrap().as_str().unwrap();
-            let price = x.get("price").unwrap().as_str().unwrap();
-            QTicker::new(QEx::Binance, symbol, QKind::Spot, ts, price)
+            let s = x.get("symbol").unwrap().as_str().unwrap();
+            let st = symbol_status.get(s).unwrap().clone();
+            let p = x.get("lastPrice").unwrap().as_str().unwrap();
+            let v = x.get("volume").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Binance, s, st, QKind::Futures, ts, p, v)
         })
         .collect::<Vec<_>>()
+    }
+
+    pub fn fetch_spot_tickers_from_api() -> Vec<QTicker> {
+        let symbol_status = read_symbol_status_confing();
+        let url = "https://api.binance.com/api/v3/ticker/24hr";
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        serde_json::from_str::<serde_json::Value>(
+            &reqwest::blocking::get(url).unwrap().text().unwrap(),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let s = x.get("symbol").unwrap().as_str().unwrap();
+            let st = match symbol_status.get(s) {
+                Some(v) => v.clone(),
+                _ => QSt::NotFound,
+            };
+            let p = x.get("lastPrice").unwrap().as_str().unwrap();
+            let v = x.get("volume").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Binance, s, st, QKind::Spot, ts, p, v)
+        })
+        .collect::<Vec<_>>()
+    }
+
+    fn read_symbol_status_confing() -> std::collections::HashMap<String, QSt> {
+        serde_json::from_str::<serde_json::Value>(
+            &std::fs::read_to_string(std::path::Path::new(PATH_EXCHANGE_INFO)).unwrap(),
+        )
+        .unwrap()
+        .get("symbols")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let status_raw = x.get("status").unwrap().as_str().unwrap();
+            let status = match status_raw {
+                "SETTLING" => QSt::Settling,
+                "PENDING_TRADING" => QSt::PendingTrading,
+                "TRADING" => QSt::Trading,
+                _ => panic!("unknown status_raw={}", status_raw),
+            };
+            (symbol.into(), status.into())
+        })
+        .collect::<std::collections::HashMap<_, _>>()
     }
 }
 
 mod mexc_int {
-    use crate::{QEx, QKind, QTicker};
+    use crate::{QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
         let url = "https://contract.mexc.com/api/v1/contract/ticker";
@@ -317,19 +437,20 @@ mod mexc_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("symbol").unwrap().as_str().unwrap();
-            let ask1 = match x.get("ask1") {
+            let s = x.get("symbol").unwrap().as_str().unwrap();
+            let p = match x.get("ask1") {
                 Some(v) => v.as_f64().unwrap().to_string(),
                 _ => "-1.0".into(),
             };
-            let timestamp = x.get("timestamp").unwrap().as_i64().unwrap();
-            QTicker::new(QEx::Mexc, symbol, QKind::Derivatives, timestamp, &ask1)
+            let ts = x.get("timestamp").unwrap().as_i64().unwrap();
+            let v = x.get("volume24").unwrap().as_f64().unwrap().to_string();
+            QTicker::new(QEx::Mexc, s, QSt::Trading, QKind::Futures, ts, &p, &v)
         })
         .collect::<Vec<_>>()
     }
 
     pub fn fetch_spot_tickers_from_api() -> Vec<QTicker> {
-        let url = "https://api.mexc.com/api/v3/ticker/price";
+        let url = "https://api.mexc.com/api/v3/ticker/24hr";
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -342,16 +463,17 @@ mod mexc_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("symbol").unwrap().as_str().unwrap();
-            let price = x.get("price").unwrap().as_str().unwrap();
-            QTicker::new(QEx::Mexc, symbol, QKind::Spot, ts, price)
+            let s = x.get("symbol").unwrap().as_str().unwrap();
+            let p = x.get("lastPrice").unwrap().as_str().unwrap();
+            let v = x.get("volume").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Mexc, s, QSt::Trading, QKind::Spot, ts, p, v)
         })
         .collect::<Vec<_>>()
     }
 }
 
 mod kucoin_int {
-    use crate::{QEx, QKind, QTicker};
+    use crate::{QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
         let url = "https://api-futures.kucoin.com/api/v1/allTickers";
@@ -364,11 +486,13 @@ mod kucoin_int {
             .unwrap()
             .iter()
             .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
+                let s = x.get("symbol").unwrap().as_str().unwrap();
                 let ts = x.get("ts").unwrap().as_u64().unwrap();
                 let ts_str = (ts / 1_000_000) as i64;
-                let price = x.get("price").unwrap().as_str().unwrap();
-                QTicker::new(QEx::Kucoin, symbol, QKind::Derivatives, ts_str, price)
+                let p = x.get("price").unwrap().as_str().unwrap();
+                // NOTE: that's not a volume
+                let v = x.get("size").unwrap().as_i64().unwrap().to_string();
+                QTicker::new(QEx::Kucoin, s, QSt::Trading, QKind::Futures, ts_str, p, &v)
             })
             .collect::<Vec<_>>()
     }
@@ -378,7 +502,7 @@ mod kucoin_int {
         let res = reqwest::blocking::get(url).unwrap();
         let res = serde_json::from_str::<serde_json::Value>(&res.text().unwrap()).unwrap();
         let res_data = res.get("data").unwrap();
-        let time = res_data.get("time").unwrap().as_i64().unwrap();
+        let ts = res_data.get("time").unwrap().as_i64().unwrap();
         res_data
             .get("ticker")
             .unwrap()
@@ -386,16 +510,17 @@ mod kucoin_int {
             .unwrap()
             .iter()
             .map(|x| {
-                let symbol = x.get("symbol").unwrap().as_str().unwrap();
-                let price = x.get("high").unwrap().as_str().unwrap();
-                QTicker::new(QEx::Kucoin, symbol, QKind::Spot, time, price)
+                let s = x.get("symbol").unwrap().as_str().unwrap();
+                let p = x.get("high").unwrap().as_str().unwrap();
+                let v = x.get("volValue").unwrap().as_str().unwrap();
+                QTicker::new(QEx::Kucoin, s, QSt::Trading, QKind::Spot, ts, p, v)
             })
             .collect::<Vec<_>>()
     }
 }
 
 mod gateio_int {
-    use crate::{QEx, QKind, QTicker};
+    use crate::{QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
         let url = "https://fx-api.gateio.ws/api/v4/futures/usdt/tickers";
@@ -411,9 +536,10 @@ mod gateio_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("contract").unwrap().as_str().unwrap();
-            let highest_bid = x.get("highest_bid").unwrap().as_str().unwrap();
-            QTicker::new(QEx::Gateio, symbol, QKind::Derivatives, ts, highest_bid)
+            let s = x.get("contract").unwrap().as_str().unwrap();
+            let p = x.get("highest_bid").unwrap().as_str().unwrap();
+            let v = x.get("volume_24h").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Gateio, s, QSt::Trading, QKind::Futures, ts, p, v)
         })
         .collect::<Vec<_>>()
     }
@@ -432,17 +558,19 @@ mod gateio_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("currency_pair").unwrap().as_str().unwrap();
-            let price_raw = x.get("lowest_ask").unwrap().as_str().unwrap();
-            let price = if price_raw == "" { "-1.0" } else { price_raw };
-            QTicker::new(QEx::Gateio, symbol, QKind::Spot, ts, price)
+            let s = x.get("currency_pair").unwrap().as_str().unwrap();
+            let p_raw = x.get("lowest_ask").unwrap().as_str().unwrap();
+            let p = if p_raw == "" { "-1.0" } else { p_raw };
+            // XXX: collect base_volume and quote_volume
+            let v = x.get("base_volume").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Gateio, s, QSt::Trading, QKind::Spot, ts, p, v)
         })
         .collect::<Vec<_>>()
     }
 }
 
 mod bingx_int {
-    use crate::{QEx, QKind, QTicker};
+    use crate::{QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
         let url = "https://open-api.bingx.com/openApi/swap/v2/quote/ticker";
@@ -460,9 +588,10 @@ mod bingx_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("symbol").unwrap().as_str().unwrap();
-            let price = x.get("bidPrice").unwrap().as_str().unwrap();
-            QTicker::new(QEx::Bingx, symbol, QKind::Derivatives, ts, price)
+            let s = x.get("symbol").unwrap().as_str().unwrap();
+            let p = x.get("bidPrice").unwrap().as_str().unwrap();
+            let v = x.get("volume").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Bingx, s, QSt::Trading, QKind::Futures, ts, p, v)
         })
         .collect::<Vec<_>>()
     }
@@ -479,7 +608,7 @@ mod bingx_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("symbol").unwrap().as_str().unwrap();
+            let s = x.get("symbol").unwrap().as_str().unwrap();
             let trade = x
                 .get("trades")
                 .unwrap()
@@ -487,16 +616,17 @@ mod bingx_int {
                 .unwrap()
                 .first()
                 .unwrap();
-            let timestamp = trade.get("timestamp").unwrap().as_i64().unwrap();
-            let price = trade.get("price").unwrap().as_str().unwrap();
-            QTicker::new(QEx::Bingx, symbol, QKind::Spot, timestamp, price)
+            let ts = trade.get("timestamp").unwrap().as_i64().unwrap();
+            let p = trade.get("price").unwrap().as_str().unwrap();
+            let v = trade.get("volume").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Bingx, s, QSt::Trading, QKind::Spot, ts, p, v)
         })
         .collect::<Vec<_>>()
     }
 }
 
 mod htx_int {
-    use crate::{QEx, QKind, QTicker};
+    use crate::{QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api() -> Vec<QTicker> {
         let url = "https://api.hbdm.com/v2/linear-swap-ex/market/detail/batch_merged";
@@ -510,10 +640,10 @@ mod htx_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("contract_code").unwrap().as_str().unwrap();
+            let s = x.get("contract_code").unwrap().as_str().unwrap();
             let ts = x.get("ts").unwrap().as_i64().unwrap();
             let bid_raw = x.get("bid").unwrap();
-            let price = if bid_raw.is_null() {
+            let p = if bid_raw.is_null() {
                 x.get("close").unwrap().as_str().unwrap().to_string()
             } else {
                 bid_raw
@@ -525,7 +655,8 @@ mod htx_int {
                     .unwrap()
                     .to_string()
             };
-            QTicker::new(QEx::Htx, symbol, QKind::Derivatives, ts, &price)
+            let v = x.get("vol").unwrap().as_str().unwrap();
+            QTicker::new(QEx::Htx, s, QSt::Trading, QKind::Futures, ts, &p, v)
         })
         .collect::<Vec<_>>()
     }
@@ -546,9 +677,10 @@ mod htx_int {
         .unwrap()
         .iter()
         .map(|x| {
-            let symbol = x.get("symbol").unwrap().as_str().unwrap();
-            let price = x.get("ask").unwrap().as_f64().unwrap().to_string();
-            QTicker::new(QEx::Htx, symbol, QKind::Spot, ts, &price)
+            let s = x.get("symbol").unwrap().as_str().unwrap();
+            let p = x.get("ask").unwrap().as_f64().unwrap().to_string();
+            let v = x.get("vol").unwrap().as_f64().unwrap().to_string();
+            QTicker::new(QEx::Htx, s, QSt::Trading, QKind::Spot, ts, &p, &v)
         })
         .collect::<Vec<_>>()
     }
@@ -556,24 +688,32 @@ mod htx_int {
 
 fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
     let mut queue_tickers = vec![];
+    fn produce(vec: &Vec<QTicker>) {
+        log::info!("produce len={}", vec.len());
+        let vec_ = vec
+            .iter()
+            .map(|x| serde_json::to_string(&x).unwrap())
+            .collect::<Vec<_>>();
+        let _ = RedpandaPort::connect_produce_messages_sync("tickers-contango-arbitrage", &vec_);
+    }
     loop {
-        match rx.recv() {
+        match rx.recv_timeout(std::time::Duration::from_millis(1000)) {
             Ok(v) => queue_tickers.push(v),
             Err(e) => {
-                log::error!("e={:?}", e);
+                match e {
+                    std::sync::mpsc::RecvTimeoutError::Timeout => {
+                        if queue_tickers.len() > 0 {
+                            produce(&queue_tickers);
+                            queue_tickers.clear();
+                        }
+                    }
+                    _ => log::error!("e={:?}", e.to_string()),
+                }
                 continue;
             }
         }
-        if queue_tickers.len() == 500 {
-            log::info!("produce len={}", queue_tickers.len());
-            let queue_tickers_to_produce = queue_tickers
-                .iter()
-                .map(|x| serde_json::to_string(&x).unwrap())
-                .collect::<Vec<_>>();
-            let _ = RedpandaPort::connect_produce_messages_sync(
-                "tickers-contango-arbitrage",
-                &queue_tickers_to_produce,
-            );
+        if queue_tickers.len() == 10_000 {
+            produce(&queue_tickers);
             queue_tickers.clear();
         }
     }
@@ -583,22 +723,26 @@ fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
 struct QTicker {
     ex: QEx,
     s: String,
+    st: QSt,
     k: QKind,
     ts: i64,
     p: f64,
+    v: f64,
 }
 
 impl QTicker {
-    fn new(ex: QEx, s: &str, k: QKind, ts: i64, p: &str) -> Self {
+    fn new(ex: QEx, s: &str, st: QSt, k: QKind, ts: i64, p: &str, v: &str) -> Self {
         if !Self::is_millis(ts) {
             panic!("ts={} is not in millis", ts);
         }
         Self {
             ex: ex.into(),
             s: s.into(),
+            st,
             k: k.into(),
             ts,
             p: p.parse::<f64>().unwrap(),
+            v: v.parse::<f64>().unwrap(),
         }
     }
 
@@ -612,7 +756,7 @@ impl QTicker {
 #[serde(rename_all = "lowercase")]
 enum QKind {
     Spot,
-    Derivatives,
+    Futures,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -625,6 +769,15 @@ enum QEx {
     Gateio,
     Bingx,
     Htx,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+enum QSt {
+    Settling,
+    PendingTrading,
+    Trading,
+    NotFound,
 }
 
 #[cfg(test)]
@@ -644,8 +797,14 @@ mod test {
         assert_eq!(serde_json::to_string(&QEx::Bybit).unwrap(), "\"bybit\"");
         assert_eq!(serde_json::to_string(&QKind::Spot).unwrap(), "\"spot\"");
         assert_eq!(
-            serde_json::to_string(&QKind::Derivatives).unwrap(),
-            "\"derivatives\""
+            serde_json::to_string(&QKind::Futures).unwrap(),
+            "\"futures\""
         );
+    }
+
+    #[test]
+    fn test_f64_parse() {
+        assert_eq!("0.0".parse::<f64>().unwrap(), 0.0);
+        assert_eq!("0".parse::<f64>().unwrap(), 0.0);
     }
 }
