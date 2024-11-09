@@ -18,9 +18,7 @@ CREATE TABLE default.trade_contango_arbitrage_v1
     status String
 )
 ENGINE = ReplacingMergeTree
--- TODO: find out toYYYYMMDDhh, p.s. toYYYYMMDDhhmmss is exists
--- XXX: squash duplicates based on ticker_id
-PARTITION BY toYYYYMMDD(timestamp)
+PARTITION BY (toYYYYMMDD(timestamp), toHour(timestamp))
 ORDER BY (exchange, symbol, kind, timestamp, price);
 CREATE TABLE default.trade_contango_arbitrage_v1_queue
 (data String)
