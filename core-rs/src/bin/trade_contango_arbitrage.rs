@@ -2,7 +2,12 @@ use exchanges_arbitrage::{pool, RedpandaPort};
 
 const _: &str = r#"
 -- redpanda
-rpk topic create -c retention.ms=900000 -c segment.ms=900000 -c segment.bytes=67108864 -c retention.bytes=67108864 tickers-contango-arbitrage
+rpk topic create \
+    -c retention.ms=900000 \
+    -c segment.ms=900000 \
+    -c segment.bytes=67108864 \
+    -c retention.bytes=67108864 \
+    tickers-contango-arbitrage
 -- clickhouse
 CREATE TABLE default.trade_contango_arbitrage_v1
 (
@@ -102,10 +107,29 @@ INNER JOIN (
     ON t1.symbol_int_1 = t2.symbol_int_1
 ORDER BY diff_rel DESC
 LIMIT 10
+-- select last prices
+SELECT *
+FROM (
+    SELECT
+        exchange,
+        UPPER(replaceRegexpAll(symbol, '[10*_-]?', '')) symbol_int_1,
+        kind,
+        timestamp,
+        price,
+        ROW_NUMBER() OVER(
+            PARTITION BY exchange, symbol_int_1, kind
+            ORDER BY timestamp DESC
+        ) _rownum
+    FROM default.trade_contango_arbitrage_v1
+    WHERE timestamp >= (now() - toIntervalSecond(60))
+        AND status = 'TRADING'
+)
+WHERE _rownum = 1
+    AND symbol_int_1 = 'METISUSDT'
+    AND exchange = 'htx'
 "#;
 
 fn main() {
-    // -- TODO: debug price which i see here and price in UI
     // -- TODO: implement error print on error
     // -- TODO: implement re-try in requests
     env_logger::init();
