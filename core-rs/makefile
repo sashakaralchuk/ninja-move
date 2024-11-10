@@ -32,6 +32,12 @@ run-two-top-instersects-listen-save-spreads:
 run-example-place-bybit-market-order:
 	${env_vars} cargo run --example place_bybit_market_order
 
+run-trade-contango-arbitrage:
+	${env_vars} \
+	RUST_BACKTRACE=full \
+	RUST_LOG=info \
+	cargo run --bin trade_contango_arbitrage
+
 test-2top-instersects:
 	cargo test --bin two_top_intersects
 

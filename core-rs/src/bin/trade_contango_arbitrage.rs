@@ -1,4 +1,4 @@
-use exchanges_arbitrage::{pool, RedpandaPort};
+use exchanges_arbitrage::{pool, RedpandaPort, TelegramBotPort};
 
 const _: &str = r#"
 -- redpanda
@@ -130,7 +130,6 @@ WHERE _rownum = 1
 "#;
 
 fn main() {
-    // -- TODO: implement re-try in requests
     env_logger::init();
     binance_int::fetch_write_config();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -156,10 +155,7 @@ fn main() {
     for f in fns {
         let tx = tx.clone();
         let t = std::thread::spawn(move || loop {
-            let tickers = match f() {
-                Ok(v) => v,
-                Err(e) => panic!("f e={:?}", e.to_string()),
-            };
+            let tickers = backoff_call(f);
             let t0 = &tickers[0];
             log::info!("done {:?}_tickers l={} ex={:?}", t0.k, tickers.len(), t0.ex);
             for ticker in tickers {
@@ -740,6 +736,25 @@ fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
             queue_tickers.clear();
         }
     }
+}
+
+fn backoff_call(
+    f: impl Fn() -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>>,
+) -> Vec<QTicker> {
+    let n = 5;
+    for i in 0..n {
+        match f() {
+            Ok(v) => return v,
+            Err(e) => {
+                log::warn!("backoff f call err={:?}", e.to_string());
+                if i != n - 1 {
+                    std::thread::sleep(std::time::Duration::from_secs(15));
+                }
+            }
+        }
+    }
+    TelegramBotPort::new_from_envs().notify_pretty(file!().into(), "backoff-fail".into());
+    panic!("backoff_call fail");
 }
 
 #[derive(Debug, serde::Serialize)]
