@@ -1,3 +1,4 @@
+use clap::Parser;
 use exchanges_arbitrage::{pool, RedpandaPort, TelegramBotPort};
 
 const _: &str = r#"
@@ -50,63 +51,18 @@ SELECT
     JSONExtractFloat(data, 'v') volume,
     JSONExtractString(data, 'st') status
 FROM default.trade_contango_arbitrage_v1_queue;
--- calc for every ticker max/min prices on direvatives and spot in last 60s
-WITH t AS (
-    SELECT
-        exchange,
-        kind,
-        UPPER(replaceRegexpAll(symbol, '[10*_-]?', '')) symbol_int_1,
-        price / COALESCE(toFloat64OrNull(regexpExtract(symbol, '10*', 0)), 1) price_int_1
-    FROM default.trade_contango_arbitrage_v1
-    FINAL
-    WHERE timestamp >= (now() - toIntervalSecond(60))
-        AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
-        AND volume > 0
-        AND status = 'TRADING'
+CREATE TABLE default.trade_contango_arbitrage_v1_diff_tracks
+(
+    ts DateTime,
+    symbol_int_1 String,
+    fut_price Float64,
+    spot_price Float64,
+    der_ex String,
+    spot_ex String,
+    diff_abs Float64,
+    diff_rel Float64
 )
-SELECT
-    t1.symbol_int_1,
-    t1.price_int_1 AS fut_price,
-    t2.price_int_1 AS spot_price,
-    t1.exchange AS der_ex,
-    t2.exchange AS spot_ex,
-    round(fut_price - spot_price, 4) AS diff_abs,
-    round((fut_price - spot_price) / spot_price * 100, 2) AS diff_rel
-FROM (
-    SELECT *
-    FROM (
-        SELECT
-            symbol_int_1,
-            price_int_1,
-            exchange,
-            ROW_NUMBER() OVER(
-                PARTITION BY symbol_int_1, kind
-                ORDER BY price_int_1 DESC
-            ) _rownum
-        FROM t
-        WHERE kind = 'futures'
-    )
-    WHERE _rownum = 1
-) t1
-INNER JOIN (
-    SELECT *
-    FROM (
-        SELECT
-            symbol_int_1,
-            price_int_1,
-            exchange,
-            ROW_NUMBER() OVER(
-                PARTITION BY symbol_int_1, kind
-                ORDER BY price_int_1 DESC
-            ) _rownum
-        FROM t
-        WHERE kind = 'spot'
-    )
-    WHERE _rownum = 1
-) t2
-    ON t1.symbol_int_1 = t2.symbol_int_1
-ORDER BY diff_rel DESC
-LIMIT 10
+ENGINE = Log;
 -- select last prices
 SELECT *
 FROM (
@@ -131,6 +87,15 @@ WHERE _rownum = 1
 
 fn main() {
     env_logger::init();
+    let run_args = RunArgs::parse();
+    match run_args.command.as_str() {
+        "fetch-write-tickers" => run_fetch_write_tickers(),
+        "track-diff" => run_track_diff(),
+        _ => log::error!("unknown command"),
+    }
+}
+
+fn run_fetch_write_tickers() {
     binance_int::fetch_write_config();
     let (tx, rx) = std::sync::mpsc::channel();
     let fns = vec![
@@ -166,6 +131,167 @@ fn main() {
         threads.push(t);
     }
     pool(&threads);
+}
+
+fn run_track_diff() {
+    let query = "
+        -- calc for every ticker max/min prices on direvatives and spot in last 60s
+        INSERT INTO default.trade_contango_arbitrage_v1_diff_tracks
+        WITH t AS (
+            SELECT
+                exchange,
+                kind,
+                UPPER(replaceRegexpAll(symbol, '[10*_-]??', '')) symbol_int_1,
+                price / COALESCE(toFloat64OrNull(regexpExtract(symbol, '10*', 0)), 1) price_int_1
+            FROM default.trade_contango_arbitrage_v1
+            FINAL
+            WHERE timestamp >= (now() - toIntervalSecond(60))
+                AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
+                AND volume > 0
+                AND status = 'TRADING'
+                AND symbol_int_1 != 'DEFIUSDT'
+        )
+        SELECT
+            now() ts,
+            t1.symbol_int_1,
+            t1.price_int_1 AS fut_price,
+            t2.price_int_1 AS spot_price,
+            t1.exchange AS der_ex,
+            t2.exchange AS spot_ex,
+            round(fut_price - spot_price, 4) AS diff_abs,
+            round((fut_price - spot_price) / spot_price * 100, 2) AS diff_rel
+        FROM (
+            SELECT *
+            FROM (
+                SELECT
+                    symbol_int_1,
+                    price_int_1,
+                    exchange,
+                    ROW_NUMBER() OVER(
+                        PARTITION BY symbol_int_1, kind
+                        ORDER BY price_int_1 DESC
+                    ) _rownum
+                FROM t
+                WHERE kind = 'futures'
+            )
+            WHERE _rownum = 1
+        ) t1
+        INNER JOIN (
+            SELECT *
+            FROM (
+                SELECT
+                    symbol_int_1,
+                    price_int_1,
+                    exchange,
+                    ROW_NUMBER() OVER(
+                        PARTITION BY symbol_int_1, kind
+                        ORDER BY price_int_1 DESC
+                    ) _rownum
+                FROM t
+                WHERE kind = 'spot'
+            )
+            WHERE _rownum = 1
+        ) t2
+            ON t1.symbol_int_1 = t2.symbol_int_1
+        WHERE diff_rel > 2.0
+        ORDER BY diff_rel DESC
+    ";
+    loop {
+        let mut written_rows = 0;
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let clickhouse_client =
+                    clickhouse::Client::default().with_url("http://127.0.0.1:18123");
+                let query_id = uuid::Uuid::new_v4().to_string();
+                let _ = clickhouse_client
+                    .query(query)
+                    .with_option("query_id", &query_id)
+                    .execute()
+                    .await
+                    .unwrap();
+                // XXX: wait for req to be processed through status
+                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
+                written_rows = clickhouse_client
+                    .query("SELECT sum(written_rows) FROM system.query_log WHERE query_id = ?")
+                    .bind(&query_id)
+                    .fetch::<u64>()
+                    .unwrap()
+                    .next()
+                    .await
+                    .unwrap()
+                    .unwrap();
+            });
+        log::info!("tick written_rows={}", written_rows);
+        if written_rows > 0 {
+            TelegramBotPort::new_from_envs().notify_pretty(
+                file!().into(),
+                format!(">2% diff written_rows={written_rows}"),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_secs(15));
+    }
+}
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct RunArgs {
+    #[arg(short, long, help = "Command to run")]
+    command: String,
+}
+
+fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
+    let mut queue_tickers = vec![];
+    fn produce(vec: &Vec<QTicker>) {
+        log::info!("produce len={}", vec.len());
+        let vec_ = vec
+            .iter()
+            .map(|x| serde_json::to_string(&x).unwrap())
+            .collect::<Vec<_>>();
+        let _ = RedpandaPort::connect_produce_messages_sync("tickers-contango-arbitrage", &vec_);
+    }
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_millis(1000)) {
+            Ok(v) => queue_tickers.push(v),
+            Err(e) => {
+                match e {
+                    std::sync::mpsc::RecvTimeoutError::Timeout => {
+                        if queue_tickers.len() > 0 {
+                            produce(&queue_tickers);
+                            queue_tickers.clear();
+                        }
+                    }
+                    _ => log::error!("e={:?}", e.to_string()),
+                }
+                continue;
+            }
+        }
+        if queue_tickers.len() == 10_000 {
+            produce(&queue_tickers);
+            queue_tickers.clear();
+        }
+    }
+}
+
+fn backoff_call(
+    f: impl Fn() -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>>,
+) -> Vec<QTicker> {
+    let n = 5;
+    for i in 0..n {
+        match f() {
+            Ok(v) => return v,
+            Err(e) => {
+                log::warn!("backoff f call err={:?}", e.to_string());
+                if i != n - 1 {
+                    std::thread::sleep(std::time::Duration::from_secs(15));
+                }
+            }
+        }
+    }
+    TelegramBotPort::new_from_envs().notify_pretty(file!().into(), "backoff-fail".into());
+    panic!("backoff_call fail");
 }
 
 ///
@@ -703,58 +829,6 @@ mod htx_int {
                 .collect::<Vec<_>>(),
         )
     }
-}
-
-fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
-    let mut queue_tickers = vec![];
-    fn produce(vec: &Vec<QTicker>) {
-        log::info!("produce len={}", vec.len());
-        let vec_ = vec
-            .iter()
-            .map(|x| serde_json::to_string(&x).unwrap())
-            .collect::<Vec<_>>();
-        let _ = RedpandaPort::connect_produce_messages_sync("tickers-contango-arbitrage", &vec_);
-    }
-    loop {
-        match rx.recv_timeout(std::time::Duration::from_millis(1000)) {
-            Ok(v) => queue_tickers.push(v),
-            Err(e) => {
-                match e {
-                    std::sync::mpsc::RecvTimeoutError::Timeout => {
-                        if queue_tickers.len() > 0 {
-                            produce(&queue_tickers);
-                            queue_tickers.clear();
-                        }
-                    }
-                    _ => log::error!("e={:?}", e.to_string()),
-                }
-                continue;
-            }
-        }
-        if queue_tickers.len() == 10_000 {
-            produce(&queue_tickers);
-            queue_tickers.clear();
-        }
-    }
-}
-
-fn backoff_call(
-    f: impl Fn() -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>>,
-) -> Vec<QTicker> {
-    let n = 5;
-    for i in 0..n {
-        match f() {
-            Ok(v) => return v,
-            Err(e) => {
-                log::warn!("backoff f call err={:?}", e.to_string());
-                if i != n - 1 {
-                    std::thread::sleep(std::time::Duration::from_secs(15));
-                }
-            }
-        }
-    }
-    TelegramBotPort::new_from_envs().notify_pretty(file!().into(), "backoff-fail".into());
-    panic!("backoff_call fail");
 }
 
 #[derive(Debug, serde::Serialize)]
