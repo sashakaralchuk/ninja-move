@@ -193,9 +193,10 @@ fn run_track_diff() {
             WHERE _rownum = 1
         ) t2
             ON t1.symbol_int_1 = t2.symbol_int_1
-        WHERE diff_rel > 2.0
+        WHERE diff_rel > ?
         ORDER BY diff_rel DESC
     ";
+    let threshold_rel = 2.0;
     loop {
         let mut written_rows = 0;
         tokio::runtime::Builder::new_multi_thread()
@@ -208,12 +209,26 @@ fn run_track_diff() {
                 let query_id = uuid::Uuid::new_v4().to_string();
                 let _ = clickhouse_client
                     .query(query)
+                    .bind(&threshold_rel)
                     .with_option("query_id", &query_id)
                     .execute()
                     .await
                     .unwrap();
-                // XXX: wait for req to be processed through status
-                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
+                loop {
+                    let finished = clickhouse_client
+                        .query("SELECT count() FROM system.query_log WHERE query_id = ? AND type = 'QueryFinish'")
+                        .bind(&query_id)
+                        .fetch::<u64>()
+                        .unwrap()
+                        .next()
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    if finished != 0 {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
                 written_rows = clickhouse_client
                     .query("SELECT sum(written_rows) FROM system.query_log WHERE query_id = ?")
                     .bind(&query_id)
@@ -224,12 +239,10 @@ fn run_track_diff() {
                     .unwrap()
                     .unwrap();
             });
-        log::info!("tick written_rows={}", written_rows);
+        let m = format!("tick >{threshold_rel}% written_rows={written_rows}");
+        log::info!("{}", m);
         if written_rows > 0 {
-            TelegramBotPort::new_from_envs().notify_pretty(
-                file!().into(),
-                format!(">2% diff written_rows={written_rows}"),
-            );
+            TelegramBotPort::new_from_envs().notify_pretty(file!().into(), m);
         }
         std::thread::sleep(std::time::Duration::from_secs(15));
     }
