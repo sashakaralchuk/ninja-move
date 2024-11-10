@@ -83,6 +83,16 @@ FROM (
 WHERE _rownum = 1
     AND symbol_int_1 = 'METISUSDT'
     AND exchange = 'htx'
+-- select last trades-diffs
+WITH max_ts AS (
+  SELECT max(ts) as ts
+  FROM default.trade_contango_arbitrage_v1_diff_tracks
+)
+SELECT *
+FROM default.trade_contango_arbitrage_v1_diff_tracks
+WHERE ts IN max_ts
+ORDER BY ts DESC
+LIMIT 10
 "#;
 
 fn main() {
