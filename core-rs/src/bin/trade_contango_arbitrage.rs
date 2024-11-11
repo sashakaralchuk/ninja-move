@@ -528,7 +528,10 @@ mod binance_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("symbol").unwrap().as_str().unwrap();
-                    let st = symbol_status.get(s).unwrap().clone();
+                    let st = match symbol_status.get(s) {
+                        Some(v) => v.clone(),
+                        _ => QSt::NotFound,
+                    };
                     let p = x.get("lastPrice").unwrap().as_str().unwrap();
                     let v = x.get("volume").unwrap().as_str().unwrap();
                     QTicker::new(QEx::Binance, s, st, QKind::Futures, ts, p, v)
