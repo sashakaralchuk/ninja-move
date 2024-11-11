@@ -33,6 +33,7 @@ services:
     image: docker.io/clickhouse/clickhouse-server:24.8.4.13
     ports:
     - 18123:8123
+    - 9000:9000
     volumes:
     - ./.var/data_clickhouse:/var/lib/clickhouse/
     mem_limit: 16gb
