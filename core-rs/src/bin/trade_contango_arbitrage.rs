@@ -141,6 +141,7 @@ fn run_fetch_write_tickers() {
         threads.push(t);
     }
     pool(&threads);
+    TelegramBotPort::new_from_envs().notify_pretty(file!().into(), "pool-fail".into());
 }
 
 fn run_track_diff() {
@@ -206,7 +207,7 @@ fn run_track_diff() {
         WHERE diff_rel > ?
         ORDER BY diff_rel DESC
     ";
-    let threshold_rel = 2.0;
+    let threshold_rel = 3.0;
     loop {
         let mut written_rows = 0;
         tokio::runtime::Builder::new_multi_thread()
@@ -313,7 +314,6 @@ fn backoff_call(
             }
         }
     }
-    TelegramBotPort::new_from_envs().notify_pretty(file!().into(), "backoff-fail".into());
     panic!("backoff_call fail");
 }
 
@@ -870,13 +870,17 @@ impl QTicker {
         if !Self::is_millis(ts) {
             panic!("ts={} is not in millis", ts);
         }
+        let p_ = match p.parse::<f64>() {
+            Ok(v) => v,
+            Err(e) => panic!("p=\"{}\" e={}", p, e),
+        };
         Self {
             ex: ex.into(),
             s: s.into(),
             st,
             k: k.into(),
             ts,
-            p: p.parse::<f64>().unwrap(),
+            p: p_,
             v: v.parse::<f64>().unwrap(),
         }
     }
