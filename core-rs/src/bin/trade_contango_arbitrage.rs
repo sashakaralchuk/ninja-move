@@ -875,7 +875,10 @@ impl QTicker {
         }
         let p_ = match p.parse::<f64>() {
             Ok(v) => v,
-            Err(e) => panic!("p=\"{}\" e={}", p, e),
+            Err(e) => {
+                log::warn!("p=\"{}\" e={}", p, e);
+                -0.0
+            }
         };
         Self {
             ex: ex.into(),
