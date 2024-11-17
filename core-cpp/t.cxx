@@ -1,6 +1,5 @@
 #include <clickhouse/client.h>
 #include <curl/curl.h>
-#include <libwebsockets.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +9,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 
+#include "WebSocketClient.h"
 #include "tt/SqrtLibrary/mysqrt.h"
 #include "tt/hello/hello.hpp"
 
@@ -19,9 +19,12 @@ void do_req();
 void parse_json();
 void listen_binance_tickers();
 void do_clickhouse_req();
-void run_step_1();
+void listen_gatio_tickers_v2();
+
+void hallow_from_t2();
 
 int main() {
+    hallow_from_t2();
     std::cout << "out: " << mathfunctions::detail::mysqrt_f(4) << std::endl;
     printf("Hello, World! 2\n");
     hello::say_hello();
@@ -35,9 +38,9 @@ int main() {
         }
     }
     {
-        char *t = std::getenv("RUN_STEP_1");
+        char *t = std::getenv("LISTEN_GATEIO_TICKERS_V2");
         if (t != NULL && strcmp(t, "1") == 0) {
-            run_step_1();
+            listen_gatio_tickers_v2();
         }
     }
     return 0;
@@ -73,66 +76,6 @@ void parse_json() {
     std::cout << "parse_json: " << t << std::endl;
 }
 
-static int callback(struct lws *wsi, enum lws_callback_reasons reason,
-                    void *user, void *in, size_t len) {
-    switch (reason) {
-        case LWS_CALLBACK_CLIENT_ESTABLISHED:
-            lws_callback_on_writable(wsi);
-            break;
-        case LWS_CALLBACK_CLIENT_RECEIVE: {
-            std::string o = std::string((char *)in);
-            std::cout << "LWS_CALLBACK_CLIENT_RECEIVE: " << o << std::endl;
-            break;
-        }
-        default:
-            break;
-    }
-
-    return 0;
-}
-
-static struct lws_protocols protocols[] = {
-    {"", callback, 0, 65536}, {NULL, NULL, 0, 0} /* terminator */
-};
-static struct lws *web_socket = NULL;
-
-/// could be usefull https://github.com/binance-exchange/binacpp
-void listen_binance_tickers() {
-    struct lws_context_creation_info info;
-    memset(&info, 0, sizeof(info));
-    info.port = CONTEXT_PORT_NO_LISTEN;
-    info.protocols = protocols;
-    info.gid = -1;
-    info.uid = -1;
-    info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
-    struct lws_context *context = lws_create_context(&info);
-    time_t old = 0;
-    while (1) {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        if (!web_socket && tv.tv_sec != old) {
-            struct lws_client_connect_info ccinfo = {0};
-            memset(&ccinfo, 0, sizeof(ccinfo));
-            ccinfo.context = context;
-            ccinfo.address = "stream.binance.com";
-            ccinfo.port = 443;
-            ccinfo.path = "/stream?streams=btcusdt@ticker";
-            ccinfo.host = lws_canonical_hostname(context);
-            ccinfo.origin = "origin";
-            ccinfo.protocol = protocols[0].name;
-            ccinfo.ssl_connection = LCCSCF_USE_SSL | LCCSCF_ALLOW_SELFSIGNED |
-                                    LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
-            web_socket = lws_client_connect_via_info(&ccinfo);
-        }
-        if (tv.tv_sec != old) {
-            lws_callback_on_writable(web_socket);
-            old = tv.tv_sec;
-        }
-        lws_service(context, 250);
-    }
-    lws_context_destroy(context);
-}
-
 void do_clickhouse_req() {
     std::string query =
         "select count() from default.trade_contango_arbitrage_v1_diff_tracks";
@@ -148,87 +91,60 @@ void do_clickhouse_req() {
     std::cout << "do_clickhouse_req: " << reqsAmount << std::endl;
 }
 
-static bool message_sent = false;
-
-static int callback_listen_gateio_spot_tickers(struct lws *wsi,
-                                               enum lws_callback_reasons reason,
-                                               void *user, void *in,
-                                               size_t len) {
-    std::cout << reason << std::endl;
-    switch (reason) {
-        case LWS_CALLBACK_CLIENT_WRITEABLE: {
-            if (!message_sent) {
-                char *t =
-                    "{\"time\": 1731778195, \"channel\": \"spot.tickers\", "
-                    "\"event\": \"subscribe\", \"payload\": [\"BTC_USDT\"]}";
-                int t_len = std::strlen(t);
-                char buf[LWS_PRE + t_len];
-                lws_strncpy(&buf[LWS_PRE], t, t_len);
-                unsigned char *buf_t = (unsigned char *)buf;
-                lws_write(web_socket, &buf_t[LWS_PRE], t_len, LWS_WRITE_TEXT);
-                message_sent = true;
-                std::cout << "message sent" << std::endl;
-            }
+void listen_binance_tickers() {
+    hv::WebSocketClient ws;
+    ws.onopen = []() { printf("onopen\n"); };
+    ws.onmessage = [](const std::string &msg) {
+        printf("onmessage: %.*s\n", (int)msg.size(), msg.data());
+    };
+    ws.onclose = []() { printf("onclose\n"); };
+    reconn_setting_t reconn;
+    reconn_setting_init(&reconn);
+    reconn.min_delay = 1000;
+    reconn.max_delay = 10000;
+    reconn.delay_policy = 2;
+    ws.setReconnect(&reconn);
+    const char *url = "wss://stream.binance.com/stream?streams=btcusdt@ticker";
+    ws.open(url);
+    std::string str;
+    while (std::getline(std::cin, str)) {
+        if (!ws.isConnected()) break;
+        if (str == "quit") {
+            ws.close();
             break;
         }
-        case LWS_CALLBACK_CLIENT_ESTABLISHED:
-            lws_callback_on_writable(wsi);
-            break;
-        case LWS_CALLBACK_CLIENT_RECEIVE: {
-            std::string o = std::string((char *)in);
-            std::cout << "LWS_CALLBACK_CLIENT_RECEIVE: " << o << std::endl;
-            break;
-        }
-        case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-            fprintf(stderr, "Connection error: %s\n", (char *)in);
-            break;
-        default:
-            break;
+        ws.send(str);
     }
-
-    return 0;
 }
 
-static struct lws_protocols protocols_gateio[] = {
-    {"", callback_listen_gateio_spot_tickers, 0, 65536},
-    {NULL, NULL, 0, 0} /* terminator */
-};
-
-void listen_gateio_spot_tickers() {
-    struct lws_context_creation_info info;
-    memset(&info, 0, sizeof(info));
-    info.port = CONTEXT_PORT_NO_LISTEN;
-    info.protocols = protocols_gateio;
-    info.gid = -1;
-    info.uid = -1;
-    info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
-    struct lws_context *context = lws_create_context(&info);
-    time_t old = 0;
-    while (1) {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        if (!web_socket && tv.tv_sec != old) {
-            struct lws_client_connect_info ccinfo = {0};
-            memset(&ccinfo, 0, sizeof(ccinfo));
-            ccinfo.context = context;
-            ccinfo.address = "api.gateio.ws";
-            ccinfo.port = 443;
-            ccinfo.path = "/ws/v4/";
-            ccinfo.host = lws_canonical_hostname(context);
-            ccinfo.origin = "origin";
-            ccinfo.protocol = protocols_gateio[0].name;
-            ccinfo.ssl_connection = LCCSCF_USE_SSL | LCCSCF_ALLOW_SELFSIGNED |
-                                    LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
-            ccinfo.userdata = NULL;
-            web_socket = lws_client_connect_via_info(&ccinfo);
+void listen_gatio_tickers_v2() {
+    hv::WebSocketClient ws;
+    ws.onopen = [&ws]() {
+        printf("onopen\n");
+        char *t =
+            "{\"time\": 1731778195, \"channel\": \"spot.tickers\", "
+            "\"event\": \"subscribe\", \"payload\": [\"BTC_USDT\"]}";
+        ws.send(t);
+    };
+    ws.onmessage = [](const std::string &msg) {
+        printf("onmessage: %.*s\n", (int)msg.size(), msg.data());
+    };
+    ws.onclose = []() { printf("onclose\n"); };
+    reconn_setting_t reconn;
+    reconn_setting_init(&reconn);
+    reconn.min_delay = 1000;
+    reconn.max_delay = 10000;
+    reconn.delay_policy = 2;
+    ws.setReconnect(&reconn);
+    const char *url = "wss://api.gateio.ws/ws/v4/";
+    ws.open(url);
+    std::string str;
+    while (std::getline(std::cin, str)) {
+        if (!ws.isConnected()) break;
+        if (str == "quit") {
+            ws.close();
+            break;
         }
-        if (tv.tv_sec != old) {
-            lws_callback_on_writable(web_socket);
-            old = tv.tv_sec;
-        }
-        lws_service(context, 250);
+        ws.send(str);
     }
-    lws_context_destroy(context);
 }
-
-void run_step_1() { listen_gateio_spot_tickers(); }

@@ -5,25 +5,28 @@ project(core-cpp VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-add_library(
-    say-hello-lib
-    tt/hello/hello.hpp
-    tt/hello/hello.cxx
-    )
+add_library(say-hello-lib tt/hello/hello.hpp tt/hello/hello.cxx)
+
+find_library(LIBHV NAMES hv PATHS libs/libhv/build/lib)
+find_library(CURL NAMES curl PATHS libs/curl/build/lib)
 
 add_subdirectory(tt/SqrtLibrary)
 add_subdirectory(libs/json)
-add_subdirectory(libs/libwebsockets)
-add_subdirectory(libs/clickhouse-cpp)
-add_subdirectory(libs/curl)
+add_subdirectory(libs/clickhouse-cpp) # TODO: use as static
 
-add_executable(t t.cxx)
+add_executable(t t.cxx tt/t2.cxx)
 
-target_link_libraries(t PRIVATE say-hello-lib)
-target_link_libraries(t PUBLIC SqrtLibrary)
-target_link_libraries(t PRIVATE nlohmann_json::nlohmann_json)
-target_link_libraries(t PRIVATE websockets)
-target_link_libraries(t PRIVATE clickhouse-cpp-lib)
-target_link_libraries(t PRIVATE libcurl)
+target_link_libraries(t PRIVATE
+    say-hello-lib
+    SqrtLibrary
+    nlohmann_json::nlohmann_json
+    clickhouse-cpp-lib
+    ${CURL}
+    ${LIBHV}
+)
+target_include_directories(t PRIVATE
+    libs/libhv/build/include/hv
+    libs/curl/include/curl
+)
 
 configure_file(t.cxx t_temp_source.cxx)
