@@ -12,14 +12,9 @@ import sqlalchemy as sa
 
 
 
-import os
-import typing
-import logging
 import importlib
-import datetime as dt
 
 import sqlalchemy.orm
-import sqlalchemy as sa
 import pandas as pd
 import mplfinance as mpf
 
@@ -135,10 +130,11 @@ def split_df(df: pd.DataFrame, interval_str: str) -> pd.DataFrame:
     return out_df
 
 def configure_logger() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    if level_str := os.environ.get("LOG_LEVEL"):
+        logging.basicConfig(
+            level=getattr(logging, level_str),
+            format="%(asctime)s %(levelname)s %(message)s",
+        )
 
 def get_db_engine() -> sa.Engine:
     # XXX: cache calls
