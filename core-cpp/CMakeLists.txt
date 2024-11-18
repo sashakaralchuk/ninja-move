@@ -37,11 +37,14 @@ add_executable(run_trigger_on_contango_2024_11_11
 target_include_directories(run_trigger_on_contango_2024_11_11 PRIVATE
     libs/libhv/build/include/hv
     libs/spdlog/include
+    libs/clickhouse-cpp
+    libs/clickhouse-cpp/contrib/absl
 )
 target_link_libraries(run_trigger_on_contango_2024_11_11 PRIVATE
     nlohmann_json::nlohmann_json
     ${LIBHV}
     ${SPDLOG}
+    clickhouse-cpp-lib
 )
 
 configure_file(t.cxx t_temp_source.cxx)
