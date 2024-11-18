@@ -9,13 +9,13 @@ add_library(say-hello-lib tt/hello/hello.hpp tt/hello/hello.cxx)
 
 find_library(LIBHV NAMES hv PATHS libs/libhv/build/lib)
 find_library(CURL NAMES curl PATHS libs/curl/build/lib)
+find_library(SPDLOG NAMES spdlog PATHS libs/spdlog/build)
 
 add_subdirectory(tt/SqrtLibrary)
 add_subdirectory(libs/json)
 add_subdirectory(libs/clickhouse-cpp)
 
 add_executable(t t.cxx tt/t2.cxx)
-
 target_include_directories(t PRIVATE
     libs/libhv/build/include/hv
     libs/curl/include/curl
@@ -29,6 +29,19 @@ target_link_libraries(t PRIVATE
     ${CURL}
     ${LIBHV}
     clickhouse-cpp-lib
+)
+
+add_executable(run_trigger_on_contango_2024_11_11
+    run_trigger_on_contango_2024_11_11.cxx
+)
+target_include_directories(run_trigger_on_contango_2024_11_11 PRIVATE
+    libs/libhv/build/include/hv
+    libs/spdlog/include
+)
+target_link_libraries(run_trigger_on_contango_2024_11_11 PRIVATE
+    nlohmann_json::nlohmann_json
+    ${LIBHV}
+    ${SPDLOG}
 )
 
 configure_file(t.cxx t_temp_source.cxx)
