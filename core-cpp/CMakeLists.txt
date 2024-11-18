@@ -12,21 +12,23 @@ find_library(CURL NAMES curl PATHS libs/curl/build/lib)
 
 add_subdirectory(tt/SqrtLibrary)
 add_subdirectory(libs/json)
-add_subdirectory(libs/clickhouse-cpp) # TODO: use as static
+add_subdirectory(libs/clickhouse-cpp)
 
 add_executable(t t.cxx tt/t2.cxx)
 
+target_include_directories(t PRIVATE
+    libs/libhv/build/include/hv
+    libs/curl/include/curl
+    libs/clickhouse-cpp
+    libs/clickhouse-cpp/contrib/absl
+)
 target_link_libraries(t PRIVATE
     say-hello-lib
     SqrtLibrary
     nlohmann_json::nlohmann_json
-    clickhouse-cpp-lib
     ${CURL}
     ${LIBHV}
-)
-target_include_directories(t PRIVATE
-    libs/libhv/build/include/hv
-    libs/curl/include/curl
+    clickhouse-cpp-lib
 )
 
 configure_file(t.cxx t_temp_source.cxx)
