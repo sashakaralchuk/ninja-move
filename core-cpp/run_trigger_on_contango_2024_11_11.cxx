@@ -22,14 +22,29 @@ std::string format_as(TradeInt const& o) {
     return std::move(ss).str();
 }
 
-class WSClientGateio : public hv::WebSocketClient {
+class IWSClient : public hv::WebSocketClient {
    public:
-    WSClientGateio(hv::EventLoopPtr loop = NULL) : WebSocketClient(loop) {}
-    ~WSClientGateio() {}
+    std::string ex;
+    std::string kind;
+    std::function<void(const TradeInt trade_int)> onmessage_trade;
 
-    void init_spot_idle() {
-        onopen = []() { spdlog::info("gateio onopen"); };
-        onclose = []() { spdlog::info("gateio onclose"); };
+    IWSClient(std::string ex_, std::string kind_, hv::EventLoopPtr loop = NULL)
+        : WebSocketClient(loop) {
+        ex = ex_;
+        kind = kind_;
+    }
+    ~IWSClient() {}
+
+    virtual void init_idle() = 0;
+    virtual void subscribe_to_trades(std::string& symbol) = 0;
+    virtual void ping() = 0;
+
+   protected:
+    virtual void handle_onmessage(const std::string& msg) = 0;
+    void init_idle_(std::string& url) {
+        onopen = [=]() { spdlog::info("{} onopen kind={}", ex, kind); };
+        onclose = [=]() { spdlog::info("{} onclose kind={}", ex, kind); };
+        onmessage = [=](const std::string& msg) { handle_onmessage(msg); };
         setPingInterval(10000);
         reconn_setting_t reconn;
         reconn_setting_init(&reconn);
@@ -38,22 +53,96 @@ class WSClientGateio : public hv::WebSocketClient {
         reconn.delay_policy = 2;
         setReconnect(&reconn);
         http_headers headers;
-        open("wss://api.gateio.ws:443/ws/v4/", headers);
+        open(url.c_str(), headers);
+    }
+};
+
+class WSClientGateio : public IWSClient {
+   public:
+    WSClientGateio(std::string kind) : IWSClient("gateio", kind) {}
+
+    void init_idle() {
+        if (kind == "fut") {
+            std::string url = "wss://fx-ws.gateio.ws/v4/ws/usdt";
+            init_idle_(url);
+        } else if (kind == "spot") {
+            std::string url = "wss://api.gateio.ws/ws/v4/";
+            init_idle_(url);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 
-    void subscribe_to_spot_trades(std::string& symbol) {
-        int ts_secs =
-            std::chrono::system_clock::now().time_since_epoch().count() / 1000 /
-            1000;
-        std::string t_template = R"({
-            "time": %d,
-            "channel": "spot.trades",
-            "event": "subscribe",
-            "payload": ["%s"]
-        })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
-        send(t);
+    void subscribe_to_trades(std::string& symbol) {
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "time" : %d,
+                "channel" : "futures.trades",
+                "event": "subscribe",
+                "payload" : ["%s"]
+            })";
+            int ts_secs =
+                std::chrono::system_clock::now().time_since_epoch().count() /
+                1000 / 1000;
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            int ts_secs =
+                std::chrono::system_clock::now().time_since_epoch().count() /
+                1000 / 1000;
+            std::string t_template = R"({
+                "time": %d,
+                "channel": "spot.trades",
+                "event": "subscribe",
+                "payload": ["%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
+    void ping() {}
+
+   protected:
+    void handle_onmessage(const std::string& msg) {
+        nlohmann::json msg_obj = nlohmann::json::parse(msg);
+        std::string event = msg_obj["event"];
+        if (event == "subscribe" && msg_obj["result"]["status"] == "success") {
+            spdlog::info("gateio {} subscribed successfully", kind);
+            return;
+        }
+        if (kind == "fut") {
+            if (event == "update") {
+                for (auto trade_raw : msg_obj["result"]) {
+                    TradeInt trade = TradeInt::new_(
+                        "gateio", trade_raw["contract"], kind,
+                        trade_raw["create_time_ms"],
+                        std::stod((std::string)trade_raw["price"]),
+                        trade_raw["size"]);
+                    onmessage_trade(trade);
+                }
+            } else {
+                throw std::runtime_error("unexpected event=" + event);
+            }
+        } else if (kind == "spot") {
+            if (event == "update") {
+                auto res = msg_obj["result"];
+                TradeInt trade = TradeInt::new_(
+                    "gateio", res["currency_pair"], kind,
+                    (long)std::stod((std::string)res["create_time_ms"]),
+                    std::stod((std::string)res["price"]),
+                    std::stod((std::string)res["amount"]));
+                onmessage_trade(trade);
+            } else {
+                throw std::runtime_error("unexpected event=" + event);
+            }
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 };
 
@@ -199,38 +288,7 @@ class WSClientBybit : public hv::WebSocketClient {
         onopen = [=]() { spdlog::info("bybit onopen kind={}", kind); };
         onclose = [=]() { spdlog::info("bybit onclose kind={}", kind); };
         onmessage = [=](const std::string& msg) {
-            nlohmann::json msg_obj = nlohmann::json::parse(msg);
-            if (msg_obj.contains("op") && msg_obj["op"] == "subscribe") {
-                if ((bool)msg_obj["success"]) {
-                    spdlog::info("bybit subscribed successfully");
-                    return;
-                } else {
-                    throw std::runtime_error("bybit subscription failed");
-                }
-            }
-            std::string msg_type = msg_obj["type"];
-            if (msg_type != "snapshot") {
-                throw std::runtime_error("bybit fut unknown type=" + msg_type);
-            }
-            if (kind == "fut") {
-                for (auto& trade_raw : msg_obj["data"]) {
-                    TradeInt trade = TradeInt::new_(
-                        "bybit", trade_raw["s"], kind, trade_raw["T"],
-                        std::stod((std::string)trade_raw["p"]),
-                        std::stod((std::string)trade_raw["v"]));
-                    onmessage_trade(trade);
-                }
-            } else if (kind == "spot") {
-                for (auto& trade_raw : msg_obj["data"]) {
-                    TradeInt trade = TradeInt::new_(
-                        "bybit", trade_raw["s"], kind, trade_raw["T"],
-                        std::stod((std::string)trade_raw["p"]),
-                        std::stod((std::string)trade_raw["v"]));
-                    onmessage_trade(trade);
-                }
-            } else {
-                throw std::runtime_error("unexpected kind=" + kind);
-            }
+            handle_onmessage(kind, msg);
         };
         setPingInterval(10000);
         reconn_setting_t reconn;
@@ -241,6 +299,41 @@ class WSClientBybit : public hv::WebSocketClient {
         setReconnect(&reconn);
         http_headers headers;
         open(url.c_str(), headers);
+    }
+
+    void handle_onmessage(std::string kind, const std::string& msg) {
+        nlohmann::json msg_obj = nlohmann::json::parse(msg);
+        if (msg_obj.contains("op") && msg_obj["op"] == "subscribe") {
+            if ((bool)msg_obj["success"]) {
+                spdlog::info("bybit subscribed successfully");
+                return;
+            } else {
+                throw std::runtime_error("bybit subscription failed");
+            }
+        }
+        std::string msg_type = msg_obj["type"];
+        if (msg_type != "snapshot") {
+            throw std::runtime_error("bybit fut unknown type=" + msg_type);
+        }
+        if (kind == "fut") {
+            for (auto& trade_raw : msg_obj["data"]) {
+                TradeInt trade = TradeInt::new_(
+                    "bybit", trade_raw["s"], kind, trade_raw["T"],
+                    std::stod((std::string)trade_raw["p"]),
+                    std::stod((std::string)trade_raw["v"]));
+                onmessage_trade(trade);
+            }
+        } else if (kind == "spot") {
+            for (auto& trade_raw : msg_obj["data"]) {
+                TradeInt trade = TradeInt::new_(
+                    "bybit", trade_raw["s"], kind, trade_raw["T"],
+                    std::stod((std::string)trade_raw["p"]),
+                    std::stod((std::string)trade_raw["v"]));
+                onmessage_trade(trade);
+            }
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 };
 
