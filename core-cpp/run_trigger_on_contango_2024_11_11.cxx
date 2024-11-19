@@ -18,15 +18,29 @@ struct TradeInt {
     std::string ex;
     std::string s;
     std::string k;
-    long ts;  // TODO: add check for milliseconds
+    long ts;
     double p;
     double v;
+    static TradeInt new_(std::string ex, std::string s, std::string k, long ts,
+                         double p, double v) {
+        long long threshold = 365 * 24 * 60 * 60 * 1000;
+        if (ts < threshold) {
+            throw std::runtime_error("invalid ts=" + std::to_string(ts));
+        }
+        return TradeInt{ex, s, k, ts, p, v};
+    }
 };
 
 std::ostream& operator<<(std::ostream& os, TradeInt const& o) {
     os << "{ex=" << o.ex << ",s=" << o.s << ",k=" << o.k << ",ts=" << o.ts
        << ",p=" << o.p << ",v=" << o.v << "}";
     return os;
+}
+
+std::string format_as(TradeInt const& o) {
+    std::ostringstream ss;
+    ss << o;
+    return std::move(ss).str();
 }
 
 class WSClientGateio : public hv::WebSocketClient {
@@ -107,8 +121,8 @@ class WSClientMexc : public hv::WebSocketClient {
 
    private:
     void init_idle(std::string& url, std::string& kind) {
-        onopen = []() { spdlog::info("mexc onopen"); };
-        onclose = []() { spdlog::info("mexc onclose"); };
+        onopen = [=]() { spdlog::info("mexc onopen kind={}", kind); };
+        onclose = [=]() { spdlog::info("mexc onclose kind={}", kind); };
         onmessage = [=](const std::string& msg) {
             nlohmann::json msg_obj = nlohmann::json::parse(msg);
             if (kind == "fut") {
@@ -118,17 +132,13 @@ class WSClientMexc : public hv::WebSocketClient {
                 } else if (channel == "pong") {
                     spdlog::debug("handle pong");
                 } else if (channel == "push.deal") {
-                    TradeInt trade = TradeInt{
-                        .ex = "mexc",
-                        .s = msg_obj["symbol"],
-                        .k = kind,
-                        .ts = msg_obj["ts"],
-                        .p = msg_obj["data"]["p"],
-                        .v = msg_obj["data"]["v"],
-                    };
+                    TradeInt trade = TradeInt::new_(
+                        "mexc", msg_obj["symbol"], kind, msg_obj["ts"],
+                        msg_obj["data"]["p"], msg_obj["data"]["v"]);
                     onmessage_trade(trade);
                 } else {
-                    throw std::runtime_error("unexpected channel=" + channel);
+                    throw std::runtime_error("unexpected channel=" + channel +
+                                             ", msg=" + msg);
                 }
             } else if (kind == "spot") {
                 if (msg_obj.contains("id") && msg_obj["id"] == 0 &&
@@ -138,16 +148,11 @@ class WSClientMexc : public hv::WebSocketClient {
                            ((std::string)msg_obj["c"])
                                    .rfind("spot@public.deals.v3.api@", 0) ==
                                0) {
-                    std::cout << "handle spot" << msg_obj << std::endl;
                     for (auto& deal_raw : msg_obj["d"]["deals"]) {
-                        TradeInt trade = TradeInt{
-                            .ex = "mexc",
-                            .s = msg_obj["s"],
-                            .k = kind,
-                            .ts = deal_raw["t"],
-                            .p = std::stod((std::string)deal_raw["p"]),
-                            .v = std::stod((std::string)deal_raw["v"]),
-                        };
+                        TradeInt trade = TradeInt::new_(
+                            "mexc", msg_obj["s"], kind, deal_raw["t"],
+                            std::stod((std::string)deal_raw["p"]),
+                            std::stod((std::string)deal_raw["v"]));
                         onmessage_trade(trade);
                     }
                 } else {
@@ -212,8 +217,8 @@ class WSClientBybit : public hv::WebSocketClient {
 
    private:
     void init_idle(std::string& url, std::string& kind) {
-        onopen = []() { spdlog::info("bybit onopen"); };
-        onclose = []() { spdlog::info("bybit onclose"); };
+        onopen = [=]() { spdlog::info("bybit onopen kind={}", kind); };
+        onclose = [=]() { spdlog::info("bybit onclose kind={}", kind); };
         onmessage = [=](const std::string& msg) {
             nlohmann::json msg_obj = nlohmann::json::parse(msg);
             if (msg_obj.contains("op") && msg_obj["op"] == "subscribe") {
@@ -230,26 +235,18 @@ class WSClientBybit : public hv::WebSocketClient {
             }
             if (kind == "fut") {
                 for (auto& trade_raw : msg_obj["data"]) {
-                    TradeInt trade = TradeInt{
-                        .ex = "bybit",
-                        .s = trade_raw["s"],
-                        .k = "fut",
-                        .ts = trade_raw["T"],
-                        .p = std::stod((std::string)trade_raw["p"]),
-                        .v = std::stod((std::string)trade_raw["v"]),
-                    };
+                    TradeInt trade = TradeInt::new_(
+                        "bybit", trade_raw["s"], kind, trade_raw["T"],
+                        std::stod((std::string)trade_raw["p"]),
+                        std::stod((std::string)trade_raw["v"]));
                     onmessage_trade(trade);
                 }
             } else if (kind == "spot") {
                 for (auto& trade_raw : msg_obj["data"]) {
-                    TradeInt trade = TradeInt{
-                        .ex = "bybit",
-                        .s = trade_raw["s"],
-                        .k = "spot",
-                        .ts = trade_raw["T"],
-                        .p = std::stod((std::string)trade_raw["p"]),
-                        .v = std::stod((std::string)trade_raw["v"]),
-                    };
+                    TradeInt trade = TradeInt::new_(
+                        "bybit", trade_raw["s"], kind, trade_raw["T"],
+                        std::stod((std::string)trade_raw["p"]),
+                        std::stod((std::string)trade_raw["v"]));
                     onmessage_trade(trade);
                 }
             } else {
@@ -383,13 +380,15 @@ std::optional<OpportunityRow> is_opportunity_exists(
         ) t2
             ON t1.symbol_int_1 = t2.symbol_int_1
         WHERE diff_rel > %(threshold_rel)s
-            AND spot_ex = 'gateio'
-            AND fut_ex = 'mexc'
+            AND spot_ex in ('mexc', 'bybit')
+            AND fut_ex in ('mexc', 'bybit')
         ORDER BY diff_rel DESC
     )";
     std::optional<OpportunityRow> opp_row_t = {};
+    std::string threshold_rel =
+        std::to_string(std::stod(std::getenv("THRESHOLD_REL")));
     client.Select(
-        replace_first(QUERY_OPPORTUNITIES, "%(threshold_rel)s", "3.0"),
+        replace_first(QUERY_OPPORTUNITIES, "%(threshold_rel)s", threshold_rel),
         [&](const clickhouse::Block& b) {
             if (b.GetRowCount() == 0) {
                 return;
@@ -410,55 +409,33 @@ void listen_gateio_tickers() {
     std::map<std::string, double> last_prices;
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
-    WSClientGateio ws_gateio;
-    ws_gateio.init_spot_idle();
-    ws_gateio.onmessage = [&](const std::string& msg) {
-        nlohmann::json msg_obj = nlohmann::json::parse(msg);
-        std::string event = msg_obj["event"];
-        if (event == "subscribe") {
-            return;
-        }
-        if (event == "update") {
-            last_timestamps["gateio"] = msg_obj["time_ms"];
-            last_prices["gateio"] =
-                std::stod((std::string)msg_obj["result"]["price"]);
-            return;
-        }
-        throw std::runtime_error("gateio unexpected event=" + event);
-    };
-    WSClientMexc ws_mexc;
-    ws_mexc.init_fut_idle();
-    ws_mexc.onmessage = [&](const std::string& msg) {
-        nlohmann::json msg_obj = nlohmann::json::parse(msg);
-        std::string channel = msg_obj["channel"];
-        if (channel == "rs.sub.deal" || channel == "pong") {
-            return;
-        }
-        if (channel == "push.deal") {
-            last_timestamps["mexc"] = msg_obj["ts"];
-            last_prices["mexc"] = msg_obj["data"]["p"];
-            return;
-        }
-        if (channel == "rs.error") {
-            spdlog::error("mexc error: {}", msg);
-        }
-        throw std::runtime_error("mexc unexpected channel=" + channel);
+    WSClientBybit ws_bybit_fut;
+    ws_bybit_fut.init_spot_idle();
+    WSClientBybit ws_bybit_spot;
+    ws_bybit_spot.init_spot_idle();
+    WSClientMexc ws_mexc_fut;
+    ws_mexc_fut.init_fut_idle();
+    WSClientMexc ws_mexc_spot;
+    ws_mexc_spot.init_spot_idle();
+    auto is_all_ws_connected = [&]() -> bool {
+        return ws_bybit_fut.isConnected() && ws_bybit_spot.isConnected() &&
+               ws_mexc_fut.isConnected() && ws_mexc_spot.isConnected();
     };
     for (int i = 0; i < 100; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (ws_gateio.isConnected() && ws_mexc.isConnected()) {
+        if (is_all_ws_connected()) {
             spdlog::info("connections set up");
             break;
         }
     }
-    if (!ws_gateio.isConnected() || !ws_mexc.isConnected()) {
+    if (!is_all_ws_connected()) {
         throw std::runtime_error("connections haven't been set up");
     }
-    std::thread _([&ws_mexc]() {
+    std::thread _([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
-            ws_mexc.ping();
+            ws_mexc_fut.ping();
         }
     });
     OpportunityRow opp_row;
@@ -468,14 +445,35 @@ void listen_gateio_tickers() {
             is_opportunity_exists(clickhouse_client);
         if (opp_row_opt.has_value()) {
             opp_row = opp_row_opt.value();
-            spdlog::info("found opp for {}", opp_row.symbol_int_1);
+            spdlog::info("found opp={}", opp_row);
             break;
         } else {
             spdlog::info("there is no opp");
         }
     }
-    ws_gateio.subscribe_to_spot_trades(opp_row.spot_symbol);
-    ws_mexc.subscribe_to_fut_trades(opp_row.fut_symbol);
+    auto handle_trades = [&](const TradeInt trade_int) {
+        std::string key = trade_int.k + "-" + trade_int.ex;
+        last_timestamps[key] = trade_int.ts;
+        last_prices[key] = trade_int.p;
+    };
+    if (opp_row.fut_ex == "bybit") {
+        ws_bybit_fut.onmessage_trade = handle_trades;
+        ws_bybit_fut.subscribe_to_fut_trades(opp_row.fut_symbol);
+    } else if (opp_row.fut_ex == "mexc") {
+        ws_mexc_fut.onmessage_trade = handle_trades;
+        ws_mexc_fut.subscribe_to_fut_trades(opp_row.fut_symbol);
+    } else {
+        std::runtime_error("unexpected fut_ex=" + opp_row.fut_ex);
+    }
+    if (opp_row.spot_ex == "bybit") {
+        ws_bybit_spot.onmessage_trade = handle_trades;
+        ws_bybit_spot.subscribe_to_spot_trades(opp_row.spot_symbol);
+    } else if (opp_row.spot_ex == "mexc") {
+        ws_mexc_spot.onmessage_trade = handle_trades;
+        ws_mexc_spot.subscribe_to_spot_trades(opp_row.spot_symbol);
+    } else {
+        std::runtime_error("unexpected spot_ex=" + opp_row.spot_ex);
+    }
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         long now_millis =
@@ -495,8 +493,6 @@ void listen_gateio_tickers() {
         if (!b2.empty()) {
             b2.pop_back();
         }
-        // TODO: apply this to code here (parsing functions will be needed)
-        std::cout << last_prices.size() << std::endl;
         spdlog::info("last_timestamps={} last_prices={} opp_row=({}, {})",
                      "{" + b1 + "}", "{" + b2 + "}", opp_row.spot_price,
                      opp_row.fut_price);
