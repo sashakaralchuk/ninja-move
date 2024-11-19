@@ -81,6 +81,45 @@ class WSClientMexc : public hv::WebSocketClient {
     void ping() { send(R"({"method": "ping"})"); }
 };
 
+struct OpportunityRow {
+    std::string symbol_int_1;
+    double fut_price;
+    double spot_price;
+    std::string fut_ex;
+    std::string spot_ex;
+    std::string fut_symbol;
+    std::string spot_symbol;
+    static OpportunityRow newFromClickhouseBlock(const clickhouse::Block& b,
+                                                 int i) {
+        return OpportunityRow{
+            .symbol_int_1 =
+                (std::string)b[1]->As<clickhouse::ColumnString>()->At(i),
+            .fut_price = b[2]->As<clickhouse::ColumnFloat64>()->At(i),
+            .spot_price = b[3]->As<clickhouse::ColumnFloat64>()->At(i),
+            .fut_ex = (std::string)b[4]->As<clickhouse::ColumnString>()->At(i),
+            .spot_ex = (std::string)b[5]->As<clickhouse::ColumnString>()->At(i),
+            .fut_symbol =
+                (std::string)b[6]->As<clickhouse::ColumnString>()->At(i),
+            .spot_symbol =
+                (std::string)b[7]->As<clickhouse::ColumnString>()->At(i),
+        };
+    }
+};
+
+std::ostream& operator<<(std::ostream& os, OpportunityRow const& o) {
+    os << "{symbol_int_1=" << o.symbol_int_1 << ",fut_price=" << o.fut_price
+       << ",spot_price=" << o.spot_price << ",fut_ex=" << o.fut_ex
+       << ",spot_ex=" << o.spot_ex << ",fut_symbol=" << o.fut_symbol
+       << ",spot_symbol=" << o.spot_symbol << "}";
+    return os;
+}
+
+std::string format_as(OpportunityRow const& o) {
+    std::ostringstream ss;
+    ss << o;
+    return std::move(ss).str();
+}
+
 const std::string QUERY_OPPORTUNITIES = R"(
 WITH t AS (
     SELECT
@@ -160,16 +199,6 @@ std::string replace_first(const std::string& s_in, std::string const& toReplace,
     return s;
 }
 
-struct OpportunityRow {
-    std::string symbol_int_1;
-    double fut_price;
-    double spot_price;
-    std::string fut_ex;
-    std::string spot_ex;
-    std::string fut_symbol;
-    std::string spot_symbol;
-};
-
 std::optional<OpportunityRow> is_opportunity_exists(
     clickhouse::Client& client) {
     std::optional<OpportunityRow> opp_row_t = {};
@@ -179,23 +208,9 @@ std::optional<OpportunityRow> is_opportunity_exists(
             if (b.GetRowCount() == 0) {
                 return;
             }
-            auto col_symbol_int_1 = b[1]->As<clickhouse::ColumnString>();
-            auto col_fut_price = b[2]->As<clickhouse::ColumnFloat64>();
-            auto col_spot_price = b[3]->As<clickhouse::ColumnFloat64>();
-            auto col_fut_ex = b[4]->As<clickhouse::ColumnString>();
-            auto col_spot_ex = b[5]->As<clickhouse::ColumnString>();
-            auto col_fut_symbol = b[6]->As<clickhouse::ColumnString>();
-            auto col_spot_symbol = b[7]->As<clickhouse::ColumnString>();
             for (size_t i = 0; i < b.GetRowCount(); ++i) {
-                OpportunityRow opp_row = {
-                    .symbol_int_1 = (std::string)col_symbol_int_1->At(i),
-                    .fut_price = col_fut_price->At(i),
-                    .spot_price = col_spot_price->At(i),
-                    .fut_ex = (std::string)col_fut_ex->At(i),
-                    .spot_ex = (std::string)col_spot_ex->At(i),
-                    .fut_symbol = (std::string)col_fut_symbol->At(i),
-                    .spot_symbol = (std::string)col_spot_symbol->At(i),
-                };
+                OpportunityRow opp_row =
+                    OpportunityRow::newFromClickhouseBlock(b, i);
                 if (!opp_row_t.has_value()) {
                     opp_row_t = opp_row;
                 }
@@ -294,7 +309,6 @@ void listen_gateio_tickers() {
         if (!b2.empty()) {
             b2.pop_back();
         }
-        // TODO: make opp_row convertable to string
         std::cout << last_prices.size() << std::endl;
         spdlog::info("last_timestamps={} last_prices={} opp_row=({}, {})",
                      "{" + b1 + "}", "{" + b2 + "}", opp_row.spot_price,
