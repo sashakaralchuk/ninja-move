@@ -6,35 +6,14 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 
+#include "src/models.hpp"
+
 void listen_gateio_tickers();
 
 int main() {
     spdlog::cfg::load_env_levels();
     listen_gateio_tickers();
     return 0;
-}
-
-struct TradeInt {
-    std::string ex;
-    std::string s;
-    std::string k;
-    long ts;
-    double p;
-    double v;
-    static TradeInt new_(std::string ex, std::string s, std::string k, long ts,
-                         double p, double v) {
-        long long threshold = 365 * 24 * 60 * 60 * 1000;
-        if (ts < threshold) {
-            throw std::runtime_error("invalid ts=" + std::to_string(ts));
-        }
-        return TradeInt{ex, s, k, ts, p, v};
-    }
-};
-
-std::ostream& operator<<(std::ostream& os, TradeInt const& o) {
-    os << "{ex=" << o.ex << ",s=" << o.s << ",k=" << o.k << ",ts=" << o.ts
-       << ",p=" << o.p << ",v=" << o.v << "}";
-    return os;
 }
 
 std::string format_as(TradeInt const& o) {

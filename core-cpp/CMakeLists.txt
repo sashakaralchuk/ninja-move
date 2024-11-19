@@ -14,6 +14,7 @@ find_library(SPDLOG NAMES spdlog PATHS libs/spdlog/build)
 add_subdirectory(tt/SqrtLibrary)
 add_subdirectory(libs/json)
 add_subdirectory(libs/clickhouse-cpp)
+add_subdirectory(libs/googletest)
 
 add_executable(t t.cxx tt/t2.cxx)
 target_include_directories(t PRIVATE
@@ -46,5 +47,13 @@ target_link_libraries(run_trigger_on_contango_2024_11_11 PRIVATE
     ${SPDLOG}
     clickhouse-cpp-lib
 )
+
+enable_testing()
+
+include(GoogleTest)
+add_executable(models_test src/models_test.cxx)
+target_link_libraries(models_test GTest::gtest_main)
+
+gtest_discover_tests(models_test)
 
 configure_file(t.cxx t_temp_source.cxx)

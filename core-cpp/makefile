@@ -1,5 +1,10 @@
 run:
-	cd build ** cmake .. && make && ./t
+	# cd build && cmake .. && make && ./t
+	# cmake -S . -B build && cmake --build build -j 12
+
+test:
+	# make && ctest
+	# ctest --test-dir build -j 12
 
 run-trigger-on-contango-2024-11-11:
 	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./run_trigger_on_contango_2024_11_11
