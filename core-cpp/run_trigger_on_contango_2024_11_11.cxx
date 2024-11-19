@@ -146,162 +146,135 @@ class WSClientGateio : public IWSClient {
     }
 };
 
-class WSClientMexc : public hv::WebSocketClient {
+class WSClientMexc : public IWSClient {
    public:
-    std::function<void(const TradeInt trade_int)> onmessage_trade;
+    WSClientMexc(std::string kind) : IWSClient("mexc", kind) {}
 
-    WSClientMexc(hv::EventLoopPtr loop = NULL) : WebSocketClient(loop) {}
-    ~WSClientMexc() {}
-
-    void init_fut_idle() {
-        std::string url = "wss://contract.mexc.com:443/edge";
-        std::string kind = "fut";
-        this->init_idle(url, kind);
+    void init_idle() {
+        if (kind == "fut") {
+            std::string url = "wss://contract.mexc.com:443/edge";
+            init_idle_(url);
+        } else if (kind == "spot") {
+            std::string url = "wss://wbs.mexc.com/ws";
+            init_idle_(url);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 
-    void subscribe_to_fut_trades(std::string& symbol) {
-        std::string t_template = R"({
-            "method": "sub.deal",
-            "param": {"symbol": "%s"}
-        })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
-        send(t);
+    void subscribe_to_trades(std::string& symbol) {
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "method": "sub.deal",
+                "param": {"symbol": "%s"}
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            std::string t_template = R"({
+                "method": "SUBSCRIPTION",
+                "params": ["spot@public.deals.v3.api@%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 
-    void init_spot_idle() {
-        std::string url = "wss://wbs.mexc.com/ws";
-        std::string kind = "spot";
-        this->init_idle(url, kind);
+    void ping() {
+        if (kind == "fut") {
+            send(R"({"method": "ping"})");
+        }
     }
 
-    void subscribe_to_spot_trades(std::string& symbol) {
-        std::string t_template = R"({
-            "method": "SUBSCRIPTION",
-            "params": ["spot@public.deals.v3.api@%s"]
-        })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
-        send(t);
-    }
-
-    void ping() { send(R"({"method": "ping"})"); }
-
-   private:
-    void init_idle(std::string& url, std::string& kind) {
-        onopen = [=]() { spdlog::info("mexc onopen kind={}", kind); };
-        onclose = [=]() { spdlog::info("mexc onclose kind={}", kind); };
-        onmessage = [=](const std::string& msg) {
-            nlohmann::json msg_obj = nlohmann::json::parse(msg);
-            if (kind == "fut") {
-                std::string channel = msg_obj["channel"];
-                if (channel == "rs.sub.deal" && msg_obj["data"] == "success") {
-                    spdlog::info("mexc fut subscribed successfully");
-                } else if (channel == "pong") {
-                    spdlog::debug("handle pong");
-                } else if (channel == "push.deal") {
+   protected:
+    void handle_onmessage(const std::string& msg) {
+        nlohmann::json msg_obj = nlohmann::json::parse(msg);
+        if (kind == "fut") {
+            std::string channel = msg_obj["channel"];
+            if (channel == "rs.sub.deal" && msg_obj["data"] == "success") {
+                spdlog::info("mexc fut subscribed successfully");
+            } else if (channel == "pong") {
+                spdlog::debug("handle pong");
+            } else if (channel == "push.deal") {
+                TradeInt trade = TradeInt::new_(
+                    "mexc", msg_obj["symbol"], kind, msg_obj["ts"],
+                    msg_obj["data"]["p"], msg_obj["data"]["v"]);
+                onmessage_trade(trade);
+            } else {
+                throw std::runtime_error("unexpected channel=" + channel +
+                                         ", msg=" + msg);
+            }
+        } else if (kind == "spot") {
+            if (msg_obj.contains("id") && msg_obj["id"] == 0 &&
+                msg_obj.contains("code") && msg_obj["code"] == 0) {
+                spdlog::info("mexc spot subscribed successfully");
+            } else if (msg_obj.contains("c") &&
+                       ((std::string)msg_obj["c"])
+                               .rfind("spot@public.deals.v3.api@", 0) == 0) {
+                for (auto& deal_raw : msg_obj["d"]["deals"]) {
                     TradeInt trade = TradeInt::new_(
-                        "mexc", msg_obj["symbol"], kind, msg_obj["ts"],
-                        msg_obj["data"]["p"], msg_obj["data"]["v"]);
+                        "mexc", msg_obj["s"], kind, deal_raw["t"],
+                        std::stod((std::string)deal_raw["p"]),
+                        std::stod((std::string)deal_raw["v"]));
                     onmessage_trade(trade);
-                } else {
-                    throw std::runtime_error("unexpected channel=" + channel +
-                                             ", msg=" + msg);
-                }
-            } else if (kind == "spot") {
-                if (msg_obj.contains("id") && msg_obj["id"] == 0 &&
-                    msg_obj.contains("code") && msg_obj["code"] == 0) {
-                    spdlog::info("mexc spot subscribed successfully");
-                } else if (msg_obj.contains("c") &&
-                           ((std::string)msg_obj["c"])
-                                   .rfind("spot@public.deals.v3.api@", 0) ==
-                               0) {
-                    for (auto& deal_raw : msg_obj["d"]["deals"]) {
-                        TradeInt trade = TradeInt::new_(
-                            "mexc", msg_obj["s"], kind, deal_raw["t"],
-                            std::stod((std::string)deal_raw["p"]),
-                            std::stod((std::string)deal_raw["v"]));
-                        onmessage_trade(trade);
-                    }
-                } else {
-                    throw std::runtime_error("unexpected msg=" + msg);
                 }
             } else {
-                throw std::runtime_error("unexpected kind=" + kind);
+                throw std::runtime_error("unexpected msg=" + msg);
             }
-        };
-        setPingInterval(10000);
-        reconn_setting_t reconn;
-        reconn_setting_init(&reconn);
-        reconn.min_delay = 100;
-        reconn.max_delay = 1000;
-        reconn.delay_policy = 2;
-        setReconnect(&reconn);
-        http_headers headers;
-        open(url.c_str(), headers);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 };
 
-class WSClientBybit : public hv::WebSocketClient {
+class WSClientBybit : public IWSClient {
    public:
-    std::function<void(const TradeInt trade_int)> onmessage_trade;
+    WSClientBybit(std::string kind) : IWSClient("bybit", kind) {}
 
-    WSClientBybit(hv::EventLoopPtr loop = NULL) : WebSocketClient(loop) {}
-    ~WSClientBybit() {}
-
-    void init_fut_idle() {
-        std::string url = "wss://stream.bybit.com/v5/public/linear";
-        std::string kind = "fut";
-        this->init_idle(url, kind);
+    void init_idle() {
+        if (kind == "fut") {
+            std::string url = "wss://stream.bybit.com/v5/public/linear";
+            init_idle_(url);
+        } else if (kind == "spot") {
+            std::string url = "wss://stream.bybit.com/v5/public/spot";
+            init_idle_(url);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 
-    void subscribe_to_fut_trades(std::string& symbol) {
-        std::string t_template = R"({
-            "req_id": "t",
-            "op": "subscribe",
-            "args": ["publicTrade.%s"]
-        })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
-        send(t);
+    void subscribe_to_trades(std::string& symbol) {
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "req_id": "t",
+                "op": "subscribe",
+                "args": ["publicTrade.%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            std::string t_template = R"({
+                "req_id": "t",
+                "op": "subscribe",
+                "args": ["publicTrade.%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
     }
 
-    void init_spot_idle() {
-        std::string url = "wss://stream.bybit.com/v5/public/spot";
-        std::string kind = "spot";
-        this->init_idle(url, kind);
-    }
+    void ping() {}
 
-    void subscribe_to_spot_trades(std::string& symbol) {
-        std::string t_template = R"({
-            "req_id": "t",
-            "op": "subscribe",
-            "args": ["publicTrade.%s"]
-        })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
-        send(t);
-    }
-
-   private:
-    void init_idle(std::string& url, std::string& kind) {
-        onopen = [=]() { spdlog::info("bybit onopen kind={}", kind); };
-        onclose = [=]() { spdlog::info("bybit onclose kind={}", kind); };
-        onmessage = [=](const std::string& msg) {
-            handle_onmessage(kind, msg);
-        };
-        setPingInterval(10000);
-        reconn_setting_t reconn;
-        reconn_setting_init(&reconn);
-        reconn.min_delay = 100;
-        reconn.max_delay = 1000;
-        reconn.delay_policy = 2;
-        setReconnect(&reconn);
-        http_headers headers;
-        open(url.c_str(), headers);
-    }
-
-    void handle_onmessage(std::string kind, const std::string& msg) {
+   protected:
+    void handle_onmessage(const std::string& msg) {
         nlohmann::json msg_obj = nlohmann::json::parse(msg);
         if (msg_obj.contains("op") && msg_obj["op"] == "subscribe") {
             if ((bool)msg_obj["success"]) {
@@ -481,14 +454,14 @@ void listen_gateio_tickers() {
     std::map<std::string, double> last_prices;
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
-    WSClientBybit ws_bybit_fut;
-    ws_bybit_fut.init_spot_idle();
-    WSClientBybit ws_bybit_spot;
-    ws_bybit_spot.init_spot_idle();
-    WSClientMexc ws_mexc_fut;
-    ws_mexc_fut.init_fut_idle();
-    WSClientMexc ws_mexc_spot;
-    ws_mexc_spot.init_spot_idle();
+    WSClientBybit ws_bybit_fut("fut");
+    ws_bybit_fut.init_idle();
+    WSClientBybit ws_bybit_spot("spot");
+    ws_bybit_spot.init_idle();
+    WSClientMexc ws_mexc_fut("fut");
+    ws_mexc_fut.init_idle();
+    WSClientMexc ws_mexc_spot("spot");
+    ws_mexc_spot.init_idle();
     auto is_all_ws_connected = [&]() -> bool {
         return ws_bybit_fut.isConnected() && ws_bybit_spot.isConnected() &&
                ws_mexc_fut.isConnected() && ws_mexc_spot.isConnected();
@@ -507,7 +480,10 @@ void listen_gateio_tickers() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
+            ws_bybit_fut.ping();
+            ws_bybit_spot.ping();
             ws_mexc_fut.ping();
+            ws_mexc_spot.ping();
         }
     });
     OpportunityRow opp_row;
@@ -523,29 +499,31 @@ void listen_gateio_tickers() {
             spdlog::info("there is no opp");
         }
     }
+    IWSClient* ws_fut = NULL;
+    IWSClient* ws_spot = NULL;
+    if (opp_row.fut_ex == "bybit") {
+        ws_fut = &ws_bybit_fut;
+    } else if (opp_row.fut_ex == "mexc") {
+        ws_fut = &ws_mexc_fut;
+    } else {
+        std::runtime_error("unexpected fut_ex=" + opp_row.fut_ex);
+    }
+    if (opp_row.spot_ex == "bybit") {
+        ws_spot = &ws_bybit_spot;
+    } else if (opp_row.spot_ex == "mexc") {
+        ws_spot = &ws_mexc_spot;
+    } else {
+        std::runtime_error("unexpected spot_ex=" + opp_row.spot_ex);
+    }
     auto handle_trades = [&](const TradeInt trade_int) {
         std::string key = trade_int.k + "-" + trade_int.ex;
         last_timestamps[key] = trade_int.ts;
         last_prices[key] = trade_int.p;
     };
-    if (opp_row.fut_ex == "bybit") {
-        ws_bybit_fut.onmessage_trade = handle_trades;
-        ws_bybit_fut.subscribe_to_fut_trades(opp_row.fut_symbol);
-    } else if (opp_row.fut_ex == "mexc") {
-        ws_mexc_fut.onmessage_trade = handle_trades;
-        ws_mexc_fut.subscribe_to_fut_trades(opp_row.fut_symbol);
-    } else {
-        std::runtime_error("unexpected fut_ex=" + opp_row.fut_ex);
-    }
-    if (opp_row.spot_ex == "bybit") {
-        ws_bybit_spot.onmessage_trade = handle_trades;
-        ws_bybit_spot.subscribe_to_spot_trades(opp_row.spot_symbol);
-    } else if (opp_row.spot_ex == "mexc") {
-        ws_mexc_spot.onmessage_trade = handle_trades;
-        ws_mexc_spot.subscribe_to_spot_trades(opp_row.spot_symbol);
-    } else {
-        std::runtime_error("unexpected spot_ex=" + opp_row.spot_ex);
-    }
+    ws_fut->onmessage_trade = handle_trades;
+    ws_fut->subscribe_to_trades(opp_row.fut_symbol);
+    ws_spot->onmessage_trade = handle_trades;
+    ws_spot->subscribe_to_trades(opp_row.spot_symbol);
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         long now_millis =
@@ -565,10 +543,10 @@ void listen_gateio_tickers() {
         if (!b2.empty()) {
             b2.pop_back();
         }
-        spdlog::info("last_timestamps={} last_prices={} opp_row=({}, {})",
-                     "{" + b1 + "}", "{" + b2 + "}", opp_row.spot_price,
-                     opp_row.fut_price);
+        spdlog::info("last_timestamps={} last_prices={}", "{" + b1 + "}",
+                     "{" + b2 + "}");
         if (last_prices.size() == 2) {
+            spdlog::info("opp_row={}", opp_row);
             break;
         }
     }
