@@ -14,6 +14,21 @@ int main() {
     return 0;
 }
 
+struct TradeInt {
+    std::string ex;
+    std::string s;
+    std::string k;
+    long ts;  // TODO: add check for milliseconds
+    double p;
+    double v;
+};
+
+std::ostream& operator<<(std::ostream& os, TradeInt const& o) {
+    os << "{ex=" << o.ex << ",s=" << o.s << ",k=" << o.k << ",ts=" << o.ts
+       << ",p=" << o.p << ",v=" << o.v << "}";
+    return os;
+}
+
 class WSClientGateio : public hv::WebSocketClient {
    public:
     WSClientGateio(hv::EventLoopPtr loop = NULL) : WebSocketClient(loop) {}
@@ -51,12 +66,97 @@ class WSClientGateio : public hv::WebSocketClient {
 
 class WSClientMexc : public hv::WebSocketClient {
    public:
+    std::function<void(const TradeInt trade_int)> onmessage_trade;
+
     WSClientMexc(hv::EventLoopPtr loop = NULL) : WebSocketClient(loop) {}
     ~WSClientMexc() {}
 
     void init_fut_idle() {
+        std::string url = "wss://contract.mexc.com:443/edge";
+        std::string kind = "fut";
+        this->init_idle(url, kind);
+    }
+
+    void subscribe_to_fut_trades(std::string& symbol) {
+        std::string t_template = R"({
+            "method": "sub.deal",
+            "param": {"symbol": "%s"}
+        })";
+        char t[256];
+        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+        send(t);
+    }
+
+    void init_spot_idle() {
+        std::string url = "wss://wbs.mexc.com/ws";
+        std::string kind = "spot";
+        this->init_idle(url, kind);
+    }
+
+    void subscribe_to_spot_trades(std::string& symbol) {
+        std::string t_template = R"({
+            "method": "SUBSCRIPTION",
+            "params": ["spot@public.deals.v3.api@%s"]
+        })";
+        char t[256];
+        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+        send(t);
+    }
+
+    void ping() { send(R"({"method": "ping"})"); }
+
+   private:
+    void init_idle(std::string& url, std::string& kind) {
         onopen = []() { spdlog::info("mexc onopen"); };
         onclose = []() { spdlog::info("mexc onclose"); };
+        onmessage = [=](const std::string& msg) {
+            nlohmann::json msg_obj = nlohmann::json::parse(msg);
+            if (kind == "fut") {
+                std::string channel = msg_obj["channel"];
+                if (channel == "rs.sub.deal" && msg_obj["data"] == "success") {
+                    spdlog::info("mexc fut subscribed successfully");
+                } else if (channel == "pong") {
+                    spdlog::debug("handle pong");
+                } else if (channel == "push.deal") {
+                    TradeInt trade = TradeInt{
+                        .ex = "mexc",
+                        .s = msg_obj["symbol"],
+                        .k = kind,
+                        .ts = msg_obj["ts"],
+                        .p = msg_obj["data"]["p"],
+                        .v = msg_obj["data"]["v"],
+                    };
+                    onmessage_trade(trade);
+                } else {
+                    throw std::runtime_error("unexpected channel=" + channel);
+                }
+            } else if (kind == "spot") {
+                if (msg_obj.contains("id") && msg_obj["id"] == 0 &&
+                    msg_obj.contains("code") && msg_obj["code"] == 0) {
+                    spdlog::info("mexc spot subscribed successfully");
+                } else if (msg_obj.contains("c") &&
+                           ((std::string)msg_obj["c"])
+                                   .rfind("spot@public.deals.v3.api@", 0) ==
+                               0) {
+                    std::cout << "handle spot" << msg_obj << std::endl;
+                    for (auto& deal_raw : msg_obj["d"]["deals"]) {
+                        TradeInt trade = TradeInt{
+                            .ex = "mexc",
+                            .s = msg_obj["s"],
+                            .k = kind,
+                            .ts = deal_raw["t"],
+                            .p = std::stod((std::string)deal_raw["p"]),
+                            .v = std::stod((std::string)deal_raw["v"]),
+                        };
+                        onmessage_trade(trade);
+                    }
+                } else {
+                    throw std::runtime_error("unexpected msg=" + msg);
+                }
+            } else {
+                throw std::runtime_error("unexpected kind=" + kind);
+            }
+        };
         setPingInterval(10000);
         reconn_setting_t reconn;
         reconn_setting_init(&reconn);
@@ -65,20 +165,107 @@ class WSClientMexc : public hv::WebSocketClient {
         reconn.delay_policy = 2;
         setReconnect(&reconn);
         http_headers headers;
-        open("wss://contract.mexc.com:443/edge", headers);
+        open(url.c_str(), headers);
+    }
+};
+
+class WSClientBybit : public hv::WebSocketClient {
+   public:
+    std::function<void(const TradeInt trade_int)> onmessage_trade;
+
+    WSClientBybit(hv::EventLoopPtr loop = NULL) : WebSocketClient(loop) {}
+    ~WSClientBybit() {}
+
+    void init_fut_idle() {
+        std::string url = "wss://stream.bybit.com/v5/public/linear";
+        std::string kind = "fut";
+        this->init_idle(url, kind);
     }
 
     void subscribe_to_fut_trades(std::string& symbol) {
         std::string t_template = R"({
-                "method": "sub.deal",
-                "param": {"symbol": "%s"}
-            })";
+            "req_id": "t",
+            "op": "subscribe",
+            "args": ["publicTrade.%s"]
+        })";
         char t[256];
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     }
 
-    void ping() { send(R"({"method": "ping"})"); }
+    void init_spot_idle() {
+        std::string url = "wss://stream.bybit.com/v5/public/spot";
+        std::string kind = "spot";
+        this->init_idle(url, kind);
+    }
+
+    void subscribe_to_spot_trades(std::string& symbol) {
+        std::string t_template = R"({
+            "req_id": "t",
+            "op": "subscribe",
+            "args": ["publicTrade.%s"]
+        })";
+        char t[256];
+        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+        send(t);
+    }
+
+   private:
+    void init_idle(std::string& url, std::string& kind) {
+        onopen = []() { spdlog::info("bybit onopen"); };
+        onclose = []() { spdlog::info("bybit onclose"); };
+        onmessage = [=](const std::string& msg) {
+            nlohmann::json msg_obj = nlohmann::json::parse(msg);
+            if (msg_obj.contains("op") && msg_obj["op"] == "subscribe") {
+                if ((bool)msg_obj["success"]) {
+                    spdlog::info("bybit subscribed successfully");
+                    return;
+                } else {
+                    throw std::runtime_error("bybit subscription failed");
+                }
+            }
+            std::string msg_type = msg_obj["type"];
+            if (msg_type != "snapshot") {
+                throw std::runtime_error("bybit fut unknown type=" + msg_type);
+            }
+            if (kind == "fut") {
+                for (auto& trade_raw : msg_obj["data"]) {
+                    TradeInt trade = TradeInt{
+                        .ex = "bybit",
+                        .s = trade_raw["s"],
+                        .k = "fut",
+                        .ts = trade_raw["T"],
+                        .p = std::stod((std::string)trade_raw["p"]),
+                        .v = std::stod((std::string)trade_raw["v"]),
+                    };
+                    onmessage_trade(trade);
+                }
+            } else if (kind == "spot") {
+                for (auto& trade_raw : msg_obj["data"]) {
+                    TradeInt trade = TradeInt{
+                        .ex = "bybit",
+                        .s = trade_raw["s"],
+                        .k = "spot",
+                        .ts = trade_raw["T"],
+                        .p = std::stod((std::string)trade_raw["p"]),
+                        .v = std::stod((std::string)trade_raw["v"]),
+                    };
+                    onmessage_trade(trade);
+                }
+            } else {
+                throw std::runtime_error("unexpected kind=" + kind);
+            }
+        };
+        setPingInterval(10000);
+        reconn_setting_t reconn;
+        reconn_setting_init(&reconn);
+        reconn.min_delay = 100;
+        reconn.max_delay = 1000;
+        reconn.delay_policy = 2;
+        setReconnect(&reconn);
+        http_headers headers;
+        open(url.c_str(), headers);
+    }
 };
 
 struct OpportunityRow {
@@ -120,74 +307,6 @@ std::string format_as(OpportunityRow const& o) {
     return std::move(ss).str();
 }
 
-const std::string QUERY_OPPORTUNITIES = R"(
-WITH t AS (
-    SELECT
-        exchange,
-        kind,
-        symbol,
-        UPPER(replaceRegexpAll(symbol, '[10*_-]?', '')) symbol_int_1,
-        price / COALESCE(toFloat64OrNull(regexpExtract(symbol, '10*', 0)), 1) price_int_1
-    FROM default.trade_contango_arbitrage_v1
-    FINAL
-    WHERE timestamp >= (now() - toIntervalSecond(60))
-        AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
-        AND volume > 0
-        AND status = 'TRADING'
-        AND symbol_int_1 != 'DEFIUSDT'
-)
-SELECT
-    now() ts,
-    t1.symbol_int_1,
-    t1.price_int_1 AS fut_price,
-    t2.price_int_1 AS spot_price,
-    t1.exchange AS fut_ex,
-    t2.exchange AS spot_ex,
-    t1.symbol AS fut_symbol,
-    t2.symbol AS spot_symbol,
-    round(fut_price - spot_price, 4) AS diff_abs,
-    round((fut_price - spot_price) / spot_price * 100, 2) AS diff_rel
-FROM (
-    SELECT *
-    FROM (
-        SELECT
-            symbol,
-            symbol_int_1,
-            price_int_1,
-            exchange,
-            ROW_NUMBER() OVER(
-                PARTITION BY symbol_int_1, kind
-                ORDER BY price_int_1 DESC
-            ) _rownum
-        FROM t
-        WHERE kind = 'futures'
-    )
-    WHERE _rownum = 1
-) t1
-INNER JOIN (
-    SELECT *
-    FROM (
-        SELECT
-            symbol,
-            symbol_int_1,
-            price_int_1,
-            exchange,
-            ROW_NUMBER() OVER(
-                PARTITION BY symbol_int_1, kind
-                ORDER BY price_int_1 DESC
-            ) _rownum
-        FROM t
-        WHERE kind = 'spot'
-    )
-    WHERE _rownum = 1
-) t2
-    ON t1.symbol_int_1 = t2.symbol_int_1
-WHERE diff_rel > %(threshold_rel)s
-    AND spot_ex = 'gateio'
-    AND fut_ex = 'mexc'
-ORDER BY diff_rel DESC
-)";
-
 std::string replace_first(const std::string& s_in, std::string const& toReplace,
                           std::string const& replaceWith) {
     std::string s = s_in;
@@ -201,6 +320,73 @@ std::string replace_first(const std::string& s_in, std::string const& toReplace,
 
 std::optional<OpportunityRow> is_opportunity_exists(
     clickhouse::Client& client) {
+    const std::string QUERY_OPPORTUNITIES = R"(
+        WITH t AS (
+            SELECT
+                exchange,
+                kind,
+                symbol,
+                UPPER(replaceRegexpAll(symbol, '[10*_-]?', '')) symbol_int_1,
+                price / COALESCE(toFloat64OrNull(regexpExtract(symbol, '10*', 0)), 1) price_int_1
+            FROM default.trade_contango_arbitrage_v1
+            FINAL
+            WHERE timestamp >= (now() - toIntervalSecond(60))
+                AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
+                AND volume > 0
+                AND status = 'TRADING'
+                AND symbol_int_1 != 'DEFIUSDT'
+        )
+        SELECT
+            now() ts,
+            t1.symbol_int_1,
+            t1.price_int_1 AS fut_price,
+            t2.price_int_1 AS spot_price,
+            t1.exchange AS fut_ex,
+            t2.exchange AS spot_ex,
+            t1.symbol AS fut_symbol,
+            t2.symbol AS spot_symbol,
+            round(fut_price - spot_price, 4) AS diff_abs,
+            round((fut_price - spot_price) / spot_price * 100, 2) AS diff_rel
+        FROM (
+            SELECT *
+            FROM (
+                SELECT
+                    symbol,
+                    symbol_int_1,
+                    price_int_1,
+                    exchange,
+                    ROW_NUMBER() OVER(
+                        PARTITION BY symbol_int_1, kind
+                        ORDER BY price_int_1 DESC
+                    ) _rownum
+                FROM t
+                WHERE kind = 'futures'
+            )
+            WHERE _rownum = 1
+        ) t1
+        INNER JOIN (
+            SELECT *
+            FROM (
+                SELECT
+                    symbol,
+                    symbol_int_1,
+                    price_int_1,
+                    exchange,
+                    ROW_NUMBER() OVER(
+                        PARTITION BY symbol_int_1, kind
+                        ORDER BY price_int_1 DESC
+                    ) _rownum
+                FROM t
+                WHERE kind = 'spot'
+            )
+            WHERE _rownum = 1
+        ) t2
+            ON t1.symbol_int_1 = t2.symbol_int_1
+        WHERE diff_rel > %(threshold_rel)s
+            AND spot_ex = 'gateio'
+            AND fut_ex = 'mexc'
+        ORDER BY diff_rel DESC
+    )";
     std::optional<OpportunityRow> opp_row_t = {};
     client.Select(
         replace_first(QUERY_OPPORTUNITIES, "%(threshold_rel)s", "3.0"),
@@ -309,6 +495,7 @@ void listen_gateio_tickers() {
         if (!b2.empty()) {
             b2.pop_back();
         }
+        // TODO: apply this to code here (parsing functions will be needed)
         std::cout << last_prices.size() << std::endl;
         spdlog::info("last_timestamps={} last_prices={} opp_row=({}, {})",
                      "{" + b1 + "}", "{" + b2 + "}", opp_row.spot_price,
