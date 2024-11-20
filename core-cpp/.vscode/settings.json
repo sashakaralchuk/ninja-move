@@ -87,6 +87,7 @@
         "random": "cpp",
         "ranges": "cpp",
         "charconv": "cpp",
-        "filesystem": "cpp"
+        "filesystem": "cpp",
+        "queue": "cpp"
     }
 }
