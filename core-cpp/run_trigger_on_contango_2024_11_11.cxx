@@ -2,9 +2,13 @@
 #include <clickhouse/client.h>
 #include <spdlog/cfg/env.h>
 #include <spdlog/spdlog.h>
+#include <zlib.h>
 
+#include <cmath>
+#include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <regex>
 
 #include "src/models.hpp"
 
@@ -310,6 +314,137 @@ class WSClientBybit : public IWSClient {
     }
 };
 
+class WSClientHtx : public IWSClient {
+   public:
+    WSClientHtx(std::string kind) : IWSClient("htx", kind) {}
+
+    void init_idle() {
+        if (kind == "fut") {
+            std::string url = "wss://api.hbdm.com/linear-swap-ws";
+            init_idle_(url);
+        } else if (kind == "spot") {
+            std::string url = "wss://api.huobi.pro/ws";
+            init_idle_(url);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
+    void subscribe_to_trades(std::string& symbol) {
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "sub":"market.%s.trade.detail",
+                "id":"t"
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            std::string t_template = R"({
+                "sub":"market.%s.trade.detail",
+                "id":"t"
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
+    void ping() {}
+
+    static std::string parse_symbol_from_ch(std::string& ch) {
+        std::regex r("^market\\.(.*)\\.trade\\.detail$");
+        std::smatch s_m;
+        return std::regex_search(ch, s_m, r) ? s_m[1] : (std::string) "";
+    }
+
+    // https://github.com/HuobiRDCenter/huobi_Cpp/blob/master/include/gzDecompress.h#L5
+    static int gzDecompress(const char* src, int srcLen, const char* dst,
+                            int dstLen) {
+        z_stream strm;
+        strm.zalloc = NULL;
+        strm.zfree = NULL;
+        strm.opaque = NULL;
+
+        strm.avail_in = srcLen;
+        strm.avail_out = dstLen;
+        strm.next_in = (Bytef*)src;
+        strm.next_out = (Bytef*)dst;
+
+        int err = -1, ret = -1;
+        err = inflateInit2(&strm, MAX_WBITS + 16);
+        if (err == Z_OK) {
+            err = inflate(&strm, Z_FINISH);
+            if (err == Z_STREAM_END) {
+                ret = strm.total_out;
+            } else {
+                inflateEnd(&strm);
+                return err;
+            }
+        } else {
+            inflateEnd(&strm);
+            return err;
+        }
+        inflateEnd(&strm);
+        return err;
+    }
+
+   protected:
+    void handle_onmessage(const std::string& msg) {
+        // NOTE: in huobi_Cpp guy made 40960+1024, but longer messages appear
+        //       https://github.com/HuobiRDCenter/huobi_Cpp/blob/master/include/define.h#L13
+        int BUFF = pow(2, 17);
+        if (msg.size() > BUFF) {
+            spdlog::warn("too long {} msg for kind={} -> miss it", ex, kind);
+            return;
+        }
+        char buf[BUFF];
+        WSClientHtx::gzDecompress(msg.c_str(), msg.size(), buf, BUFF);
+        nlohmann::json msg_obj = nlohmann::json::parse((std::string)buf);
+        memset(&buf[0], 0, sizeof(buf));
+        if (msg_obj.contains("ping")) {
+            spdlog::debug("{} {} ping -> send pong", kind, ex);
+            long ping_val = msg_obj["ping"];
+            send("{\"pong\":" + std::to_string(ping_val) + "}");
+            return;
+        } else if (msg_obj.contains("subbed") && msg_obj["status"] == "ok") {
+            spdlog::info("{} {} subscribed successfully", ex, kind);
+            return;
+        }
+        if (kind == "fut") {
+            if (msg_obj.contains("ch")) {
+                std::string ch = msg_obj["ch"];
+                std::string symbol = WSClientHtx::parse_symbol_from_ch(ch);
+                for (auto& trade_raw : msg_obj["tick"]["data"]) {
+                    TradeInt trade = TradeInt::new_(
+                        "htx", symbol, kind, trade_raw["ts"],
+                        trade_raw["price"], trade_raw["quantity"]);
+                    onmessage_trade(trade);
+                }
+            } else {
+                throw std::runtime_error("unexpected msg=" + msg);
+            }
+        } else if (kind == "spot") {
+            if (msg_obj.contains("ch")) {
+                std::string ch = msg_obj["ch"];
+                std::string symbol = WSClientHtx::parse_symbol_from_ch(ch);
+                for (auto& trade_raw : msg_obj["tick"]["data"]) {
+                    TradeInt trade =
+                        TradeInt::new_("htx", symbol, kind, trade_raw["ts"],
+                                       trade_raw["price"], trade_raw["amount"]);
+                    onmessage_trade(trade);
+                }
+            } else {
+                throw std::runtime_error("unexpected msg=" + msg);
+            }
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+};
+
 struct OpportunityRow {
     std::string symbol_int_1;
     double fut_price;
@@ -318,6 +453,8 @@ struct OpportunityRow {
     std::string spot_ex;
     std::string fut_symbol;
     std::string spot_symbol;
+    double diff_abs;
+    double diff_rel;
     static OpportunityRow newFromClickhouseBlock(const clickhouse::Block& b,
                                                  int i) {
         return OpportunityRow{
@@ -331,6 +468,8 @@ struct OpportunityRow {
                 (std::string)b[6]->As<clickhouse::ColumnString>()->At(i),
             .spot_symbol =
                 (std::string)b[7]->As<clickhouse::ColumnString>()->At(i),
+            .diff_abs = b[8]->As<clickhouse::ColumnFloat64>()->At(i),
+            .diff_rel = b[9]->As<clickhouse::ColumnFloat64>()->At(i),
         };
     }
 };
@@ -339,7 +478,8 @@ std::ostream& operator<<(std::ostream& os, OpportunityRow const& o) {
     os << "{symbol_int_1=" << o.symbol_int_1 << ",fut_price=" << o.fut_price
        << ",spot_price=" << o.spot_price << ",fut_ex=" << o.fut_ex
        << ",spot_ex=" << o.spot_ex << ",fut_symbol=" << o.fut_symbol
-       << ",spot_symbol=" << o.spot_symbol << "}";
+       << ",spot_symbol=" << o.spot_symbol << ",diff_abs=" << o.diff_abs
+       << ",diff_rel=" << o.diff_rel << "}";
     return os;
 }
 
@@ -425,8 +565,8 @@ std::optional<OpportunityRow> is_opportunity_exists(
         ) t2
             ON t1.symbol_int_1 = t2.symbol_int_1
         WHERE diff_rel > %(threshold_rel)s
-            AND spot_ex in ('mexc', 'bybit')
-            AND fut_ex in ('mexc', 'bybit')
+            AND spot_ex in ('bybit', 'mexc', 'gateio', 'htx')
+            AND fut_ex in ('bybit', 'mexc', 'gateio', 'htx')
         ORDER BY diff_rel DESC
     )";
     std::optional<OpportunityRow> opp_row_t = {};
@@ -450,21 +590,29 @@ std::optional<OpportunityRow> is_opportunity_exists(
 }
 
 void listen_gateio_tickers() {
-    std::map<std::string, long> last_timestamps;
-    std::map<std::string, double> last_prices;
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
-    WSClientBybit ws_bybit_fut("fut");
-    ws_bybit_fut.init_idle();
-    WSClientBybit ws_bybit_spot("spot");
-    ws_bybit_spot.init_idle();
-    WSClientMexc ws_mexc_fut("fut");
-    ws_mexc_fut.init_idle();
-    WSClientMexc ws_mexc_spot("spot");
-    ws_mexc_spot.init_idle();
+    std::map<std::string, long> last_timestamps;
+    std::map<std::string, double> last_prices;
+    std::map<std::string, IWSClient*> ws_clients;
+    ws_clients["bybit-fut"] = new WSClientBybit("fut");
+    ws_clients["bybit-spot"] = new WSClientBybit("spot");
+    ws_clients["mexc-fut"] = new WSClientMexc("fut");
+    ws_clients["mexc-spot"] = new WSClientMexc("spot");
+    ws_clients["gateio-fut"] = new WSClientGateio("fut");
+    ws_clients["gateio-spot"] = new WSClientGateio("spot");
+    ws_clients["htx-fut"] = new WSClientHtx("fut");
+    ws_clients["htx-spot"] = new WSClientHtx("spot");
+    for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+        o->second->init_idle();
+    }
     auto is_all_ws_connected = [&]() -> bool {
-        return ws_bybit_fut.isConnected() && ws_bybit_spot.isConnected() &&
-               ws_mexc_fut.isConnected() && ws_mexc_spot.isConnected();
+        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+            if (!o->second->isConnected()) {
+                return false;
+            }
+        }
+        return true;
     };
     for (int i = 0; i < 100; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -480,10 +628,9 @@ void listen_gateio_tickers() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
-            ws_bybit_fut.ping();
-            ws_bybit_spot.ping();
-            ws_mexc_fut.ping();
-            ws_mexc_spot.ping();
+            for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+                o->second->ping();
+            }
         }
     });
     OpportunityRow opp_row;
@@ -499,31 +646,23 @@ void listen_gateio_tickers() {
             spdlog::info("there is no opp");
         }
     }
-    IWSClient* ws_fut = NULL;
-    IWSClient* ws_spot = NULL;
-    if (opp_row.fut_ex == "bybit") {
-        ws_fut = &ws_bybit_fut;
-    } else if (opp_row.fut_ex == "mexc") {
-        ws_fut = &ws_mexc_fut;
-    } else {
-        std::runtime_error("unexpected fut_ex=" + opp_row.fut_ex);
+    std::string key_fut = opp_row.fut_ex + "-fut";
+    if (ws_clients.find(key_fut) == ws_clients.end()) {
+        throw std::runtime_error("unexpected fut_ex=" + opp_row.fut_ex);
     }
-    if (opp_row.spot_ex == "bybit") {
-        ws_spot = &ws_bybit_spot;
-    } else if (opp_row.spot_ex == "mexc") {
-        ws_spot = &ws_mexc_spot;
-    } else {
-        std::runtime_error("unexpected spot_ex=" + opp_row.spot_ex);
+    std::string key_spot = opp_row.spot_ex + "-spot";
+    if (ws_clients.find(key_spot) == ws_clients.end()) {
+        throw std::runtime_error("unexpected spot_ex=" + opp_row.spot_ex);
     }
     auto handle_trades = [&](const TradeInt trade_int) {
         std::string key = trade_int.k + "-" + trade_int.ex;
         last_timestamps[key] = trade_int.ts;
         last_prices[key] = trade_int.p;
     };
-    ws_fut->onmessage_trade = handle_trades;
-    ws_fut->subscribe_to_trades(opp_row.fut_symbol);
-    ws_spot->onmessage_trade = handle_trades;
-    ws_spot->subscribe_to_trades(opp_row.spot_symbol);
+    ws_clients[key_fut]->onmessage_trade = handle_trades;
+    ws_clients[key_fut]->subscribe_to_trades(opp_row.fut_symbol);
+    ws_clients[key_spot]->onmessage_trade = handle_trades;
+    ws_clients[key_spot]->subscribe_to_trades(opp_row.spot_symbol);
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         long now_millis =
