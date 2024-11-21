@@ -20,3 +20,10 @@ TEST(ModelsTest, TradeIntNewMillisThreshold) {
         EXPECT_EQ(0, 1);
     }
 }
+
+TEST(ModelsTest, OrderBookCacheDefaultBehaviour) {
+    OrderBookCache cache;
+    cache.apply_orders(1, {{3.0, 1.0}, {4.0, 2.0}}, {{1.0, 3.0}, {2.0, 4.0}});
+    EXPECT_EQ(cache.get_bottom_ask(), 3.0);
+    EXPECT_EQ(cache.get_top_bid(), 2.0);
+}

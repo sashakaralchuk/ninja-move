@@ -1,4 +1,5 @@
 #include <iostream>
+#include <map>
 
 struct TradeInt {
     std::string ex;
@@ -7,6 +8,11 @@ struct TradeInt {
     long ts;
     double p;
     double v;
+    std::string toString() const {
+        return "{ex=" + ex + ",s=" + s + ",k=" + k +
+               ",ts=" + std::to_string(ts) + ",p=" + std::to_string(p) +
+               ",v=" + std::to_string(v) + "}";
+    }
     static TradeInt new_(std::string ex, std::string s, std::string k, long ts,
                          double p, double v) {
         long threshold = (long)365 * 24 * 60 * 60 * 1000;
@@ -17,8 +23,21 @@ struct TradeInt {
     }
 };
 
-std::ostream& operator<<(std::ostream& os, TradeInt const& o) {
-    os << "{ex=" << o.ex << ",s=" << o.s << ",k=" << o.k << ",ts=" << o.ts
-       << ",p=" << o.p << ",v=" << o.v << "}";
-    return os;
-}
+class OrderBookCache {
+   public:
+    OrderBookCache();
+
+    void apply_orders(long u, std::vector<std::tuple<double, double>> asks_in,
+                      std::vector<std::tuple<double, double>> bids_in);
+
+    void print();
+
+    double get_top_bid();
+
+    double get_bottom_ask();
+
+   private:
+    long last_update_id = 0;
+    std::map<std::string, double> asks;
+    std::map<std::string, double> bids;
+};
