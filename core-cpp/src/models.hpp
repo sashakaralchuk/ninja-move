@@ -1,3 +1,5 @@
+#include <gmpxx.h>
+
 #include <iostream>
 #include <map>
 
@@ -27,14 +29,19 @@ class OrderBookCache {
    public:
     OrderBookCache();
 
-    void apply_orders(long u, std::vector<std::tuple<double, double>> asks_in,
-                      std::vector<std::tuple<double, double>> bids_in);
+    void apply_orders(long u,
+                      std::vector<std::tuple<std::string, double>> asks_in,
+                      std::vector<std::tuple<std::string, double>> bids_in);
 
     void print();
 
-    double get_top_bid();
+    void print(int rows_to_print);
 
-    double get_bottom_ask();
+    mpf_class get_top_bid();
+
+    mpf_class get_bottom_ask();
+
+    long get_last_update_id();
 
    private:
     long last_update_id = 0;

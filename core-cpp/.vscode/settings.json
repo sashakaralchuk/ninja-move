@@ -88,6 +88,7 @@
         "ranges": "cpp",
         "charconv": "cpp",
         "filesystem": "cpp",
-        "queue": "cpp"
+        "queue": "cpp",
+        "*.def": "cpp"
     }
 }

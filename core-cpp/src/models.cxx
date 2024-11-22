@@ -1,72 +1,88 @@
 #include "models.hpp"
 
+#include <gmpxx.h>
 #include <spdlog/spdlog.h>
 
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
 
+// NOTE: to implement without hashmap: store 2 lists with prices/amounts
 OrderBookCache::OrderBookCache() {}
 
 void OrderBookCache::apply_orders(
-    long u, std::vector<std::tuple<double, double>> asks_in,
-    std::vector<std::tuple<double, double>> bids_in) {
-    // TODO: implement for coins with price 0.0000000000001 (store 18 signs)
-    // NOTE: to implement without hashmap: store 2 lists with prices / amounts
+    long u, std::vector<std::tuple<std::string, double>> asks_in,
+    std::vector<std::tuple<std::string, double>> bids_in) {
     if (last_update_id != 0 && u != last_update_id + 1) {
-        spdlog::warn("unexpected u={} last_update_id={}", u, last_update_id);
+        throw std::runtime_error(
+            "unexpected u=" + std::to_string(u) +
+            " last_update_id=" + std::to_string(last_update_id));
         return;
     }
-    for (auto& [price, val] : asks_in) {
-        asks[std::to_string(price)] = val;
-        if (val == 0) {
-            asks.erase(std::to_string(price));
+    for (auto& [p, v] : asks_in) {
+        asks[p] = v;
+        if (v == 0) {
+            asks.erase(p);
         }
     }
-    for (auto& [price, val] : bids_in) {
-        bids[std::to_string(price)] = val;
-        if (val == 0) {
-            bids.erase(std::to_string(price));
+    for (auto& [p, v] : bids_in) {
+        bids[p] = v;
+        if (v == 0) {
+            bids.erase(p);
         }
     }
     last_update_id = u;
 }
 
-void OrderBookCache::print() {
-    std::vector<std::string> asks_l;
-    for (auto [k, _] : asks) {
-        asks_l.push_back(k);
+void OrderBookCache::print() { print(10); }
+
+void OrderBookCache::print(int rows_to_print) {
+    std::vector<std::tuple<mpf_class, double>> asks_l;
+    for (auto [k, v] : asks) {
+        asks_l.push_back({mpf_class(k, 18), v});
     }
-    std::vector<std::string> bids_l;
-    for (auto [k, _] : bids) {
-        bids_l.push_back(k);
+    std::vector<std::tuple<mpf_class, double>> bids_l;
+    for (auto [k, v] : bids) {
+        bids_l.push_back({mpf_class(k, 18), v});
     }
-    sort(asks_l.begin(), asks_l.end(), std::greater<>());
-    sort(bids_l.begin(), bids_l.end(), std::greater<std::string>());
-    std::string shift = " ";
-    for (int i = 0; i < bids_l[0].length(); i++) {
-        shift += " ";
+    sort(asks_l.begin(), asks_l.end(), [](const auto& a, const auto& b) {
+        return std::get<0>(a) > std::get<0>(b);
+    });
+    sort(bids_l.begin(), bids_l.end(), [](const auto& a, const auto& b) {
+        return std::get<0>(a) > std::get<0>(b);
+    });
+    int shift_len_p =
+        std::to_string((int)(std::get<0>(bids_l[0]).get_d())).length() + 1 +
+        12 + 1 + 14;
+    std::string shift_str = "";
+    for (int i = 0; i < shift_len_p; i++) {
+        shift_str += " ";
     }
-    for (auto p : asks_l) {
-        std::cout << shift << p << std::endl;
+    for (auto i = asks_l.end() - rows_to_print; i != asks_l.end(); i++) {
+        auto [p, v] = (*i);
+        printf("%s %.12f %.12f\n", shift_str.c_str(), p.get_d(), v);
     }
-    for (auto p : bids_l) {
-        std::cout << p << std::endl;
+    for (auto i = bids_l.begin(); i != bids_l.begin() + rows_to_print; i++) {
+        auto [p, v] = (*i);
+        printf("%.12f %.12f\n", v, p.get_d());
     }
 }
 
-double OrderBookCache::get_top_bid() {
-    double max = -INFINITY;
+mpf_class OrderBookCache::get_top_bid() {
+    mpf_class max = mpf_class(-1000000000, 18);
     for (auto [k, _] : bids) {
-        max = std::max(max, std::stod(k));
+        max = std::max(max, mpf_class(k, 18));
     }
     return max;
 }
 
-double OrderBookCache::get_bottom_ask() {
-    double min = INFINITY;
+mpf_class OrderBookCache::get_bottom_ask() {
+    mpf_class min = mpf_class(1000000000, 18);
     for (auto [k, _] : asks) {
-        min = std::min(min, std::stod(k));
+        min = std::min(min, mpf_class(k, 18));
     }
     return min;
 }
+
+long OrderBookCache::get_last_update_id() { return last_update_id; }
