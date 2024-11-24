@@ -59,19 +59,20 @@ struct Depth {
     std::vector<std::tuple<std::string, double>> bids;
 };
 
-class IWSClient : public hv::WebSocketClient {
+class ClientPublic : public hv::WebSocketClient {
    public:
     std::string ex;
     std::string kind;
     std::function<void(const TradeInt trade_int)> onmessage_trade;
     std::function<void(const Depth depth)> onmessage_depth;
 
-    IWSClient(std::string ex_, std::string kind_, hv::EventLoopPtr loop = NULL)
+    ClientPublic(std::string ex_, std::string kind_,
+                 hv::EventLoopPtr loop = NULL)
         : WebSocketClient(loop) {
         ex = ex_;
         kind = kind_;
     }
-    ~IWSClient() {}
+    ~ClientPublic() {}
 
     virtual void init_idle() = 0;
     virtual void subscribe_to_trades(std::string& symbol) = 0;
@@ -95,9 +96,9 @@ class IWSClient : public hv::WebSocketClient {
     }
 };
 
-class WSClientGateio : public IWSClient {
+class ClientPublicGateio : public ClientPublic {
    public:
-    WSClientGateio(std::string kind) : IWSClient("gateio", kind) {}
+    ClientPublicGateio(std::string kind) : ClientPublic("gateio", kind) {}
 
     void init_idle() {
         if (kind == "fut") {
@@ -184,11 +185,11 @@ class WSClientGateio : public IWSClient {
     }
 };
 
-class WSClientMexc : public IWSClient {
+class ClientPublicMexc : public ClientPublic {
    public:
     OrderBookCache order_book_cache;
 
-    WSClientMexc(std::string kind) : IWSClient("mexc", kind) {}
+    ClientPublicMexc(std::string kind) : ClientPublic("mexc", kind) {}
 
     void init_idle() {
         if (kind == "fut") {
@@ -328,8 +329,7 @@ class WSClientMexc : public IWSClient {
                 long last_update_id = order_book_cache.get_last_update_id();
                 if (last_update_id == 0) {
                     std::string symbol = msg_obj["symbol"];
-                    auto snapshot_depths =
-                        WSClientMexc::fetch_depth_snapshot(symbol);
+                    auto snapshot_depths = fetch_depth_snapshot(symbol);
                     for (auto& d : snapshot_depths) {
                         order_book_cache.apply_orders(d.u, d.asks, d.bids);
                     }
@@ -381,8 +381,7 @@ class WSClientMexc : public IWSClient {
                     long last_update_id = order_book_cache.get_last_update_id();
                     if (last_update_id == 0) {
                         std::string symbol = msg_obj["s"];
-                        auto snapshot_depths =
-                            WSClientMexc::fetch_depth_snapshot(symbol);
+                        auto snapshot_depths = fetch_depth_snapshot(symbol);
                         for (auto& d2 : snapshot_depths) {
                             order_book_cache.apply_orders(d2.u, d2.asks,
                                                           d2.bids);
@@ -410,9 +409,9 @@ class WSClientMexc : public IWSClient {
     }
 };
 
-class ClientPrivateMexc : public IWSClient {
+class ClientPrivateMexc : public ClientPublic {
    public:
-    ClientPrivateMexc(std::string kind) : IWSClient("mexc", kind) {
+    ClientPrivateMexc(std::string kind) : ClientPublic("mexc", kind) {
         api_key = std::getenv("MEXC_API_KEY");
         api_secret = std::getenv("MEXC_API_SECRET");
     }
@@ -519,9 +518,9 @@ class ClientPrivateMexc : public IWSClient {
     }
 };
 
-class WSClientBybit : public IWSClient {
+class ClientPublicBybit : public ClientPublic {
    public:
-    WSClientBybit(std::string kind) : IWSClient("bybit", kind) {}
+    ClientPublicBybit(std::string kind) : ClientPublic("bybit", kind) {}
 
     void init_idle() {
         if (kind == "fut") {
@@ -598,9 +597,9 @@ class WSClientBybit : public IWSClient {
     }
 };
 
-class WSClientHtx : public IWSClient {
+class ClientPublicHtx : public ClientPublic {
    public:
-    WSClientHtx(std::string kind) : IWSClient("htx", kind) {}
+    ClientPublicHtx(std::string kind) : ClientPublic("htx", kind) {}
 
     void init_idle() {
         if (kind == "fut") {
@@ -685,7 +684,7 @@ class WSClientHtx : public IWSClient {
             return;
         }
         char buf[BUFF];
-        WSClientHtx::gzDecompress(msg.c_str(), msg.size(), buf, BUFF);
+        ClientPublicHtx::gzDecompress(msg.c_str(), msg.size(), buf, BUFF);
         nlohmann::json msg_obj = nlohmann::json::parse((std::string)buf);
         memset(&buf[0], 0, sizeof(buf));
         if (msg_obj.contains("ping")) {
@@ -700,7 +699,7 @@ class WSClientHtx : public IWSClient {
         if (kind == "fut") {
             if (msg_obj.contains("ch")) {
                 std::string ch = msg_obj["ch"];
-                std::string symbol = WSClientHtx::parse_symbol_from_ch(ch);
+                std::string symbol = ClientPublicHtx::parse_symbol_from_ch(ch);
                 for (auto& trade_raw : msg_obj["tick"]["data"]) {
                     TradeInt trade = TradeInt::new_(
                         "htx", symbol, kind, trade_raw["ts"],
@@ -713,7 +712,7 @@ class WSClientHtx : public IWSClient {
         } else if (kind == "spot") {
             if (msg_obj.contains("ch")) {
                 std::string ch = msg_obj["ch"];
-                std::string symbol = WSClientHtx::parse_symbol_from_ch(ch);
+                std::string symbol = ClientPublicHtx::parse_symbol_from_ch(ch);
                 for (auto& trade_raw : msg_obj["tick"]["data"]) {
                     TradeInt trade =
                         TradeInt::new_("htx", symbol, kind, trade_raw["ts"],
@@ -878,15 +877,15 @@ void listen_gateio_tickers() {
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
     std::map<std::string, long> last_timestamps;
     std::map<std::string, double> last_prices;
-    std::map<std::string, IWSClient*> ws_clients;
-    ws_clients["bybit-fut"] = new WSClientBybit("fut");
-    ws_clients["bybit-spot"] = new WSClientBybit("spot");
-    ws_clients["mexc-fut"] = new WSClientMexc("fut");
-    ws_clients["mexc-spot"] = new WSClientMexc("spot");
-    ws_clients["gateio-fut"] = new WSClientGateio("fut");
-    ws_clients["gateio-spot"] = new WSClientGateio("spot");
-    ws_clients["htx-fut"] = new WSClientHtx("fut");
-    ws_clients["htx-spot"] = new WSClientHtx("spot");
+    std::map<std::string, ClientPublic*> ws_clients;
+    ws_clients["bybit-fut"] = new ClientPublicBybit("fut");
+    ws_clients["bybit-spot"] = new ClientPublicBybit("spot");
+    ws_clients["mexc-fut"] = new ClientPublicMexc("fut");
+    ws_clients["mexc-spot"] = new ClientPublicMexc("spot");
+    ws_clients["gateio-fut"] = new ClientPublicGateio("fut");
+    ws_clients["gateio-spot"] = new ClientPublicGateio("spot");
+    ws_clients["htx-fut"] = new ClientPublicHtx("fut");
+    ws_clients["htx-spot"] = new ClientPublicHtx("spot");
     for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
         o->second->init_idle();
     }
