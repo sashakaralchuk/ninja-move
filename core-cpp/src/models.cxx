@@ -38,13 +38,23 @@ void OrderBookCache::apply_orders(
 void OrderBookCache::print() { print(10); }
 
 void OrderBookCache::print(int rows_to_print) {
-    std::vector<std::tuple<mpf_class, double>> asks_l;
+    std::vector<std::tuple<mpf_class, std::string, std::string>> asks_l;
     for (auto [k, v] : asks) {
-        asks_l.push_back({mpf_class(k, 18), v});
+        char price_str[32];
+        char vol_str[32];
+        snprintf(price_str, sizeof(price_str), "%.12f", stod(k));
+        snprintf(vol_str, sizeof(vol_str), "%.12f", v);
+        asks_l.push_back(
+            {mpf_class(k, 18), std::string(price_str), std::string(vol_str)});
     }
-    std::vector<std::tuple<mpf_class, double>> bids_l;
+    std::vector<std::tuple<mpf_class, std::string, std::string>> bids_l;
     for (auto [k, v] : bids) {
-        bids_l.push_back({mpf_class(k, 18), v});
+        char price_str[32];
+        char vol_str[32];
+        snprintf(price_str, sizeof(price_str), "%.12f", stod(k));
+        snprintf(vol_str, sizeof(vol_str), "%.12f", v);
+        bids_l.push_back(
+            {mpf_class(k, 18), std::string(price_str), std::string(vol_str)});
     }
     sort(asks_l.begin(), asks_l.end(), [](const auto& a, const auto& b) {
         return std::get<0>(a) > std::get<0>(b);
@@ -52,20 +62,42 @@ void OrderBookCache::print(int rows_to_print) {
     sort(bids_l.begin(), bids_l.end(), [](const auto& a, const auto& b) {
         return std::get<0>(a) > std::get<0>(b);
     });
-    int shift_len_p =
-        std::to_string((int)(std::get<0>(bids_l[0]).get_d())).length() + 1 +
-        12 + 1 + 14;
-    std::string shift_str = "";
-    for (int i = 0; i < shift_len_p; i++) {
-        shift_str += " ";
-    }
+    size_t max_len_price = 0;
+    size_t max_len_vol = 0;
     for (auto i = asks_l.end() - rows_to_print; i != asks_l.end(); i++) {
-        auto [p, v] = (*i);
-        printf("%s %.12f %.12f\n", shift_str.c_str(), p.get_d(), v);
+        auto [p, price_str, vol_str] = (*i);
+        max_len_price = std::max(max_len_price, price_str.length());
+        max_len_vol = std::max(max_len_vol, vol_str.length());
     }
     for (auto i = bids_l.begin(); i != bids_l.begin() + rows_to_print; i++) {
-        auto [p, v] = (*i);
-        printf("%.12f %.12f\n", v, p.get_d());
+        auto [p, price_str, vol_str] = (*i);
+        max_len_price = std::max(max_len_price, price_str.length());
+        max_len_vol = std::max(max_len_vol, vol_str.length());
+    }
+    for (auto i = asks_l.end() - rows_to_print; i != asks_l.end(); i++) {
+        auto [p, price_str, vol_str] = (*i);
+        for (int i = 0; i < max_len_vol + max_len_price; i++) {
+            std::cout << " ";
+        }
+        for (int i = 0; i < max_len_price - price_str.length(); i++) {
+            std::cout << " ";
+        }
+        std::cout << "  " << price_str << " ";
+        for (int i = 0; i < max_len_vol - vol_str.length(); i++) {
+            std::cout << " ";
+        }
+        std::cout << vol_str << std::endl;
+    }
+    for (auto i = bids_l.begin(); i != bids_l.begin() + rows_to_print; i++) {
+        auto [p, price_str, vol_str] = (*i);
+        for (int i = 0; i < max_len_vol - vol_str.length(); i++) {
+            std::cout << " ";
+        }
+        std::cout << vol_str << " ";
+        for (int i = 0; i < max_len_price - price_str.length(); i++) {
+            std::cout << " ";
+        }
+        std::cout << price_str << std::endl;
     }
 }
 
