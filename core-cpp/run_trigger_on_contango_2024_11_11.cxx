@@ -326,8 +326,7 @@ class ClientPublicMexc : public ClientPublic {
                     .asks = asks,
                     .bids = bids,
                 };
-                long last_update_id = order_book_cache.get_last_update_id();
-                if (last_update_id == 0) {
+                if (order_book_cache.get_last_update_id() == 0) {
                     std::string symbol = msg_obj["symbol"];
                     auto snapshot_depths = fetch_depth_snapshot(symbol);
                     for (auto& d : snapshot_depths) {
@@ -378,13 +377,21 @@ class ClientPublicMexc : public ClientPublic {
                         .asks = asks,
                         .bids = bids,
                     };
-                    long last_update_id = order_book_cache.get_last_update_id();
-                    if (last_update_id == 0) {
-                        std::string symbol = msg_obj["s"];
-                        auto snapshot_depths = fetch_depth_snapshot(symbol);
-                        for (auto& d2 : snapshot_depths) {
+                    if (order_book_cache.get_last_update_id() == 0) {
+                        for (int i = 0; i < 3; i++) {
+                            std::string symbol = msg_obj["s"];
+                            auto snapshot_depths = fetch_depth_snapshot(symbol);
+                            Depth d2 = snapshot_depths[0];
+                            if (d2.u < d.u) {
+                                spdlog::info("stale depth snapshot u={}", d.u);
+                                continue;
+                            }
                             order_book_cache.apply_orders(d2.u, d2.asks,
                                                           d2.bids);
+                            break;
+                        }
+                        if (order_book_cache.get_last_update_id() == 0) {
+                            throw std::runtime_error("stale depth snapshot u");
                         }
                     }
                     if (d.u > order_book_cache.get_last_update_id()) {
