@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 add_library(say-hello-lib tt/hello/hello.hpp tt/hello/hello.cxx)
 
+find_package(OpenSSL REQUIRED)
+
 find_library(LIBHV NAMES hv PATHS libs/libhv/build/lib)
 find_library(CURL NAMES curl PATHS libs/curl/build/lib)
 find_library(SPDLOG NAMES spdlog PATHS libs/spdlog/build)
@@ -55,6 +57,7 @@ target_link_libraries(run_trigger_on_contango_2024_11_11 PRIVATE
     ${ZLIB}
     ${CURL}
     ${GMP}
+    OpenSSL::SSL
 )
 
 enable_testing()

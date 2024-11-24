@@ -1,5 +1,8 @@
 #include <WebSocketClient.h>
 #include <clickhouse/client.h>
+#include <curl/curl.h>
+#include <gmpxx.h>
+#include <openssl/hmac.h>
 #include <spdlog/cfg/env.h>
 #include <spdlog/spdlog.h>
 #include <zlib.h>
@@ -20,17 +23,48 @@ int main() {
     return 0;
 }
 
+std::ostream& operator<<(std::ostream& os, TradeInt const& o) {
+    os << o.toString();
+    return os;
+}
+
 std::string format_as(TradeInt const& o) {
     std::ostringstream ss;
-    ss << o;
+    ss << o.toString();
     return std::move(ss).str();
 }
+
+static size_t execute_http_req_write_cb(void* contents, size_t size,
+                                        size_t nmemb, void* userp) {
+    ((std::string*)userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+std::string execute_http_req(std::string& url) {
+    CURL* curl;
+    CURLcode res;
+    std::string readBuffer;
+    curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, execute_http_req_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+    res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    return readBuffer;
+}
+
+struct Depth {
+    long u;
+    std::vector<std::tuple<std::string, double>> asks;
+    std::vector<std::tuple<std::string, double>> bids;
+};
 
 class IWSClient : public hv::WebSocketClient {
    public:
     std::string ex;
     std::string kind;
     std::function<void(const TradeInt trade_int)> onmessage_trade;
+    std::function<void(const Depth depth)> onmessage_depth;
 
     IWSClient(std::string ex_, std::string kind_, hv::EventLoopPtr loop = NULL)
         : WebSocketClient(loop) {
@@ -152,6 +186,8 @@ class WSClientGateio : public IWSClient {
 
 class WSClientMexc : public IWSClient {
    public:
+    OrderBookCache order_book_cache;
+
     WSClientMexc(std::string kind) : IWSClient("mexc", kind) {}
 
     void init_idle() {
@@ -188,9 +224,81 @@ class WSClientMexc : public IWSClient {
         }
     }
 
+    void subscribe_to_depth(std::string& symbol) {
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "method":"sub.depth",
+                "param":{"symbol":"%s"}
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            std::string t_template = R"({
+                "method": "SUBSCRIPTION",
+                "params": ["spot@public.increase.depth.v3.api@%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
     void ping() {
         if (kind == "fut") {
             send(R"({"method": "ping"})");
+        }
+    }
+
+    std::vector<Depth> fetch_depth_snapshot(std::string& symbol) {
+        if (kind == "fut") {
+            std::string url =
+                "https://contract.mexc.com/api/v1/contract/depth_commits/" +
+                symbol + "/100000";
+            nlohmann::json obj = nlohmann::json::parse(execute_http_req(url));
+            if (!((bool)obj["success"])) {
+                throw std::runtime_error("res is not success");
+            }
+            std::vector<nlohmann::json> data = obj["data"];
+            sort(data.begin(), data.end(),
+                 [](nlohmann::json a, nlohmann::json b) {
+                     return a["version"] < b["version"];
+                 });
+            std::vector<Depth> depths;
+            for (auto& o : data) {
+                std::vector<std::tuple<std::string, double>> bids;
+                for (auto& b : o["bids"]) {
+                    std::string p = b[0].dump();
+                    bids.push_back({p, b[1]});
+                }
+                std::vector<std::tuple<std::string, double>> asks;
+                for (auto& a : o["asks"]) {
+                    std::string p = a[0].dump();
+                    asks.push_back({p, a[1]});
+                }
+                depths.push_back(
+                    Depth{.u = o["version"], .asks = asks, .bids = bids});
+            }
+            return depths;
+        } else if (kind == "spot") {
+            std::string url =
+                "https://api.mexc.com/api/v3/depth?symbol=" + symbol +
+                "&limit=5000";
+            nlohmann::json obj = nlohmann::json::parse(execute_http_req(url));
+            std::vector<std::tuple<std::string, double>> bids;
+            for (auto& b : obj["bids"]) {
+                bids.push_back({b[0], stod((std::string)b[1])});
+            }
+            std::vector<std::tuple<std::string, double>> asks;
+            for (auto& a : obj["asks"]) {
+                asks.push_back({a[0], stod((std::string)a[1])});
+            }
+            return std::vector<Depth>{
+                Depth{.u = obj["lastUpdateId"], .asks = asks, .bids = bids}};
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
         }
     }
 
@@ -199,7 +307,39 @@ class WSClientMexc : public IWSClient {
         nlohmann::json msg_obj = nlohmann::json::parse(msg);
         if (kind == "fut") {
             std::string channel = msg_obj["channel"];
-            if (channel == "rs.sub.deal" && msg_obj["data"] == "success") {
+            if (channel == "rs.sub.depth" && msg_obj["data"] == "success") {
+                spdlog::info("mexc fut depth subscribed successfully");
+            } else if (channel == "push.depth") {
+                std::vector<std::tuple<std::string, double>> bids;
+                for (auto& b : msg_obj["data"]["bids"]) {
+                    std::string p = b[0].dump();
+                    bids.push_back({p, b[1]});
+                }
+                std::vector<std::tuple<std::string, double>> asks;
+                for (auto& a : msg_obj["data"]["asks"]) {
+                    std::string p = a[0].dump();
+                    asks.push_back({p, a[1]});
+                }
+                Depth d = Depth{
+                    .u = msg_obj["data"]["version"],
+                    .asks = asks,
+                    .bids = bids,
+                };
+                long last_update_id = order_book_cache.get_last_update_id();
+                if (last_update_id == 0) {
+                    std::string symbol = msg_obj["symbol"];
+                    auto snapshot_depths =
+                        WSClientMexc::fetch_depth_snapshot(symbol);
+                    for (auto& d : snapshot_depths) {
+                        order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    }
+                }
+                if (d.u > order_book_cache.get_last_update_id()) {
+                    order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                }
+                onmessage_depth(d);
+            } else if (channel == "rs.sub.deal" &&
+                       msg_obj["data"] == "success") {
                 spdlog::info("mexc fut subscribed successfully");
             } else if (channel == "pong") {
                 spdlog::debug("handle pong");
@@ -216,15 +356,50 @@ class WSClientMexc : public IWSClient {
             if (msg_obj.contains("id") && msg_obj["id"] == 0 &&
                 msg_obj.contains("code") && msg_obj["code"] == 0) {
                 spdlog::info("mexc spot subscribed successfully");
-            } else if (msg_obj.contains("c") &&
-                       ((std::string)msg_obj["c"])
-                               .rfind("spot@public.deals.v3.api@", 0) == 0) {
-                for (auto& deal_raw : msg_obj["d"]["deals"]) {
-                    TradeInt trade = TradeInt::new_(
-                        "mexc", msg_obj["s"], kind, deal_raw["t"],
-                        std::stod((std::string)deal_raw["p"]),
-                        std::stod((std::string)deal_raw["v"]));
-                    onmessage_trade(trade);
+                return;
+            }
+            if (msg_obj.contains("c")) {
+                std::string c = msg_obj["c"];
+                if (c.rfind("spot@public.increase.depth.v3.api@", 0) == 0) {
+                    std::vector<std::tuple<std::string, double>> bids;
+                    if (msg_obj["d"].contains("bids")) {
+                        for (auto& b : msg_obj["d"]["bids"]) {
+                            bids.push_back({b["p"], stod((std::string)b["v"])});
+                        }
+                    }
+                    std::vector<std::tuple<std::string, double>> asks;
+                    if (msg_obj["d"].contains("asks")) {
+                        for (auto& a : msg_obj["d"]["asks"]) {
+                            asks.push_back({a["p"], stod((std::string)a["v"])});
+                        }
+                    }
+                    Depth d = Depth{
+                        .u = stol((std::string)msg_obj["d"]["r"]),
+                        .asks = asks,
+                        .bids = bids,
+                    };
+                    long last_update_id = order_book_cache.get_last_update_id();
+                    if (last_update_id == 0) {
+                        std::string symbol = msg_obj["s"];
+                        auto snapshot_depths =
+                            WSClientMexc::fetch_depth_snapshot(symbol);
+                        for (auto& d2 : snapshot_depths) {
+                            order_book_cache.apply_orders(d2.u, d2.asks,
+                                                          d2.bids);
+                        }
+                    }
+                    if (d.u > order_book_cache.get_last_update_id()) {
+                        order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    }
+                    onmessage_depth(d);
+                } else if (c.rfind("spot@public.deals.v3.api@", 0) == 0) {
+                    for (auto& deal_raw : msg_obj["d"]["deals"]) {
+                        TradeInt trade = TradeInt::new_(
+                            "mexc", msg_obj["s"], kind, deal_raw["t"],
+                            std::stod((std::string)deal_raw["p"]),
+                            std::stod((std::string)deal_raw["v"]));
+                        onmessage_trade(trade);
+                    }
                 }
             } else {
                 throw std::runtime_error("unexpected msg=" + msg);
@@ -232,6 +407,115 @@ class WSClientMexc : public IWSClient {
         } else {
             throw std::runtime_error("unexpected kind=" + kind);
         }
+    }
+};
+
+class ClientPrivateMexc : public IWSClient {
+   public:
+    ClientPrivateMexc(std::string kind) : IWSClient("mexc", kind) {
+        api_key = std::getenv("MEXC_API_KEY");
+        api_secret = std::getenv("MEXC_API_SECRET");
+    }
+
+    void init_idle_private(std::string& listen_key) {
+        if (kind == "spot") {
+            std::string url = "wss://wbs.mexc.com/ws?listenKey=" + listen_key;
+            init_idle_(url);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
+    void subscribe_to_private_events() {
+        if (kind == "spot") {
+            std::string s = R"({
+                "method": "SUBSCRIPTION",
+                "params": [
+                   "spot@private.account.v3.api",
+                   "spot@private.deals.v3.api",
+                   "spot@private.orders.v3.api"
+                ]
+            })";
+            send(s);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
+    void place_spot_limit_order() {
+        long timestamp =
+            std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+        std::string query =
+            "symbol=DNXUSDT&side=BUY&type=LIMIT&price=0.2800&"
+            "quantity=60.0&recvWindow=60000&timestamp=" +
+            std::to_string(timestamp);
+        query += "&signature=" + sign_str(query);
+        std::string res_buf;
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers =
+            curl_slist_append(headers, ("X-MEXC-APIKEY: " + api_key).c_str());
+        CURL* curl = curl_easy_init();
+        curl_easy_setopt(curl, CURLOPT_URL,
+                         "https://api.mexc.com/api/v3/order");
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
+                         execute_http_req_write_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res_buf);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, query.c_str());
+        CURLcode res_code = curl_easy_perform(curl);
+        nlohmann::json res_obj = nlohmann::json::parse(res_buf);
+        curl_easy_cleanup(curl);
+    }
+
+    static void place_fut_limit_order() {
+        // NOTE: placing fut order is "Under maintenance"
+        // https://mexcdevelop.github.io/apidocs/contract_v1_en/#order-under-maintenance
+        // https://www.mexc.com/support/articles/15149585234969
+        throw std::runtime_error("not-implemented");
+    }
+
+    std::string create_listen_key() {
+        long timestamp =
+            std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+        std::string query = "timestamp=" + std::to_string(timestamp);
+        query += "&signature=" + sign_str(query);
+        std::string res_buf;
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers =
+            curl_slist_append(headers, ("X-MEXC-APIKEY: " + api_key).c_str());
+        CURL* curl = curl_easy_init();
+        curl_easy_setopt(curl, CURLOPT_URL,
+                         "https://api.mexc.com/api/v3/userDataStream");
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
+                         execute_http_req_write_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res_buf);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, query.c_str());
+        CURLcode res_code = curl_easy_perform(curl);
+        nlohmann::json res_obj = nlohmann::json::parse(res_buf);
+        curl_easy_cleanup(curl);
+        return res_obj["listenKey"];
+    }
+
+   private:
+    std::string api_key;
+    std::string api_secret;
+
+    std::string sign_str(std::string& query) {
+        unsigned char* signature_digest;
+        unsigned int signature_digest_len;
+        signature_digest =
+            HMAC(EVP_sha256(), api_secret.c_str(), api_secret.length(),
+                 reinterpret_cast<const unsigned char*>(query.c_str()),
+                 strlen(query.c_str()), nullptr, &signature_digest_len);
+        std::ostringstream signature_ss;
+        for (unsigned int i = 0; i < signature_digest_len; ++i) {
+            signature_ss << std::hex << std::setw(2) << std::setfill('0')
+                         << static_cast<int>(signature_digest[i]);
+        }
+        return signature_ss.str();
     }
 };
 

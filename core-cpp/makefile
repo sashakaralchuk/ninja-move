@@ -1,3 +1,5 @@
+env_vars=${shell cat .env | grep -v "\#" | xargs}
+
 run:
 	# cd build && cmake .. && make && ./t
 	# cmake -S . -B build && cmake --build build -j 12
@@ -8,7 +10,11 @@ test:
 
 run-trigger-on-contango-2024-11-11:
 	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./run_trigger_on_contango_2024_11_11
-	# cmake --build build -j 12 && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./build/run_trigger_on_contango_2024_11_11
+	cmake --build build -j 12 && \
+		${env_vars} \
+		SPDLOG_LEVEL=debug \
+		THRESHOLD_REL=3.0 \
+		./build/run_trigger_on_contango_2024_11_11
 
 clone-libs:
 	git clone git@github.com:curl/curl.git libs/curl && \
