@@ -118,3 +118,9 @@ mpf_class OrderBookCache::get_bottom_ask() {
 }
 
 long OrderBookCache::get_last_update_id() { return last_update_id; }
+
+void OrderBookCache::clear() {
+    last_update_id = 0;
+    asks.clear();
+    bids.clear();
+}

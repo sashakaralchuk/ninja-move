@@ -43,6 +43,8 @@ class OrderBookCache {
 
     long get_last_update_id();
 
+    void clear();
+
    private:
     long last_update_id = 0;
     std::map<std::string, double> asks;

@@ -53,6 +53,20 @@ std::string execute_http_req(std::string& url) {
     return readBuffer;
 }
 
+bool str_starts_with(std::string s1, std::string s2) {
+    if (s1.length() < s2.length()) {
+        return false;
+    }
+    return s1.substr(0, s2.length()).compare(s2) == 0;
+}
+
+bool str_ends_with(std::string s1, std::string s2) {
+    if (s1.length() < s2.length()) {
+        return false;
+    }
+    return s1.substr(s1.length() - s2.length(), s2.length()).compare(s2) == 0;
+}
+
 struct Depth {
     long u;
     std::vector<std::tuple<std::string, double>> asks;
@@ -63,6 +77,7 @@ class ClientPublic : public hv::WebSocketClient {
    public:
     std::string ex;
     std::string kind;
+    OrderBookCache order_book_cache;
     std::function<void(const TradeInt trade_int)> onmessage_trade;
     std::function<void(const Depth depth)> onmessage_depth;
 
@@ -187,8 +202,6 @@ class ClientPublicGateio : public ClientPublic {
 
 class ClientPublicMexc : public ClientPublic {
    public:
-    OrderBookCache order_book_cache;
-
     ClientPublicMexc(std::string kind) : ClientPublic("mexc", kind) {}
 
     void init_idle() {
@@ -642,10 +655,37 @@ class ClientPublicHtx : public ClientPublic {
         }
     }
 
+    void subscribe_to_depth(std::string& symbol) {
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "sub":"market.%s.depth.step0",
+                "id":"t"
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            std::string t_template = R"({
+                "sub":["market.%s.depth.step0"],
+                "id":"t"
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
     void ping() {}
 
-    static std::string parse_symbol_from_ch(std::string& ch) {
+    static std::string parse_symbol_from_trade_ch(std::string& ch) {
         std::regex r("^market\\.(.*)\\.trade\\.detail$");
+        std::smatch s_m;
+        return std::regex_search(ch, s_m, r) ? s_m[1] : (std::string) "";
+    }
+    static std::string parse_symbol_from_depth_ch(std::string& ch) {
+        std::regex r("^market\\.(.*)\\.depth\\.step0$");
         std::smatch s_m;
         return std::regex_search(ch, s_m, r) ? s_m[1] : (std::string) "";
     }
@@ -681,6 +721,23 @@ class ClientPublicHtx : public ClientPublic {
         return err;
     }
 
+    std::vector<Depth> fetch_depth_snapshot(std::string& symbol) {
+        if (kind == "fut") {
+            std::string url =
+                "https://api.hbdm.com/linear-swap-ex/market/"
+                "depth?contract_code=" +
+                symbol + "&type=step0";
+            return parse_depth_from_res(execute_http_req(url));
+        } else if (kind == "spot") {
+            std::string url =
+                "https://api.huobi.pro/market/depth?symbol=" + symbol +
+                "&depth=20&type=step0";
+            return parse_depth_from_res(execute_http_req(url));
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
    protected:
     void handle_onmessage(const std::string& msg) {
         // NOTE: in huobi_Cpp guy made 40960+1024, but longer messages appear
@@ -706,12 +763,37 @@ class ClientPublicHtx : public ClientPublic {
         if (kind == "fut") {
             if (msg_obj.contains("ch")) {
                 std::string ch = msg_obj["ch"];
-                std::string symbol = ClientPublicHtx::parse_symbol_from_ch(ch);
-                for (auto& trade_raw : msg_obj["tick"]["data"]) {
-                    TradeInt trade = TradeInt::new_(
-                        "htx", symbol, kind, trade_raw["ts"],
-                        trade_raw["price"], trade_raw["quantity"]);
-                    onmessage_trade(trade);
+                if (str_ends_with(ch, ".depth.step0")) {
+                    Depth d = parse_depth_from_res(msg_obj.dump())[0];
+                    if (order_book_cache.get_last_update_id() == 0) {
+                        std::string symbol =
+                            ClientPublicHtx::parse_symbol_from_depth_ch(ch);
+                        auto snapshot_depths = fetch_depth_snapshot(symbol);
+                        Depth d2 = snapshot_depths[0];
+                        order_book_cache.apply_orders(d2.u, d2.asks, d2.bids);
+                    }
+                    long ver = order_book_cache.get_last_update_id();
+                    if (d.u == ver + 1) {
+                        order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    } else if (d.u - ver >= 2) {
+                        throw new std::runtime_error(
+                            "htx fut depth is broken "
+                            "u=" +
+                            std::to_string(d.u) +
+                            " ver=" + std::to_string(ver));
+                    }
+                    onmessage_depth(d);
+                } else {
+                    // TODO: add condition for detecting a message based on ch
+                    std::string ch = msg_obj["ch"];
+                    std::string symbol =
+                        ClientPublicHtx::parse_symbol_from_trade_ch(ch);
+                    for (auto& trade_raw : msg_obj["tick"]["data"]) {
+                        TradeInt trade = TradeInt::new_(
+                            "htx", symbol, kind, trade_raw["ts"],
+                            trade_raw["price"], trade_raw["quantity"]);
+                        onmessage_trade(trade);
+                    }
                 }
             } else {
                 throw std::runtime_error("unexpected msg=" + msg);
@@ -719,12 +801,24 @@ class ClientPublicHtx : public ClientPublic {
         } else if (kind == "spot") {
             if (msg_obj.contains("ch")) {
                 std::string ch = msg_obj["ch"];
-                std::string symbol = ClientPublicHtx::parse_symbol_from_ch(ch);
-                for (auto& trade_raw : msg_obj["tick"]["data"]) {
-                    TradeInt trade =
-                        TradeInt::new_("htx", symbol, kind, trade_raw["ts"],
-                                       trade_raw["price"], trade_raw["amount"]);
-                    onmessage_trade(trade);
+                if (str_ends_with(ch, ".depth.step0")) {
+                    Depth d = parse_depth_from_res(msg_obj.dump())[0];
+                    spdlog::warn(
+                        "order book contains just last snapshot (because of "
+                        "fancy htx implementation where vecrsions are random)");
+                    order_book_cache.clear();
+                    order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    onmessage_depth(d);
+                } else {
+                    // TODO: add condition for detecting a message based on ch
+                    std::string symbol =
+                        ClientPublicHtx::parse_symbol_from_trade_ch(ch);
+                    for (auto& trade_raw : msg_obj["tick"]["data"]) {
+                        TradeInt trade = TradeInt::new_(
+                            "htx", symbol, kind, trade_raw["ts"],
+                            trade_raw["price"], trade_raw["amount"]);
+                        onmessage_trade(trade);
+                    }
                 }
             } else {
                 throw std::runtime_error("unexpected msg=" + msg);
@@ -732,6 +826,26 @@ class ClientPublicHtx : public ClientPublic {
         } else {
             throw std::runtime_error("unexpected kind=" + kind);
         }
+    }
+
+   private:
+    std::vector<Depth> parse_depth_from_res(std::string s) {
+        nlohmann::json obj = nlohmann::json::parse(s);
+        std::vector<std::tuple<std::string, double>> bids;
+        for (auto& b : obj["tick"]["bids"]) {
+            std::string p = b[0].dump();
+            bids.push_back({p, b[1]});
+        }
+        std::vector<std::tuple<std::string, double>> asks;
+        for (auto& b : obj["tick"]["asks"]) {
+            std::string p = b[0].dump();
+            asks.push_back({p, b[1]});
+        }
+        return std::vector<Depth>{Depth{
+            .u = obj["tick"]["version"],
+            .asks = asks,
+            .bids = bids,
+        }};
     }
 };
 
