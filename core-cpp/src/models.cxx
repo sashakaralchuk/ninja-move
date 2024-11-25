@@ -20,6 +20,12 @@ void OrderBookCache::apply_orders(
             " last_update_id=" + std::to_string(last_update_id));
         return;
     }
+    apply_orders_force(u, asks_in, bids_in);
+}
+
+void OrderBookCache::apply_orders_force(
+    long u, std::vector<std::tuple<std::string, double>> asks_in,
+    std::vector<std::tuple<std::string, double>> bids_in) {
     for (auto& [p, v] : asks_in) {
         asks[p] = v;
         if (v == 0) {

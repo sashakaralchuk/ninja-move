@@ -73,6 +73,27 @@ struct Depth {
     std::vector<std::tuple<std::string, double>> bids;
 };
 
+std::ostream& operator<<(std::ostream& os, Depth const& d) {
+    os << "u=" << d.u << ", asks=[";
+    for (int i = 0; i < d.asks.size(); i++) {
+        os << "(" << std::get<0>(d.asks[i]) << "," << std::get<1>(d.asks[i])
+           << ")";
+        if (i < d.asks.size() - 1) {
+            os << ",";
+        }
+    }
+    os << "], bids=[";
+    for (int i = 0; i < d.bids.size(); i++) {
+        os << "(" << std::get<0>(d.bids[i]) << "," << std::get<1>(d.bids[i])
+           << ")";
+        if (i < d.bids.size() - 1) {
+            os << ",";
+        }
+    }
+    os << "]";
+    return os;
+}
+
 class ClientPublic : public hv::WebSocketClient {
    public:
     std::string ex;
@@ -159,7 +180,77 @@ class ClientPublicGateio : public ClientPublic {
         }
     }
 
+    void subscribe_to_depth(std::string& symbol) {
+        if (kind == "fut") {
+            int ts_secs =
+                std::chrono::system_clock::now().time_since_epoch().count() /
+                1000 / 1000;
+            std::string t_template = R"({
+                "time" : %d,
+                "channel" : "futures.order_book_update",
+                "event": "subscribe",
+                "payload" : ["%s", "100ms", "100"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            int ts_secs =
+                std::chrono::system_clock::now().time_since_epoch().count() /
+                1000 / 1000;
+            std::string t_template = R"({
+                "time": %d,
+                "channel": "spot.order_book_update",
+                "event": "subscribe",
+                "payload": ["%s", "100ms"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
     void ping() {}
+
+    std::vector<Depth> fetch_depth_snapshot(std::string& symbol) {
+        if (kind == "fut") {
+            std::string url =
+                "https://api.gateio.ws/api/v4/futures/usdt/"
+                "order_book?limit=100&with_id=true&contract=" +
+                symbol;
+            nlohmann::json obj = nlohmann::json::parse(execute_http_req(url));
+            std::vector<std::tuple<std::string, double>> bids;
+            for (auto& b : obj["bids"]) {
+                bids.push_back({b["p"], b["s"]});
+            }
+            std::vector<std::tuple<std::string, double>> asks;
+            for (auto& a : obj["asks"]) {
+                asks.push_back({a["p"], a["s"]});
+            }
+            return std::vector<Depth>{
+                Depth{.u = obj["id"], .asks = asks, .bids = bids}};
+        } else if (kind == "spot") {
+            std::string url =
+                "https://api.gateio.ws/api/v4/spot/"
+                "order_book?limit=100&with_id=true&currency_pair=" +
+                symbol;
+            nlohmann::json obj = nlohmann::json::parse(execute_http_req(url));
+            std::vector<std::tuple<std::string, double>> bids;
+            for (auto& b : obj["bids"]) {
+                bids.push_back({b[0], stod((std::string)b[1])});
+            }
+            std::vector<std::tuple<std::string, double>> asks;
+            for (auto& a : obj["asks"]) {
+                asks.push_back({a[0], stod((std::string)a[1])});
+            }
+            return std::vector<Depth>{
+                Depth{.u = obj["id"], .asks = asks, .bids = bids}};
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
 
    protected:
     void handle_onmessage(const std::string& msg) {
@@ -170,7 +261,35 @@ class ClientPublicGateio : public ClientPublic {
             return;
         }
         if (kind == "fut") {
-            if (event == "update") {
+            if (event != "update") {
+                throw std::runtime_error("unexpected event=" + event);
+            }
+            std::string channel = msg_obj["channel"];
+            if (channel == "futures.order_book_update") {
+                std::vector<std::tuple<std::string, double>> bids;
+                for (auto& a : msg_obj["result"]["b"]) {
+                    bids.push_back({a["p"], a["s"]});
+                }
+                std::vector<std::tuple<std::string, double>> asks;
+                for (auto& a : msg_obj["result"]["a"]) {
+                    asks.push_back({a["p"], a["s"]});
+                }
+                if (order_book_cache.get_last_update_id() == 0) {
+                    std::string symbol = msg_obj["result"]["s"];
+                    Depth d2 = fetch_depth_snapshot(symbol)[0];
+                    order_book_cache.apply_orders(d2.u, d2.asks, d2.bids);
+                }
+                Depth d = Depth{.u = (long)msg_obj["result"]["u"] + 1,
+                                .asks = asks,
+                                .bids = bids};
+                if (d.u > order_book_cache.get_last_update_id()) {
+                    spdlog::warn("order book contains non-incremental depth");
+                    order_book_cache.apply_orders_force(d.u, d.asks, d.bids);
+                }
+                onmessage_depth(d);
+            } else {
+                // TODO: add channel for trades
+                // TODO: add ex throw in the end on no event
                 for (auto trade_raw : msg_obj["result"]) {
                     TradeInt trade = TradeInt::new_(
                         "gateio", trade_raw["contract"], kind,
@@ -179,11 +298,36 @@ class ClientPublicGateio : public ClientPublic {
                         trade_raw["size"]);
                     onmessage_trade(trade);
                 }
-            } else {
-                throw std::runtime_error("unexpected event=" + event);
             }
         } else if (kind == "spot") {
-            if (event == "update") {
+            if (event != "update") {
+                throw std::runtime_error("unexpected event=" + event);
+            }
+            std::string channel = msg_obj["channel"];
+            if (channel == "spot.order_book_update") {
+                std::vector<std::tuple<std::string, double>> bids;
+                for (auto& b : msg_obj["result"]["b"]) {
+                    bids.push_back({b[0], stod((std::string)b[1])});
+                }
+                std::vector<std::tuple<std::string, double>> asks;
+                for (auto& a : msg_obj["result"]["a"]) {
+                    asks.push_back({a[0], stod((std::string)a[1])});
+                }
+                if (order_book_cache.get_last_update_id() == 0) {
+                    std::string symbol = msg_obj["result"]["s"];
+                    Depth d2 = fetch_depth_snapshot(symbol)[0];
+                    order_book_cache.apply_orders(d2.u, d2.asks, d2.bids);
+                }
+                Depth d = Depth{.u = (long)msg_obj["result"]["u"] + 1,
+                                .asks = asks,
+                                .bids = bids};
+                if (d.u > order_book_cache.get_last_update_id()) {
+                    spdlog::warn("order book contains non-incremental depth");
+                    order_book_cache.apply_orders_force(d.u, d.asks, d.bids);
+                }
+                onmessage_depth(d);
+            } else {
+                // TODO: handle(check for) channel trade
                 auto res = msg_obj["result"];
                 TradeInt trade = TradeInt::new_(
                     "gateio", res["currency_pair"], kind,
@@ -191,8 +335,6 @@ class ClientPublicGateio : public ClientPublic {
                     std::stod((std::string)res["price"]),
                     std::stod((std::string)res["amount"]));
                 onmessage_trade(trade);
-            } else {
-                throw std::runtime_error("unexpected event=" + event);
             }
         } else {
             throw std::runtime_error("unexpected kind=" + kind);

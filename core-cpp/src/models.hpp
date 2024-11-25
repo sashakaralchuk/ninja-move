@@ -33,6 +33,10 @@ class OrderBookCache {
                       std::vector<std::tuple<std::string, double>> asks_in,
                       std::vector<std::tuple<std::string, double>> bids_in);
 
+    void apply_orders_force(
+        long u, std::vector<std::tuple<std::string, double>> asks_in,
+        std::vector<std::tuple<std::string, double>> bids_in);
+
     void print();
 
     void print(int rows_to_print);
