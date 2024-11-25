@@ -720,6 +720,20 @@ class ClientPublicBybit : public ClientPublic {
         }
     }
 
+    void subscribe_to_depth(std::string& symbol) {
+        if (kind == "fut" || kind == "spot") {
+            std::string t_template = R"({
+                "op": "subscribe",
+                "args": ["orderbook.200.%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
     void ping() {}
 
    protected:
@@ -734,28 +748,79 @@ class ClientPublicBybit : public ClientPublic {
             }
         }
         std::string msg_type = msg_obj["type"];
-        if (msg_type != "snapshot") {
-            throw std::runtime_error("bybit fut unknown type=" + msg_type);
-        }
+        std::string topic = msg_obj["topic"];
         if (kind == "fut") {
-            for (auto& trade_raw : msg_obj["data"]) {
-                TradeInt trade = TradeInt::new_(
-                    "bybit", trade_raw["s"], kind, trade_raw["T"],
-                    std::stod((std::string)trade_raw["p"]),
-                    std::stod((std::string)trade_raw["v"]));
-                onmessage_trade(trade);
+            if (str_starts_with(topic, "orderbook.")) {
+                if (msg_type == "snapshot") {
+                    spdlog::info("(re)create bybit fut order-book");
+                    Depth d = parse_depth(msg_obj);
+                    order_book_cache.clear();
+                    order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                } else if (msg_type == "delta") {
+                    Depth d = parse_depth(msg_obj);
+                    order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                } else {
+                    throw std::runtime_error("bybit fut unknown type=" +
+                                             msg_type);
+                }
+            } else {
+                // TODO: add topic check for trades
+                if (msg_type != "snapshot") {
+                    throw std::runtime_error("bybit fut unknown type=" +
+                                             msg_type);
+                }
+                for (auto& trade_raw : msg_obj["data"]) {
+                    TradeInt trade = TradeInt::new_(
+                        "bybit", trade_raw["s"], kind, trade_raw["T"],
+                        std::stod((std::string)trade_raw["p"]),
+                        std::stod((std::string)trade_raw["v"]));
+                    onmessage_trade(trade);
+                }
             }
         } else if (kind == "spot") {
-            for (auto& trade_raw : msg_obj["data"]) {
-                TradeInt trade = TradeInt::new_(
-                    "bybit", trade_raw["s"], kind, trade_raw["T"],
-                    std::stod((std::string)trade_raw["p"]),
-                    std::stod((std::string)trade_raw["v"]));
-                onmessage_trade(trade);
+            if (str_starts_with(topic, "orderbook.")) {
+                if (msg_type == "snapshot") {
+                    spdlog::info("(re)create bybit spot order-book");
+                    Depth d = parse_depth(msg_obj);
+                    order_book_cache.clear();
+                    order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                } else if (msg_type == "delta") {
+                    Depth d = parse_depth(msg_obj);
+                    order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                } else {
+                    throw std::runtime_error("bybit fut unknown type=" +
+                                             msg_type);
+                }
+            } else {
+                // TODO: add topic check
+                if (msg_type != "snapshot") {
+                    throw std::runtime_error("bybit fut unknown type=" +
+                                             msg_type);
+                }
+                for (auto& trade_raw : msg_obj["data"]) {
+                    TradeInt trade = TradeInt::new_(
+                        "bybit", trade_raw["s"], kind, trade_raw["T"],
+                        std::stod((std::string)trade_raw["p"]),
+                        std::stod((std::string)trade_raw["v"]));
+                    onmessage_trade(trade);
+                }
             }
         } else {
             throw std::runtime_error("unexpected kind=" + kind);
         }
+    }
+
+   private:
+    Depth parse_depth(nlohmann::json& msg_obj) {
+        std::vector<std::tuple<std::string, double>> bids;
+        for (auto& b : msg_obj["data"]["b"]) {
+            bids.push_back({b[0], stod((std::string)b[1])});
+        }
+        std::vector<std::tuple<std::string, double>> asks;
+        for (auto& a : msg_obj["data"]["a"]) {
+            asks.push_back({a[0], stod((std::string)a[1])});
+        }
+        return Depth{.u = msg_obj["data"]["u"], .asks = asks, .bids = bids};
     }
 };
 
