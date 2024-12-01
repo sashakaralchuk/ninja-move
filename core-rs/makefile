@@ -35,8 +35,9 @@ run-example-place-bybit-market-order:
 run-trade-contango-arbitrage-fetch-write-tickers:
 	${env_vars} \
 	RUST_BACKTRACE=full \
-	RUST_LOG=info \
-	cargo run --bin trade_contango_arbitrage -- --command fetch-write-tickers
+	RUST_LOG=debug \
+	TRADE_CONTANGO_FETCH_PROCESS_ACTION=write-to-worker \
+	cargo run --bin trade_contango_arbitrage -- --command fetch-process-tickers
 
 run-trade-contango-arbitrage-track-diff:
 	${env_vars} \

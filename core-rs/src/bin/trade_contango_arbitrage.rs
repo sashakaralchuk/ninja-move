@@ -1,5 +1,13 @@
 use clap::Parser;
 use exchanges_arbitrage::{pool, RedpandaPort, TelegramBotPort};
+use std::collections::{HashMap, HashSet};
+
+use trade_contango::trade_contango_client::TradeContangoClient;
+use trade_contango::{FireTradeReq, QTickerReq, SpreadsReq};
+
+pub mod trade_contango {
+    tonic::include_proto!("trade_contango");
+}
 
 const _: &str = r#"
 -- redpanda
@@ -99,44 +107,71 @@ fn main() {
     env_logger::init();
     let run_args = RunArgs::parse();
     match run_args.command.as_str() {
-        "fetch-write-tickers" => run_fetch_write_tickers(),
+        "fetch-process-tickers" => run_fetch_process_tickers(),
         "track-diff" => run_track_diff(),
         _ => log::error!("unknown command"),
     }
 }
 
-fn run_fetch_write_tickers() {
+fn run_fetch_process_tickers() {
     binance_int::fetch_write_config();
     let (tx, rx) = std::sync::mpsc::channel();
-    let fns = vec![
+    let mut fns = vec![
         bybit_int::fetch_derivatives_tickers_from_api,
         bybit_int::fetch_spot_tickers_from_api,
-        binance_int::fetch_derivatives_tickers_from_api,
-        binance_int::fetch_spot_tickers_from_api,
         mexc_int::fetch_derivatives_tickers_from_api,
         mexc_int::fetch_spot_tickers_from_api,
-        kucoin_int::fetch_derivatives_tickers_from_api,
-        kucoin_int::fetch_spot_tickers_from_api,
         gateio_int::fetch_derivatives_tickers_from_api,
         gateio_int::fetch_spot_tickers_from_api,
-        bingx_int::fetch_derivatives_tickers_from_api,
-        bingx_int::fetch_spot_tickers_from_api,
         htx_int::fetch_derivatives_tickers_from_api,
         htx_int::fetch_spot_tickers_from_api,
     ];
+    if std::env::var("TRADE_CONTANGO_ALL_EXCHANGES").unwrap_or("0".into()) == "1" {
+        fns.push(binance_int::fetch_derivatives_tickers_from_api);
+        fns.push(binance_int::fetch_spot_tickers_from_api);
+        fns.push(kucoin_int::fetch_derivatives_tickers_from_api);
+        fns.push(kucoin_int::fetch_spot_tickers_from_api);
+        fns.push(bingx_int::fetch_derivatives_tickers_from_api);
+        fns.push(bingx_int::fetch_spot_tickers_from_api);
+    }
     let mut threads = vec![std::thread::spawn(move || {
-        write_to_queue(rx);
+        let k = "TRADE_CONTANGO_FETCH_PROCESS_ACTION";
+        match std::env::var(k).unwrap().as_str() {
+            "write-to-queue" => write_to_queue(rx),
+            "write-to-worker" => tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(write_to_worker(rx)),
+            _ => panic!("unknown k={k}"),
+        }
     })];
     for f in fns {
         let tx = tx.clone();
         let t = std::thread::spawn(move || loop {
+            let start_millis = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
             let tickers = backoff_call(f);
+            let end_millis = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
             let t0 = &tickers[0];
-            log::info!("done {:?}_tickers l={} ex={:?}", t0.k, tickers.len(), t0.ex);
-            for ticker in tickers {
-                tx.send(ticker).unwrap();
+            if end_millis - start_millis > 1000 {
+                log::warn!("dur_millis={} > 1000", end_millis - start_millis);
             }
-            std::thread::sleep(std::time::Duration::from_secs(15));
+            let delay_millis = (1000 - (end_millis - start_millis) % 1000) as u64;
+            log::info!(
+                "done {:?}_tickers l={} ex={:?} dur_millis={} delay_millis={}",
+                t0.k,
+                tickers.len(),
+                t0.ex,
+                end_millis - start_millis,
+                delay_millis
+            );
+            tx.send(tickers).unwrap();
+            // XXX: remove delay
+            std::thread::sleep(std::time::Duration::from_millis(delay_millis));
         });
         threads.push(t);
     }
@@ -266,7 +301,7 @@ struct RunArgs {
     command: String,
 }
 
-fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
+fn write_to_queue(rx: std::sync::mpsc::Receiver<Vec<QTicker>>) {
     let mut queue_tickers = vec![];
     fn produce(vec: &Vec<QTicker>) {
         log::info!("produce len={}", vec.len());
@@ -278,7 +313,11 @@ fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
     }
     loop {
         match rx.recv_timeout(std::time::Duration::from_millis(1000)) {
-            Ok(v) => queue_tickers.push(v),
+            Ok(vec) => {
+                for v in vec {
+                    queue_tickers.push(v)
+                }
+            }
             Err(e) => {
                 match e {
                     std::sync::mpsc::RecvTimeoutError::Timeout => {
@@ -295,6 +334,25 @@ fn write_to_queue(rx: std::sync::mpsc::Receiver<QTicker>) {
         if queue_tickers.len() == 10_000 {
             produce(&queue_tickers);
             queue_tickers.clear();
+        }
+    }
+}
+
+async fn write_to_worker(rx: std::sync::mpsc::Receiver<Vec<QTicker>>) {
+    let mut map = SpreadsMap::new();
+    let mut client = TradeContangoClient::connect("http://[::1]:50051")
+        .await
+        .unwrap();
+    loop {
+        for t in rx.recv().unwrap() {
+            map.insert(&t);
+        }
+        if let Some(vec_to_send) = map.find_spreads_all() {
+            log::info!("vec_to_send.len={}", vec_to_send.len());
+            let _ = client
+                .fire_trade(tonic::Request::new(FireTradeReq { list: vec_to_send }))
+                .await
+                .unwrap();
         }
     }
 }
@@ -857,7 +915,7 @@ mod htx_int {
     }
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, Clone)]
 struct QTicker {
     ex: QEx,
     s: String,
@@ -895,16 +953,34 @@ impl QTicker {
         let threshold = 365 * 24 * 60 * 60 * 1000;
         ts >= threshold
     }
+
+    fn conv_to_ticker_req(&self) -> QTickerReq {
+        QTickerReq {
+            ex: self.ex.to_string().to_lowercase(),
+            s: self.s.clone(),
+            st: self.st.to_string().to_lowercase(),
+            k: self.k.to_string().to_lowercase(),
+            ts: self.ts,
+            p: self.p,
+            v: self.v,
+        }
+    }
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, Hash, Eq, PartialEq, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
 enum QKind {
     Spot,
     Futures,
 }
 
-#[derive(Debug, serde::Serialize)]
+impl std::fmt::Display for QKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+#[derive(Debug, serde::Serialize, Hash, Eq, PartialEq, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
 enum QEx {
     Bybit,
@@ -916,7 +992,13 @@ enum QEx {
     Htx,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+impl std::fmt::Display for QEx {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 enum QSt {
     Settling,
@@ -925,8 +1007,178 @@ enum QSt {
     NotFound,
 }
 
+impl std::fmt::Display for QSt {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SpreadsMap<'a> {
+    symbols_to_ignore: HashSet<(&'a str, &'a QEx, &'a QKind)>,
+    symbols_to_re_map: HashMap<(&'a str, &'a QEx, &'a QKind), &'a str>,
+    symbols: HashMap<String, HashMap<QEx, HashMap<QKind, QTicker>>>,
+}
+
+impl<'a> SpreadsMap<'a> {
+    fn new() -> Self {
+        let mut symbols_to_ignore = HashSet::new();
+        // XXX: make symbols map (symbol x names on exchange 1 like y1, on exchange 2 like y2, etc) and remove filter diff_rel < 15
+        symbols_to_ignore.insert(("ZECUSDT", &QEx::Bybit, &QKind::Spot));
+        symbols_to_ignore.insert(("FBUSDT", &QEx::Bybit, &QKind::Spot));
+        symbols_to_ignore.insert(("DEFIUSDT", &QEx::Binance, &QKind::Futures));
+        symbols_to_ignore.insert(("OMNI_USDT", &QEx::Bingx, &QKind::Spot));
+        symbols_to_ignore.insert(("GFT_USDT", &QEx::Bingx, &QKind::Spot));
+        symbols_to_ignore.insert(("QIUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("ALTUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("GASUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("OAXUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("MAGAUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("CATEUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("MDTUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("ASTUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("GPTUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("SOLSUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("WOLFUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("REEFUSDT", &QEx::Mexc, &QKind::Spot));
+        let mut symbols_to_re_map = HashMap::new();
+        symbols_to_re_map.insert(("OMNINETWORK-USDT", &QEx::Bingx, &QKind::Spot), "OMNI-USDT");
+        symbols_to_re_map.insert(("OMNINETWORK_USDT", &QEx::Bingx, &QKind::Spot), "OMNI_USDT");
+        Self {
+            symbols_to_ignore,
+            symbols_to_re_map,
+            symbols: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, t: &QTicker) {
+        // XXX: workout USDC
+        if t.st != QSt::Trading || t.p == 0.0 || t.v == 0.0 || !t.s.ends_with("USDT") {
+            return;
+        }
+        let key_to_ignore = (t.s.as_str(), &t.ex, &t.k);
+        if self.symbols_to_ignore.contains(&key_to_ignore) {
+            log::debug!("ignoring {:?}", key_to_ignore);
+            return;
+        }
+        let (s_int_1, _) = Self::conv_to_symbol_int_1(
+            *self
+                .symbols_to_re_map
+                .get(&key_to_ignore)
+                .unwrap_or(&t.s.as_str()),
+            0.0,
+        );
+        let ex = {
+            if !self.symbols.contains_key(&s_int_1) {
+                self.symbols.insert(s_int_1.clone(), HashMap::new());
+            }
+            self.symbols.get_mut(&s_int_1).unwrap()
+        };
+        let kind = {
+            if !ex.contains_key(&t.ex) {
+                ex.insert(t.ex, HashMap::new());
+            }
+            ex.get_mut(&t.ex).unwrap()
+        };
+        kind.insert(t.k, t.clone());
+    }
+
+    fn find_spreads(self: &Self, s: &str) -> Option<(QTicker, QTicker)> {
+        if !self.symbols.contains_key(s) {
+            return None;
+        }
+        let mut min_spot: Option<QTicker> = None;
+        let mut max_fut: Option<QTicker> = None;
+        let m1_millis = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            - 60 * 1000;
+        for (_, kind_map) in self.symbols.get(s).unwrap() {
+            for (kind, t) in kind_map {
+                if t.ts < m1_millis {
+                    continue;
+                }
+                match kind {
+                    QKind::Futures => match &max_fut {
+                        Some(v) => {
+                            if v.p < t.p {
+                                max_fut = Some(t.clone());
+                            }
+                        }
+                        None => max_fut = Some(t.clone()),
+                    },
+                    QKind::Spot => match &min_spot {
+                        Some(v) => {
+                            if v.p > t.p {
+                                min_spot = Some(t.clone());
+                            }
+                        }
+                        None => min_spot = Some(t.clone()),
+                    },
+                }
+            }
+        }
+        if min_spot.is_none() || max_fut.is_none() {
+            return None;
+        }
+        Some((min_spot.unwrap(), max_fut.unwrap()))
+    }
+
+    fn find_spreads_all(self: &Self) -> Option<Vec<SpreadsReq>> {
+        let mut spreads = vec![];
+        for (k, _) in self.symbols.iter() {
+            match self.find_spreads(k) {
+                Some(s) => {
+                    let (_, p_spot) = SpreadsMap::conv_to_symbol_int_1(&s.0.s, s.0.p);
+                    let (_, p_fut) = SpreadsMap::conv_to_symbol_int_1(&s.1.s, s.1.p);
+                    let diff_rel = (p_fut - p_spot) / p_spot * 100.0;
+                    if diff_rel > 3.0 && diff_rel < 15.0 {
+                        log::debug!("k={} diff_rel={}", k, diff_rel);
+                        spreads.push(SpreadsReq {
+                            p_spot,
+                            p_fut,
+                            diff_rel,
+                            t_spot: Some(s.0.conv_to_ticker_req()),
+                            t_fut: Some(s.1.conv_to_ticker_req()),
+                        });
+                    } else {
+                        log::debug!("k={} tiny spread", k);
+                    }
+                }
+                None => {}
+            }
+        }
+        if spreads.is_empty() {
+            None
+        } else {
+            Some(spreads)
+        }
+    }
+
+    fn conv_to_symbol_int_1(symbol: &str, price: f64) -> (String, f64) {
+        // XXX: make regexp for all cases
+        let mut symbol_int_1 = regex::Regex::new(r"^10*")
+            .unwrap()
+            .replace_all(symbol, "")
+            .to_string()
+            .replace('-', "")
+            .replace('_', "");
+        if symbol.chars().nth(0).unwrap() == '1' && symbol.chars().nth(1).unwrap() != '0' {
+            symbol_int_1 = format!("1{}", symbol_int_1);
+        }
+        let mult: f64 = match regex::Regex::new(r"10*").unwrap().find(symbol) {
+            Some(v) => v.as_str().to_string().parse().unwrap(),
+            None => 1.0,
+        };
+        (symbol_int_1, price / mult)
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use crate::{QEx, QKind, QSt, QTicker, SpreadsMap};
+
     #[test]
     fn test_validate_millis() {
         use crate::QTicker;
@@ -945,11 +1197,128 @@ mod test {
             serde_json::to_string(&QKind::Futures).unwrap(),
             "\"futures\""
         );
+        assert_eq!(QEx::Bybit.to_string(), "Bybit");
     }
 
     #[test]
     fn test_f64_parse() {
         assert_eq!("0.0".parse::<f64>().unwrap(), 0.0);
         assert_eq!("0".parse::<f64>().unwrap(), 0.0);
+    }
+
+    fn gen_tickers_for_price_spread(ts_millis: i64) -> Vec<QTicker> {
+        vec![
+            QTicker::new(
+                QEx::Mexc,
+                "BTCUSDT",
+                QSt::Trading,
+                QKind::Spot,
+                ts_millis,
+                "60000.0",
+                "1.0",
+            ),
+            QTicker::new(
+                QEx::Mexc,
+                "BTCUSDT",
+                QSt::Trading,
+                QKind::Spot,
+                ts_millis,
+                "61000.0",
+                "1.0",
+            ),
+            QTicker::new(
+                QEx::Mexc,
+                "BTCUSDT",
+                QSt::Trading,
+                QKind::Futures,
+                ts_millis,
+                "62000.0",
+                "1.0",
+            ),
+            QTicker::new(
+                QEx::Mexc,
+                "BTCUSDT",
+                QSt::Trading,
+                QKind::Futures,
+                ts_millis,
+                "63000.0",
+                "1.0",
+            ),
+        ]
+    }
+
+    #[test]
+    fn test_trigger_price_spread() {
+        let now_millis = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        {
+            let mut map = crate::SpreadsMap::new();
+            map.insert(&QTicker::new(
+                QEx::Mexc,
+                "BTCUSDT",
+                QSt::Trading,
+                QKind::Spot,
+                now_millis,
+                "65000.0",
+                "1.0",
+            ));
+            for t in gen_tickers_for_price_spread(now_millis) {
+                map.insert(&t);
+            }
+            let out = map.find_spreads("BTCUSDT").unwrap();
+            assert_eq!(out.0.p, 61000.0);
+            assert_eq!(out.1.p, 63000.0);
+        }
+        {
+            let mut map = crate::SpreadsMap::new();
+            for t in gen_tickers_for_price_spread(now_millis - 2 * 60 * 1000) {
+                map.insert(&t);
+            }
+            let out = map.find_spreads("BTCUSDT");
+            assert!(out.is_none());
+        }
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("1000000PEPEUSDT", 100.0),
+            ("PEPEUSDT".into(), 0.00010)
+        );
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("10PEPEUSDT", 100.0),
+            ("PEPEUSDT".into(), 10.0)
+        );
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("1PEPEUSDT", 100.0),
+            ("1PEPEUSDT".into(), 100.0)
+        );
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("PEPEUSDT", 100.0),
+            ("PEPEUSDT".into(), 100.0)
+        );
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("PEPE-USDT", 1.0),
+            ("PEPEUSDT".into(), 1.0)
+        );
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("PEPE_USDT", 1.0),
+            ("PEPEUSDT".into(), 1.0)
+        );
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("PEPE1-USDT", 1.0),
+            ("PEPE1USDT".into(), 1.0)
+        );
+        assert_eq!(
+            SpreadsMap::conv_to_symbol_int_1("0DOGUSDT", 1.0),
+            ("0DOGUSDT".into(), 1.0)
+        );
+    }
+
+    #[test]
+    fn test_set() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(("BTCUSDT", "bybit"));
+        set.insert(("BTCUSDT", "binance"));
+        assert!(set.contains(&("BTCUSDT", "bybit")));
     }
 }
