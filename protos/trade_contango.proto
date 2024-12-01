@@ -1,0 +1,32 @@
+syntax = "proto3";
+package trade_contango;
+
+service TradeContango {
+    rpc FireTrade (FireTradeReq) returns (FireTradeRes);
+}
+
+message FireTradeReq {
+    repeated SpreadsReq list = 1;
+}
+
+message SpreadsReq {
+    double p_spot = 1;
+    double p_fut = 2;
+    double diff_rel = 3;
+    QTickerReq t_spot = 4;
+    QTickerReq t_fut = 5;
+}
+
+message QTickerReq {
+    string ex = 1;
+    string s = 2;
+    string st = 3;
+    string k = 4;
+    int64 ts = 5;
+    double p = 6;
+    double v = 7;
+}
+
+message FireTradeRes {
+    int32 run_initiated = 1;
+}
