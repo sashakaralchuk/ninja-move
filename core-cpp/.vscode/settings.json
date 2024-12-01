@@ -89,6 +89,7 @@
         "charconv": "cpp",
         "filesystem": "cpp",
         "queue": "cpp",
-        "*.def": "cpp"
+        "*.def": "cpp",
+        "*.inc": "cpp"
     }
 }

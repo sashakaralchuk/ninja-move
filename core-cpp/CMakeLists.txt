@@ -8,6 +8,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 add_library(say-hello-lib tt/hello/hello.hpp tt/hello/hello.cxx)
 
 find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
+
+set(CMAKE_PREFIX_PATH /Users/yy/dev/python/ninja-move/core-cpp/libs/grpc/install_dir)
+option(protobuf_MODULE_COMPATIBLE TRUE)
+find_package(Protobuf CONFIG REQUIRED)
+message(STATUS "Using protobuf ${Protobuf_VERSION}")
+set(_PROTOBUF_LIBPROTOBUF protobuf::libprotobuf)
+set(_REFLECTION gRPC::grpc++_reflection)
+set(_PROTOBUF_PROTOC $<TARGET_FILE:protobuf::protoc>)
+find_package(gRPC CONFIG REQUIRED)
+message(STATUS "Using gRPC ${gRPC_VERSION}")
+set(_GRPC_GRPCPP gRPC::grpc++)
+set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
 
 find_library(LIBHV NAMES hv PATHS libs/libhv/build/lib)
 find_library(CURL NAMES curl PATHS libs/curl/build/lib)
@@ -19,6 +32,34 @@ add_subdirectory(tt/SqrtLibrary)
 add_subdirectory(libs/json)
 add_subdirectory(libs/clickhouse-cpp)
 add_subdirectory(libs/googletest)
+
+get_filename_component(hw_proto "../protos/trade_contango.proto" ABSOLUTE)
+get_filename_component(hw_proto_path "${hw_proto}" PATH)
+set(hw_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/trade_contango.pb.cc")
+set(hw_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/trade_contango.pb.h")
+set(hw_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/trade_contango.grpc.pb.cc")
+set(hw_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/trade_contango.grpc.pb.h")
+add_custom_command(
+      OUTPUT "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
+      COMMAND $<TARGET_FILE:protobuf::protoc>
+      ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
+        --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+        -I "${hw_proto_path}"
+        --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+        "${hw_proto}"
+      DEPENDS "${hw_proto}")
+include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+add_library(hw_grpc_proto
+  ${hw_grpc_srcs}
+  ${hw_grpc_hdrs}
+  ${hw_proto_srcs}
+  ${hw_proto_hdrs})
+target_link_libraries(hw_grpc_proto
+    absl::check
+    gRPC::grpc++_reflection
+    gRPC::grpc++
+    protobuf::libprotobuf
+)
 
 add_executable(t t.cxx tt/t2.cxx)
 target_include_directories(t PRIVATE
@@ -44,7 +85,6 @@ target_include_directories(run_trigger_on_contango_2024_11_11 PRIVATE
     libs/libhv/build/include/hv
     libs/spdlog/include
     libs/clickhouse-cpp
-    libs/clickhouse-cpp/contrib/absl
     libs/zlib
     libs/curl/include/curl
     libs/gmp-6.3.0/build/include
@@ -58,6 +98,14 @@ target_link_libraries(run_trigger_on_contango_2024_11_11 PRIVATE
     ${CURL}
     ${GMP}
     OpenSSL::SSL
+    hw_grpc_proto
+    absl::check
+    absl::flags
+    absl::flags_parse
+    absl::log
+    gRPC::grpc++_reflection
+    gRPC::grpc++
+    protobuf::libprotobuf
 )
 
 enable_testing()

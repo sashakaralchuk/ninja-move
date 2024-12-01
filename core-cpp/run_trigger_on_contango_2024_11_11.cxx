@@ -2,6 +2,8 @@
 #include <clickhouse/client.h>
 #include <curl/curl.h>
 #include <gmpxx.h>
+#include <grpcpp/ext/proto_server_reflection_plugin.h>
+#include <grpcpp/health_check_service_interface.h>
 #include <openssl/hmac.h>
 #include <spdlog/cfg/env.h>
 #include <spdlog/spdlog.h>
@@ -10,21 +12,65 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <regex>
+#include <string>
 
+#include "absl/flags/flag.h"
+#include "absl/flags/parse.h"
+#include "absl/strings/str_format.h"
+#include "grpcpp/grpcpp.h"
 #include "src/models.hpp"
+#include "trade_contango.grpc.pb.h"
 
-void listen_gateio_tickers();
+using grpc::Server;
+using grpc::ServerBuilder;
+using grpc::ServerContext;
+using grpc::Status;
+using trade_contango::FireTradeReq;
+using trade_contango::FireTradeRes;
+using trade_contango::QTickerReq;
+using trade_contango::SpreadsReq;
+using trade_contango::TradeContango;
 
-int main() {
+ABSL_FLAG(uint16_t, port, 50051, "Server port for the service");
+
+void listen_gateio_tickers_debug();
+void listen_gateio_tickers_v1();
+void listen_gateio_tickers_v2(int argc, char** argv);
+
+int main(int argc, char** argv) {
     spdlog::cfg::load_env_levels();
-    listen_gateio_tickers();
+    std::string v = std::getenv("TICKERS_VERSION");
+    if (v == "debug") {
+        listen_gateio_tickers_debug();
+    } else if (v == "v1") {
+        listen_gateio_tickers_v1();
+    } else if (v == "v2") {
+        listen_gateio_tickers_v2(argc, argv);
+    } else {
+        throw std::runtime_error("unexpected TICKERS_VERSION=" + v);
+    }
     return 0;
 }
 
 std::ostream& operator<<(std::ostream& os, TradeInt const& o) {
     os << o.toString();
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, SpreadsReq const& o) {
+    auto t_fut = o.t_fut();
+    auto t_spot = o.t_spot();
+    os << "SpreadsReq{p_spot=" << o.p_spot() << ",p_fut=" << o.p_fut()
+       << ",diff_rel=" << o.diff_rel()
+       << ",t_spot=QTickerReq{ex=" << t_spot.ex() << ",s=" << t_spot.s()
+       << ",st=" << t_spot.st() << ",k=" << t_spot.k() << ",ts=" << t_spot.ts()
+       << ",p=" << t_spot.p() << ",v=" << t_spot.v()
+       << "},t_fut=QTickerReq{ex=" << t_fut.ex() << ",s=" << t_fut.s()
+       << ",st=" << t_fut.st() << ",k=" << t_fut.k() << ",ts=" << t_fut.ts()
+       << ",p=" << t_fut.p() << ",v=" << t_fut.v() << "}}" << std::endl;
     return os;
 }
 
@@ -112,6 +158,7 @@ class ClientPublic : public hv::WebSocketClient {
 
     virtual void init_idle() = 0;
     virtual void subscribe_to_trades(std::string& symbol) = 0;
+    virtual void subscribe_to_depth(std::string& symbol) = 0;
     virtual void ping() = 0;
 
    protected:
@@ -1200,48 +1247,100 @@ std::optional<OpportunityRow> is_opportunity_exists(
     return opp_row_t;
 }
 
-void listen_gateio_tickers() {
-    clickhouse::Client clickhouse_client(
-        clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
-    std::map<std::string, long> last_timestamps;
-    std::map<std::string, double> last_prices;
-    std::map<std::string, ClientPublic*> ws_clients;
-    ws_clients["bybit-fut"] = new ClientPublicBybit("fut");
-    ws_clients["bybit-spot"] = new ClientPublicBybit("spot");
-    ws_clients["mexc-fut"] = new ClientPublicMexc("fut");
-    ws_clients["mexc-spot"] = new ClientPublicMexc("spot");
-    ws_clients["gateio-fut"] = new ClientPublicGateio("fut");
-    ws_clients["gateio-spot"] = new ClientPublicGateio("spot");
-    ws_clients["htx-fut"] = new ClientPublicHtx("fut");
-    ws_clients["htx-spot"] = new ClientPublicHtx("spot");
-    for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
-        o->second->init_idle();
-    }
-    auto is_all_ws_connected = [&]() -> bool {
+class SpreadsHouse {
+   public:
+    SpreadsHouse() {}
+
+    void init_idle() {
+        ws_clients["bybit-fut"] = new ClientPublicBybit("fut");
+        ws_clients["bybit-spot"] = new ClientPublicBybit("spot");
+        ws_clients["mexc-fut"] = new ClientPublicMexc("fut");
+        ws_clients["mexc-spot"] = new ClientPublicMexc("spot");
+        ws_clients["gateio-fut"] = new ClientPublicGateio("fut");
+        ws_clients["gateio-spot"] = new ClientPublicGateio("spot");
+        ws_clients["htx-fut"] = new ClientPublicHtx("fut");
+        ws_clients["htx-spot"] = new ClientPublicHtx("spot");
         for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
-            if (!o->second->isConnected()) {
-                return false;
+            o->second->init_idle();
+        }
+        auto is_all_ws_connected = [&]() -> bool {
+            for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+                if (!o->second->isConnected()) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        for (int i = 0; i < 100; i++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (is_all_ws_connected()) {
+                spdlog::info("connections set up");
+                break;
             }
         }
-        return true;
-    };
-    for (int i = 0; i < 100; i++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (is_all_ws_connected()) {
-            spdlog::info("connections set up");
-            break;
+        if (!is_all_ws_connected()) {
+            throw std::runtime_error("connections haven't been set up");
         }
     }
-    if (!is_all_ws_connected()) {
-        throw std::runtime_error("connections haven't been set up");
+
+    void ping() {
+        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+            o->second->ping();
+        }
     }
+
+    ClientPublic* get_client(std::string ex, std::string kind) {
+        std::string k = ex + "-" + kind;
+        if (ws_clients.find(k) == ws_clients.end()) {
+            throw std::runtime_error("unexpected key=" + k);
+        }
+        return ws_clients[k];
+    }
+
+   private:
+    std::map<std::string, ClientPublic*> ws_clients;
+};
+
+void listen_gateio_tickers_debug() {
+    std::string symbol = "BTC_USDT";
+    ClientPublicMexc ws_mexc("spot");
+    ws_mexc.init_idle();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    ws_mexc.onmessage_depth = [&](const Depth depth) {};
+    ws_mexc.subscribe_to_depth(symbol);
     std::thread _([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
-            for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
-                o->second->ping();
-            }
+            ws_mexc.ping();
+        }
+    });
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        spdlog::info("tick");
+        if (ws_mexc.order_book_cache.get_last_update_id() > 0) {
+            double ask = ws_mexc.order_book_cache.get_bottom_ask().get_d();
+            double bid = ws_mexc.order_book_cache.get_top_bid().get_d();
+            std::cout << "\x1B[2J\x1B[H"
+                      << "ask=" << ask << std::endl
+                      << "bid=" << bid << std::endl;
+            ws_mexc.order_book_cache.print(7);
+        }
+    }
+}
+
+void listen_gateio_tickers_v1() {
+    clickhouse::Client clickhouse_client(
+        clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
+    std::map<std::string, long> last_timestamps;
+    std::map<std::string, double> last_prices;
+    SpreadsHouse sh;
+    sh.init_idle();
+    std::thread _([&]() {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            spdlog::info("ping");
+            sh.ping();
         }
     });
     OpportunityRow opp_row;
@@ -1257,23 +1356,17 @@ void listen_gateio_tickers() {
             spdlog::info("there is no opp");
         }
     }
-    std::string key_fut = opp_row.fut_ex + "-fut";
-    if (ws_clients.find(key_fut) == ws_clients.end()) {
-        throw std::runtime_error("unexpected fut_ex=" + opp_row.fut_ex);
-    }
-    std::string key_spot = opp_row.spot_ex + "-spot";
-    if (ws_clients.find(key_spot) == ws_clients.end()) {
-        throw std::runtime_error("unexpected spot_ex=" + opp_row.spot_ex);
-    }
     auto handle_trades = [&](const TradeInt trade_int) {
         std::string key = trade_int.k + "-" + trade_int.ex;
         last_timestamps[key] = trade_int.ts;
         last_prices[key] = trade_int.p;
     };
-    ws_clients[key_fut]->onmessage_trade = handle_trades;
-    ws_clients[key_fut]->subscribe_to_trades(opp_row.fut_symbol);
-    ws_clients[key_spot]->onmessage_trade = handle_trades;
-    ws_clients[key_spot]->subscribe_to_trades(opp_row.spot_symbol);
+    ClientPublic* client_fut = sh.get_client(opp_row.fut_ex, "fut");
+    client_fut->onmessage_trade = handle_trades;
+    client_fut->subscribe_to_trades(opp_row.fut_symbol);
+    ClientPublic* client_spot = sh.get_client(opp_row.spot_ex, "spot");
+    client_spot->onmessage_trade = handle_trades;
+    client_spot->subscribe_to_trades(opp_row.fut_symbol);
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         long now_millis =
@@ -1300,4 +1393,80 @@ void listen_gateio_tickers() {
             break;
         }
     }
+}
+
+static int trade_obj_raw_f = 0;
+static std::optional<SpreadsReq> spreads_req = {};
+
+class TradeContangoServiceImpl final : public TradeContango::Service {
+    Status FireTrade(ServerContext* context, const FireTradeReq* req,
+                     FireTradeRes* reply) override {
+        reply->set_run_initiated(trade_obj_raw_f == 0 ? 1 : 0);
+        if (trade_obj_raw_f == 0) {
+            spreads_req = req->list()[0];
+            trade_obj_raw_f = 1;
+        }
+        return Status::OK;
+    }
+};
+
+void listen_gateio_tickers_v2(int argc, char** argv) {
+    SpreadsHouse sh;
+    sh.init_idle();
+    std::thread _1([&]() {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            spdlog::info("ping");
+            sh.ping();
+        }
+    });
+    std::thread _2([&]() {
+        while (trade_obj_raw_f == 0) {
+            continue;
+        }
+        SpreadsReq obj = spreads_req.value();
+        auto client_fut = sh.get_client(obj.t_fut().ex(), "fut");
+        std::string symbol_fut = obj.t_fut().s();
+        client_fut->onmessage_depth = [&](const Depth depth) {};
+        client_fut->subscribe_to_depth(symbol_fut);
+        auto client_spot = sh.get_client(obj.t_spot().ex(), "spot");
+        std::string symbol_spot = obj.t_spot().s();
+        client_spot->onmessage_depth = [&](const Depth depth) {};
+        client_spot->subscribe_to_depth(symbol_spot);
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            bool is_ready_fut =
+                client_fut->order_book_cache.get_last_update_id() != 0;
+            bool is_ready_spot =
+                client_spot->order_book_cache.get_last_update_id() != 0;
+            spdlog::info("tick is_ready_fut={} is_ready_spot={}", is_ready_fut,
+                         is_ready_spot);
+            if (is_ready_fut && is_ready_spot) {
+                double bid_fut =
+                    client_fut->order_book_cache.get_top_bid().get_d();
+                double bid_spot =
+                    client_spot->order_book_cache.get_top_bid().get_d();
+                double diff_rel_2 = (bid_fut - bid_spot) / bid_spot * 100;
+                std::cout << "bid_spot=" << bid_spot << ", bid_fut=" << bid_fut
+                          << ", diff_rel_2=" << diff_rel_2 << std::endl;
+                std::cout << "p_spot=" << obj.t_spot().p()
+                          << ", p_fut=" << obj.t_fut().p()
+                          << ", diff_rel=" << obj.diff_rel() << std::endl;
+                std::cout << "obj=" << obj << std::endl;
+                break;
+            }
+        }
+        // TODO: try to send just last bids (rust parser)
+        // TODO: handle price converge here (wait till spread will be <0.1%)
+    });
+    std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
+    TradeContangoServiceImpl service;
+    grpc::EnableDefaultHealthCheckService(true);
+    grpc::reflection::InitProtoReflectionServerBuilderPlugin();
+    ServerBuilder builder;
+    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+    builder.RegisterService(&service);
+    std::unique_ptr<Server> server(builder.BuildAndStart());
+    spdlog::info("Server listening on {}", server_address);
+    server->Wait();
 }

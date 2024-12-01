@@ -14,6 +14,7 @@ run-trigger-on-contango-2024-11-11:
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
 		THRESHOLD_REL=3.0 \
+		TICKERS_VERSION=v2 \
 		./build/run_trigger_on_contango_2024_11_11
 
 clone-libs:
@@ -32,3 +33,15 @@ install-gmp:
 	# make all
 	# make install
 	# cp gmpxx.h $(pwd)/build/include
+
+install-grpc:
+	# https://grpc.io/docs/languages/cpp/quickstart
+	# git clone --recurse-submodules -b v1.66.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc
+	# cd grpc
+	# mkdir -p cmake/build
+	# cd cmake/build
+	# cmake -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$(pwd)/../../install_dir" ../..
+	# make -j 16
+	# make install
+
+
