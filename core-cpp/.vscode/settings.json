@@ -90,6 +90,7 @@
         "filesystem": "cpp",
         "queue": "cpp",
         "*.def": "cpp",
-        "*.inc": "cpp"
+        "*.inc": "cpp",
+        "string_span": "cpp"
     }
 }

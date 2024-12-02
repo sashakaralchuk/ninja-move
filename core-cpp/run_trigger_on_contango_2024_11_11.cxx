@@ -60,23 +60,29 @@ std::ostream& operator<<(std::ostream& os, TradeInt const& o) {
     return os;
 }
 
-std::ostream& operator<<(std::ostream& os, SpreadsReq const& o) {
-    auto t_fut = o.t_fut();
-    auto t_spot = o.t_spot();
-    os << "SpreadsReq{p_spot=" << o.p_spot() << ",p_fut=" << o.p_fut()
-       << ",diff_rel=" << o.diff_rel()
-       << ",t_spot=QTickerReq{ex=" << t_spot.ex() << ",s=" << t_spot.s()
-       << ",st=" << t_spot.st() << ",k=" << t_spot.k() << ",ts=" << t_spot.ts()
-       << ",p=" << t_spot.p() << ",v=" << t_spot.v()
-       << "},t_fut=QTickerReq{ex=" << t_fut.ex() << ",s=" << t_fut.s()
-       << ",st=" << t_fut.st() << ",k=" << t_fut.k() << ",ts=" << t_fut.ts()
-       << ",p=" << t_fut.p() << ",v=" << t_fut.v() << "}}" << std::endl;
-    return os;
-}
-
 std::string format_as(TradeInt const& o) {
     std::ostringstream ss;
     ss << o.toString();
+    return std::move(ss).str();
+}
+
+std::ostream& operator<<(std::ostream& os, QTickerReq const& o) {
+    os << "QTickerReq{ex=" << o.ex() << ",s=" << o.s() << ",st=" << o.st()
+       << ",k=" << o.k() << ",ts=" << o.ts() << ",p=" << o.p() << ",v=" << o.v()
+       << "}";
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, SpreadsReq const& o) {
+    os << "SpreadsReq{p_spot=" << o.p_spot() << ",p_fut=" << o.p_fut()
+       << ",diff_rel=" << o.diff_rel() << ",t_spot=" << o.t_spot()
+       << ",t_fut=" << o.t_fut() << "}";
+    return os;
+}
+
+std::string format_as(SpreadsReq const& o) {
+    std::ostringstream ss;
+    ss << o;
     return std::move(ss).str();
 }
 
@@ -330,7 +336,8 @@ class ClientPublicGateio : public ClientPublic {
                                 .asks = asks,
                                 .bids = bids};
                 if (d.u > order_book_cache.get_last_update_id()) {
-                    spdlog::warn("order book contains non-incremental depth");
+                    spdlog::warn(
+                        "[gateio] order book contains non-incremental depth");
                     order_book_cache.apply_orders_force(d.u, d.asks, d.bids);
                 }
                 onmessage_depth(d);
@@ -369,7 +376,8 @@ class ClientPublicGateio : public ClientPublic {
                                 .asks = asks,
                                 .bids = bids};
                 if (d.u > order_book_cache.get_last_update_id()) {
-                    spdlog::warn("order book contains non-incremental depth");
+                    spdlog::warn(
+                        "[gateio] order book contains non-incremental depth");
                     order_book_cache.apply_orders_force(d.u, d.asks, d.bids);
                 }
                 onmessage_depth(d);
@@ -1425,6 +1433,7 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
             continue;
         }
         SpreadsReq obj = spreads_req.value();
+        spdlog::info("obj={}", format_as(obj));
         auto client_fut = sh.get_client(obj.t_fut().ex(), "fut");
         std::string symbol_fut = obj.t_fut().s();
         client_fut->onmessage_depth = [&](const Depth depth) {};
@@ -1439,25 +1448,37 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
                 client_fut->order_book_cache.get_last_update_id() != 0;
             bool is_ready_spot =
                 client_spot->order_book_cache.get_last_update_id() != 0;
-            spdlog::info("tick is_ready_fut={} is_ready_spot={}", is_ready_fut,
-                         is_ready_spot);
+            spdlog::info("tick is_ready_spot={} is_ready_fut={}", is_ready_spot,
+                         is_ready_fut);
             if (is_ready_fut && is_ready_spot) {
                 double bid_fut =
                     client_fut->order_book_cache.get_top_bid().get_d();
                 double bid_spot =
                     client_spot->order_book_cache.get_top_bid().get_d();
                 double diff_rel_2 = (bid_fut - bid_spot) / bid_spot * 100;
-                std::cout << "bid_spot=" << bid_spot << ", bid_fut=" << bid_fut
-                          << ", diff_rel_2=" << diff_rel_2 << std::endl;
-                std::cout << "p_spot=" << obj.t_spot().p()
-                          << ", p_fut=" << obj.t_fut().p()
-                          << ", diff_rel=" << obj.diff_rel() << std::endl;
-                std::cout << "obj=" << obj << std::endl;
+                spdlog::info("bid_spot={} bid_fut={} diff_rel_2={}", bid_spot,
+                             bid_fut, diff_rel_2);
+                spdlog::info("p_spot={} p_fut={} diff_rel={}", obj.t_spot().p(),
+                             obj.t_fut().p(), obj.diff_rel());
+                spdlog::info("obj={}", format_as(obj));
                 break;
             }
         }
-        // TODO: try to send just last bids (rust parser)
-        // TODO: handle price converge here (wait till spread will be <0.1%)
+        spdlog::info("start waiting for price converge");
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            double bid_fut = client_fut->order_book_cache.get_top_bid().get_d();
+            double bid_spot =
+                client_spot->order_book_cache.get_top_bid().get_d();
+            double diff_rel = (bid_fut - bid_spot) / bid_spot * 100;
+            spdlog::info("bid_spot={:.6f} bid_fut={:.6f} diff_rel={:.2f}",
+                         bid_spot, bid_fut, diff_rel);
+            if (diff_rel < 0.5) {
+                spdlog::info("close trades");
+                spdlog::info("obj={}", format_as(obj));
+                break;
+            }
+        }
     });
     std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
     TradeContangoServiceImpl service;
