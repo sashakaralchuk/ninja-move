@@ -127,12 +127,14 @@ fn run_fetch_process_tickers() {
         htx_int::fetch_spot_tickers_from_api,
     ];
     if std::env::var("TRADE_CONTANGO_ALL_EXCHANGES").unwrap_or("0".into()) == "1" {
-        fns.push(binance_int::fetch_derivatives_tickers_from_api);
-        fns.push(binance_int::fetch_spot_tickers_from_api);
-        fns.push(kucoin_int::fetch_derivatives_tickers_from_api);
-        fns.push(kucoin_int::fetch_spot_tickers_from_api);
-        fns.push(bingx_int::fetch_derivatives_tickers_from_api);
-        fns.push(bingx_int::fetch_spot_tickers_from_api);
+        fns.append(&mut vec![
+            binance_int::fetch_derivatives_tickers_from_api,
+            binance_int::fetch_spot_tickers_from_api,
+            kucoin_int::fetch_derivatives_tickers_from_api,
+            kucoin_int::fetch_spot_tickers_from_api,
+            bingx_int::fetch_derivatives_tickers_from_api,
+            bingx_int::fetch_spot_tickers_from_api,
+        ]);
     }
     let mut threads = vec![std::thread::spawn(move || {
         let k = "TRADE_CONTANGO_FETCH_PROCESS_ACTION";
@@ -506,7 +508,7 @@ mod bybit_int {
             .iter()
             .map(|x| {
                 let s = x.get("symbol").unwrap().as_str().unwrap();
-                let p = x.get("ask1Price").unwrap().as_str().unwrap();
+                let p = x.get("bid1Price").unwrap().as_str().unwrap();
                 let v = x.get("volume24h").unwrap().as_str().unwrap();
                 QTicker::new(QEx::Bybit, s, QSt::Trading, QKind::Spot, ts, p, v)
             })
@@ -665,7 +667,7 @@ mod mexc_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("symbol").unwrap().as_str().unwrap();
-                    let p = match x.get("ask1") {
+                    let p = match x.get("bid1") {
                         Some(v) => v.as_f64().unwrap().to_string(),
                         _ => "-1.0".into(),
                     };
@@ -691,7 +693,7 @@ mod mexc_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("symbol").unwrap().as_str().unwrap();
-                    let p = x.get("lastPrice").unwrap().as_str().unwrap();
+                    let p = x.get("bidPrice").unwrap().as_str().unwrap();
                     let v = x.get("volume").unwrap().as_str().unwrap();
                     QTicker::new(QEx::Mexc, s, QSt::Trading, QKind::Spot, ts, p, v)
                 })
@@ -787,7 +789,7 @@ mod gateio_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("currency_pair").unwrap().as_str().unwrap();
-                    let p_raw = x.get("lowest_ask").unwrap().as_str().unwrap();
+                    let p_raw = x.get("highest_bid").unwrap().as_str().unwrap();
                     let p = if p_raw == "" { "-1.0" } else { p_raw };
                     // XXX: collect base_volume and quote_volume
                     let v = x.get("base_volume").unwrap().as_str().unwrap();
@@ -906,7 +908,7 @@ mod htx_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("symbol").unwrap().as_str().unwrap();
-                    let p = x.get("ask").unwrap().as_f64().unwrap().to_string();
+                    let p = x.get("bid").unwrap().as_f64().unwrap().to_string();
                     let v = x.get("vol").unwrap().as_f64().unwrap().to_string();
                     QTicker::new(QEx::Htx, s, QSt::Trading, QKind::Spot, ts, &p, &v)
                 })
@@ -1018,6 +1020,8 @@ struct SpreadsMap<'a> {
     symbols_to_ignore: HashSet<(&'a str, &'a QEx, &'a QKind)>,
     symbols_to_re_map: HashMap<(&'a str, &'a QEx, &'a QKind), &'a str>,
     symbols: HashMap<String, HashMap<QEx, HashMap<QKind, QTicker>>>,
+    diff_ref_bottom: f64,
+    diff_ref_top: f64,
 }
 
 impl<'a> SpreadsMap<'a> {
@@ -1026,6 +1030,7 @@ impl<'a> SpreadsMap<'a> {
         // XXX: make symbols map (symbol x names on exchange 1 like y1, on exchange 2 like y2, etc) and remove filter diff_rel < 15
         symbols_to_ignore.insert(("ZECUSDT", &QEx::Bybit, &QKind::Spot));
         symbols_to_ignore.insert(("FBUSDT", &QEx::Bybit, &QKind::Spot));
+        symbols_to_ignore.insert(("MEUSDT", &QEx::Bybit, &QKind::Spot));
         symbols_to_ignore.insert(("DEFIUSDT", &QEx::Binance, &QKind::Futures));
         symbols_to_ignore.insert(("OMNI_USDT", &QEx::Bingx, &QKind::Spot));
         symbols_to_ignore.insert(("GFT_USDT", &QEx::Bingx, &QKind::Spot));
@@ -1041,6 +1046,7 @@ impl<'a> SpreadsMap<'a> {
         symbols_to_ignore.insert(("SOLSUSDT", &QEx::Mexc, &QKind::Spot));
         symbols_to_ignore.insert(("WOLFUSDT", &QEx::Mexc, &QKind::Spot));
         symbols_to_ignore.insert(("REEFUSDT", &QEx::Mexc, &QKind::Spot));
+        symbols_to_ignore.insert(("ME_USDT", &QEx::Gateio, &QKind::Spot));
         let mut symbols_to_re_map = HashMap::new();
         symbols_to_re_map.insert(("OMNINETWORK-USDT", &QEx::Bingx, &QKind::Spot), "OMNI-USDT");
         symbols_to_re_map.insert(("OMNINETWORK_USDT", &QEx::Bingx, &QKind::Spot), "OMNI_USDT");
@@ -1048,6 +1054,14 @@ impl<'a> SpreadsMap<'a> {
             symbols_to_ignore,
             symbols_to_re_map,
             symbols: HashMap::new(),
+            diff_ref_bottom: std::env::var("DIFF_REL_BOTTOM_THRESHOLD")
+                .unwrap()
+                .parse::<f64>()
+                .unwrap(),
+            diff_ref_top: std::env::var("DIFF_REL_TOP_THRESHOLD")
+                .unwrap()
+                .parse::<f64>()
+                .unwrap(),
         }
     }
 
@@ -1133,7 +1147,7 @@ impl<'a> SpreadsMap<'a> {
                     let (_, p_spot) = SpreadsMap::conv_to_symbol_int_1(&s.0.s, s.0.p);
                     let (_, p_fut) = SpreadsMap::conv_to_symbol_int_1(&s.1.s, s.1.p);
                     let diff_rel = (p_fut - p_spot) / p_spot * 100.0;
-                    if diff_rel > 3.0 && diff_rel < 15.0 {
+                    if diff_rel >= self.diff_ref_bottom && diff_rel <= self.diff_ref_top {
                         log::debug!("k={} diff_rel={}", k, diff_rel);
                         spreads.push(SpreadsReq {
                             p_spot,
