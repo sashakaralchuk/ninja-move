@@ -21,6 +21,7 @@
 #include "absl/flags/parse.h"
 #include "absl/strings/str_format.h"
 #include "grpcpp/grpcpp.h"
+#include "spdlog/sinks/daily_file_sink.h"
 #include "src/models.hpp"
 #include "trade_contango.grpc.pb.h"
 
@@ -36,12 +37,13 @@ using trade_contango::TradeContango;
 
 ABSL_FLAG(uint16_t, port, 50051, "Server port for the service");
 
+void configure_logger();
 void listen_gateio_tickers_debug();
 void listen_gateio_tickers_v1();
 void listen_gateio_tickers_v2(int argc, char** argv);
 
 int main(int argc, char** argv) {
-    spdlog::cfg::load_env_levels();
+    configure_logger();
     std::string v = std::getenv("TICKERS_VERSION");
     if (v == "debug") {
         listen_gateio_tickers_debug();
@@ -1266,6 +1268,22 @@ std::string replace_first(const std::string& s_in, std::string const& toReplace,
     }
     s.replace(pos, toReplace.length(), replaceWith);
     return s;
+}
+
+void configure_logger() {
+    auto level = spdlog::level::from_str(std::getenv("SPDLOG_LEVEL"));
+    std::vector<spdlog::sink_ptr> sinks;
+    sinks.push_back(
+        std::make_shared<spdlog::sinks::ansicolor_stdout_sink_st>());
+    sinks.push_back(std::make_shared<spdlog::sinks::daily_file_sink_st>(
+        ".var/logfile", 0, 0));
+    for (auto& s : sinks) {
+        s->set_level(level);
+    }
+    auto l = std::make_shared<spdlog::logger>("default–global", begin(sinks),
+                                              end(sinks));
+    l->set_level(level);
+    spdlog::set_default_logger(l);
 }
 
 std::optional<OpportunityRow> is_opportunity_exists(
