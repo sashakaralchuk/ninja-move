@@ -165,6 +165,7 @@ class ClientPublic : public hv::WebSocketClient {
     virtual void init_idle() = 0;
     virtual void subscribe_to_trades(std::string& symbol) = 0;
     virtual void subscribe_to_depth(std::string& symbol) = 0;
+    virtual void unsubscribe_from_depth(std::string& symbol) = 0;
     virtual void ping() = 0;
 
    protected:
@@ -234,12 +235,12 @@ class ClientPublicGateio : public ClientPublic {
     }
 
     void subscribe_to_depth(std::string& symbol) {
+        int ts_secs =
+            std::chrono::system_clock::now().time_since_epoch().count() / 1000 /
+            1000;
         if (kind == "fut") {
-            int ts_secs =
-                std::chrono::system_clock::now().time_since_epoch().count() /
-                1000 / 1000;
             std::string t_template = R"({
-                "time" : %d,
+                "time": %d,
                 "channel" : "futures.order_book_update",
                 "event": "subscribe",
                 "payload" : ["%s", "100ms", "100"]
@@ -248,13 +249,40 @@ class ClientPublicGateio : public ClientPublic {
             snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
             send(t);
         } else if (kind == "spot") {
-            int ts_secs =
-                std::chrono::system_clock::now().time_since_epoch().count() /
-                1000 / 1000;
             std::string t_template = R"({
                 "time": %d,
                 "channel": "spot.order_book_update",
                 "event": "subscribe",
+                "payload": ["%s", "100ms"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
+    void unsubscribe_from_depth(std::string& symbol) {
+        int ts_secs =
+            std::chrono::system_clock::now().time_since_epoch().count() / 1000 /
+            1000;
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "time": %d,
+                "channel" : "futures.order_book_update",
+                "event": "unsubscribe",
+                "payload" : ["%s", "100ms", "100"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            // TODO: format such strings like in spdlog
+            std::string t_template = R"({
+                "time": %d,
+                "channel": "spot.order_book_update",
+                "event": "unsubscribe",
                 "payload": ["%s", "100ms"]
             })";
             char t[256];
@@ -311,6 +339,11 @@ class ClientPublicGateio : public ClientPublic {
         std::string event = msg_obj["event"];
         if (event == "subscribe" && msg_obj["result"]["status"] == "success") {
             spdlog::info("gateio {} subscribed successfully", kind);
+            return;
+        }
+        if (event == "unsubscribe" &&
+            msg_obj["result"]["status"] == "success") {
+            spdlog::info("gateio {} unsubscribed successfully", kind);
             return;
         }
         if (kind == "fut") {
@@ -447,6 +480,29 @@ class ClientPublicMexc : public ClientPublic {
         } else if (kind == "spot") {
             std::string t_template = R"({
                 "method": "SUBSCRIPTION",
+                "params": ["spot@public.increase.depth.v3.api@%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
+    void unsubscribe_from_depth(std::string& symbol) {
+        spdlog::info("mexc {} send unsubscribing from depth", kind);
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "method":"unsub.depth",
+                "param":{"symbol":"%s"}
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            std::string t_template = R"({
+                "method": "UNSUBSCRIPTION",
                 "params": ["spot@public.increase.depth.v3.api@%s"]
             })";
             char t[256];
@@ -789,17 +845,33 @@ class ClientPublicBybit : public ClientPublic {
         }
     }
 
+    void unsubscribe_from_depth(std::string& symbol) {
+        if (kind == "fut" || kind == "spot") {
+            std::string t_template = R"({
+                "op": "unsubscribe",
+                "args": ["orderbook.200.%s"]
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
     void ping() {}
 
    protected:
     void handle_onmessage(const std::string& msg) {
         nlohmann::json msg_obj = nlohmann::json::parse(msg);
-        if (msg_obj.contains("op") && msg_obj["op"] == "subscribe") {
+        if (msg_obj.contains("op")) {
+            bool success = msg_obj["success"];
+            std::string op = msg_obj["op"];
             if ((bool)msg_obj["success"]) {
-                spdlog::info("bybit subscribed successfully");
+                spdlog::info("bybit {} successfully", op);
                 return;
             } else {
-                throw std::runtime_error("bybit subscription failed");
+                throw std::runtime_error("bybit " + op + " failed");
             }
         }
         std::string msg_type = msg_obj["type"];
@@ -811,9 +883,11 @@ class ClientPublicBybit : public ClientPublic {
                     Depth d = parse_depth(msg_obj);
                     order_book_cache.clear();
                     order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    onmessage_depth(d);
                 } else if (msg_type == "delta") {
                     Depth d = parse_depth(msg_obj);
                     order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    onmessage_depth(d);
                 } else {
                     throw std::runtime_error("bybit fut unknown type=" +
                                              msg_type);
@@ -839,9 +913,11 @@ class ClientPublicBybit : public ClientPublic {
                     Depth d = parse_depth(msg_obj);
                     order_book_cache.clear();
                     order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    onmessage_depth(d);
                 } else if (msg_type == "delta") {
                     Depth d = parse_depth(msg_obj);
                     order_book_cache.apply_orders(d.u, d.asks, d.bids);
+                    onmessage_depth(d);
                 } else {
                     throw std::runtime_error("bybit fut unknown type=" +
                                              msg_type);
@@ -939,6 +1015,28 @@ class ClientPublicHtx : public ClientPublic {
         }
     }
 
+    void unsubscribe_from_depth(std::string& symbol) {
+        if (kind == "fut") {
+            std::string t_template = R"({
+                "unsub":"market.%s.depth.step0",
+                "id":"t"
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else if (kind == "spot") {
+            std::string t_template = R"({
+                "unsub":["market.%s.depth.step0"],
+                "id":"t"
+            })";
+            char t[256];
+            snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
+            send(t);
+        } else {
+            throw std::runtime_error("unexpected kind=" + kind);
+        }
+    }
+
     void ping() {}
 
     static std::string parse_symbol_from_trade_ch(std::string& ch) {
@@ -946,6 +1044,7 @@ class ClientPublicHtx : public ClientPublic {
         std::smatch s_m;
         return std::regex_search(ch, s_m, r) ? s_m[1] : (std::string) "";
     }
+
     static std::string parse_symbol_from_depth_ch(std::string& ch) {
         std::regex r("^market\\.(.*)\\.depth\\.step0$");
         std::smatch s_m;
@@ -1020,6 +1119,9 @@ class ClientPublicHtx : public ClientPublic {
             return;
         } else if (msg_obj.contains("subbed") && msg_obj["status"] == "ok") {
             spdlog::info("{} {} subscribed successfully", ex, kind);
+            return;
+        } else if (msg_obj.contains("unsubbed") && msg_obj["status"] == "ok") {
+            spdlog::debug("{} {} unsubbed", kind, ex);
             return;
         }
         if (kind == "fut") {
@@ -1310,30 +1412,38 @@ class SpreadsHouse {
 };
 
 void listen_gateio_tickers_debug() {
-    std::string symbol = "BTC_USDT";
-    ClientPublicMexc ws_mexc("spot");
-    ws_mexc.init_idle();
+    std::string symbol = "btcusdt";
+    ClientPublicHtx client("spot");
+    client.init_idle();
     std::this_thread::sleep_for(std::chrono::milliseconds(2500));
-    ws_mexc.onmessage_depth = [&](const Depth depth) {};
-    ws_mexc.subscribe_to_depth(symbol);
+    client.onmessage_depth = [&](const Depth depth) {
+        std::cout << "depth=" << depth << std::endl;
+    };
+    client.subscribe_to_depth(symbol);
     std::thread _([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
-            ws_mexc.ping();
+            client.ping();
         }
     });
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        spdlog::info("tick");
-        if (ws_mexc.order_book_cache.get_last_update_id() > 0) {
-            double ask = ws_mexc.order_book_cache.get_bottom_ask().get_d();
-            double bid = ws_mexc.order_book_cache.get_top_bid().get_d();
+    for (int i = 0; i < 20; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        spdlog::info("tick idle 1");
+        if (client.order_book_cache.get_last_update_id() > 0) {
+            continue;
+            double ask = client.order_book_cache.get_bottom_ask().get_d();
+            double bid = client.order_book_cache.get_top_bid().get_d();
             std::cout << "\x1B[2J\x1B[H"
                       << "ask=" << ask << std::endl
                       << "bid=" << bid << std::endl;
-            ws_mexc.order_book_cache.print(7);
+            client.order_book_cache.print(7);
         }
+    }
+    client.unsubscribe_from_depth(symbol);
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        spdlog::info("tick idle 2");
     }
 }
 
@@ -1474,11 +1584,15 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
             spdlog::info("bid_spot={:.6f} bid_fut={:.6f} diff_rel={:.2f}",
                          bid_spot, bid_fut, diff_rel);
             if (diff_rel < 0.5) {
-                spdlog::info("close trades");
-                spdlog::info("obj={}", format_as(obj));
                 break;
             }
         }
+        spdlog::info("start waiting for the next trade + close prev trades");
+        spdlog::info("obj={}", format_as(obj));
+        client_fut->unsubscribe_from_depth(symbol_fut);
+        client_spot->unsubscribe_from_depth(symbol_spot);
+        spreads_req = {};
+        trade_obj_raw_f = 0;
     });
     std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
     TradeContangoServiceImpl service;
