@@ -1142,11 +1142,11 @@ class ClientPublicHtx : public ClientPublic {
                     if (d.u == ver + 1) {
                         order_book_cache.apply_orders(d.u, d.asks, d.bids);
                     } else if (d.u - ver >= 2) {
-                        throw new std::runtime_error(
-                            "htx fut depth is broken "
-                            "u=" +
-                            std::to_string(d.u) +
-                            " ver=" + std::to_string(ver));
+                        spdlog::warn(
+                            "htx fut depth is broken u={} ver={} -> reload",
+                            d.u, ver);
+                        order_book_cache.clear();
+                        order_book_cache.apply_orders(d.u, d.asks, d.bids);
                     }
                     onmessage_depth(d);
                 } else {
