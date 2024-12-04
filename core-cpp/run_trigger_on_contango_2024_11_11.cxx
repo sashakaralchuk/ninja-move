@@ -345,7 +345,10 @@ class ClientPublicGateio : public ClientPublic {
         }
         if (event == "unsubscribe" &&
             msg_obj["result"]["status"] == "success") {
-            spdlog::info("gateio {} unsubscribed successfully", kind);
+            spdlog::info(
+                "gateio {} unsubscribed successfully -> clean order_book_cache",
+                kind);
+            order_book_cache.clear();
             return;
         }
         if (kind == "fut") {
@@ -471,6 +474,7 @@ class ClientPublicMexc : public ClientPublic {
     }
 
     void subscribe_to_depth(std::string& symbol) {
+        subscribed_to_depth = true;
         if (kind == "fut") {
             std::string t_template = R"({
                 "method":"sub.depth",
@@ -494,6 +498,8 @@ class ClientPublicMexc : public ClientPublic {
 
     void unsubscribe_from_depth(std::string& symbol) {
         spdlog::info("mexc {} send unsubscribing from depth", kind);
+        subscribed_to_depth = false;
+        order_book_cache.clear();
         if (kind == "fut") {
             std::string t_template = R"({
                 "method":"unsub.depth",
@@ -579,6 +585,12 @@ class ClientPublicMexc : public ClientPublic {
             if (channel == "rs.sub.depth" && msg_obj["data"] == "success") {
                 spdlog::info("mexc fut depth subscribed successfully");
             } else if (channel == "push.depth") {
+                if (!subscribed_to_depth) {
+                    spdlog::warn(
+                        "mexc fut depth received but subscribed_to_depth={}",
+                        subscribed_to_depth);
+                    return;
+                }
                 std::vector<std::tuple<std::string, double>> bids;
                 for (auto& b : msg_obj["data"]["bids"]) {
                     std::string p = b[0].dump();
@@ -628,6 +640,13 @@ class ClientPublicMexc : public ClientPublic {
             if (msg_obj.contains("c")) {
                 std::string c = msg_obj["c"];
                 if (c.rfind("spot@public.increase.depth.v3.api@", 0) == 0) {
+                    if (!subscribed_to_depth) {
+                        spdlog::warn(
+                            "mexc spot depth received but "
+                            "subscribed_to_depth={} -> ignore",
+                            subscribed_to_depth);
+                        return;
+                    }
                     std::vector<std::tuple<std::string, double>> bids;
                     if (msg_obj["d"].contains("bids")) {
                         for (auto& b : msg_obj["d"]["bids"]) {
@@ -682,6 +701,9 @@ class ClientPublicMexc : public ClientPublic {
             throw std::runtime_error("unexpected kind=" + kind);
         }
     }
+
+   private:
+    bool subscribed_to_depth = false;
 };
 
 class ClientPrivateMexc : public ClientPublic {
@@ -870,7 +892,8 @@ class ClientPublicBybit : public ClientPublic {
             bool success = msg_obj["success"];
             std::string op = msg_obj["op"];
             if ((bool)msg_obj["success"]) {
-                spdlog::info("bybit {} successfully", op);
+                spdlog::info("bybit {} successfully -> clear order-book", op);
+                order_book_cache.clear();
                 return;
             } else {
                 throw std::runtime_error("bybit " + op + " failed");
@@ -1123,7 +1146,8 @@ class ClientPublicHtx : public ClientPublic {
             spdlog::info("{} {} subscribed successfully", ex, kind);
             return;
         } else if (msg_obj.contains("unsubbed") && msg_obj["status"] == "ok") {
-            spdlog::debug("{} {} unsubbed", kind, ex);
+            spdlog::debug("{} {} unsubbed -> clear order-book", kind, ex);
+            order_book_cache.clear();
             return;
         }
         if (kind == "fut") {
@@ -1538,8 +1562,14 @@ class TradeContangoServiceImpl final : public TradeContango::Service {
     Status FireTrade(ServerContext* context, const FireTradeReq* req,
                      FireTradeRes* reply) override {
         reply->set_run_initiated(trade_obj_raw_f == 0 ? 1 : 0);
+        spdlog::debug("fire-trade req->list.size={}", req->list().size());
         if (trade_obj_raw_f == 0) {
             spreads_req = req->list()[0];
+            for (auto& obj : req->list()) {
+                if (obj.diff_rel() > spreads_req.value().diff_rel()) {
+                    spreads_req = obj;
+                }
+            }
             trade_obj_raw_f = 1;
         }
         return Status::OK;
@@ -1557,60 +1587,82 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
         }
     });
     std::thread _2([&]() {
-        while (trade_obj_raw_f == 0) {
-            continue;
-        }
-        SpreadsReq obj = spreads_req.value();
-        spdlog::info("obj={}", format_as(obj));
-        auto client_fut = sh.get_client(obj.t_fut().ex(), "fut");
-        std::string symbol_fut = obj.t_fut().s();
-        client_fut->onmessage_depth = [&](const Depth depth) {};
-        client_fut->subscribe_to_depth(symbol_fut);
-        auto client_spot = sh.get_client(obj.t_spot().ex(), "spot");
-        std::string symbol_spot = obj.t_spot().s();
-        client_spot->onmessage_depth = [&](const Depth depth) {};
-        client_spot->subscribe_to_depth(symbol_spot);
         while (true) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            bool is_ready_fut =
-                client_fut->order_book_cache.get_last_update_id() != 0;
-            bool is_ready_spot =
-                client_spot->order_book_cache.get_last_update_id() != 0;
-            spdlog::info("tick is_ready_spot={} is_ready_fut={}", is_ready_spot,
-                         is_ready_fut);
-            if (is_ready_fut && is_ready_spot) {
+            while (trade_obj_raw_f == 0) {
+                continue;
+            }
+            SpreadsReq obj = spreads_req.value();
+            spdlog::info("obj={}", format_as(obj));
+            auto client_fut = sh.get_client(obj.t_fut().ex(), "fut");
+            std::string symbol_fut = obj.t_fut().s();
+            client_fut->onmessage_depth = [&](const Depth depth) {};
+            client_fut->subscribe_to_depth(symbol_fut);
+            auto client_spot = sh.get_client(obj.t_spot().ex(), "spot");
+            std::string symbol_spot = obj.t_spot().s();
+            client_spot->onmessage_depth = [&](const Depth depth) {};
+            client_spot->subscribe_to_depth(symbol_spot);
+            spdlog::info("wait for order-books to be downloaded");
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                bool is_ready_fut =
+                    client_fut->order_book_cache.get_last_update_id() != 0;
+                bool is_ready_spot =
+                    client_spot->order_book_cache.get_last_update_id() != 0;
+                spdlog::info("tick is_ready_spot={} is_ready_fut={}",
+                             is_ready_spot, is_ready_fut);
+                if (is_ready_fut && is_ready_spot) {
+                    double bid_fut =
+                        client_fut->order_book_cache.get_top_bid().get_d();
+                    double bid_spot =
+                        client_spot->order_book_cache.get_top_bid().get_d();
+                    double diff_rel_2 = (bid_fut - bid_spot) / bid_spot * 100;
+                    spdlog::info("bid_spot={} bid_fut={} diff_rel_2={}",
+                                 bid_spot, bid_fut, diff_rel_2);
+                    spdlog::info("p_spot={} p_fut={} diff_rel={}",
+                                 obj.t_spot().p(), obj.t_fut().p(),
+                                 obj.diff_rel());
+                    spdlog::info("obj={}", format_as(obj));
+                    break;
+                }
+            }
+            spdlog::info("start waiting for price converge");
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
                 double bid_fut =
                     client_fut->order_book_cache.get_top_bid().get_d();
                 double bid_spot =
                     client_spot->order_book_cache.get_top_bid().get_d();
-                double diff_rel_2 = (bid_fut - bid_spot) / bid_spot * 100;
-                spdlog::info("bid_spot={} bid_fut={} diff_rel_2={}", bid_spot,
-                             bid_fut, diff_rel_2);
-                spdlog::info("p_spot={} p_fut={} diff_rel={}", obj.t_spot().p(),
-                             obj.t_fut().p(), obj.diff_rel());
-                spdlog::info("obj={}", format_as(obj));
-                break;
+                double diff_rel = (bid_fut - bid_spot) / bid_spot * 100;
+                spdlog::info("bid_spot={:.6f} bid_fut={:.6f} diff_rel={:.2f}",
+                             bid_spot, bid_fut, diff_rel);
+                if (diff_rel < 0.5) {
+                    // TODO: raise exception with price converge here
+                    break;
+                }
+            }
+            spdlog::info(
+                "start waiting for the next trade + close prev trades obj={}",
+                format_as(obj));
+            client_fut->unsubscribe_from_depth(symbol_fut);
+            client_spot->unsubscribe_from_depth(symbol_spot);
+            while (client_fut->order_book_cache.get_last_update_id() != 0 ||
+                   client_spot->order_book_cache.get_last_update_id() != 0) {
+                spdlog::info("tick wait for unsubscription");
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            spreads_req = {};
+            trade_obj_raw_f = 0;
+            spdlog::debug("debug-purpose: wait 10 seconds");
+            std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+            // NOTE: is order book cleaned up is checked here because sometimes
+            // bybit sends events in the next order (snapshot, subscribe, ...)
+            if (client_fut->order_book_cache.get_last_update_id() != 0) {
+                throw std::runtime_error("fut order book is not cleaned up");
+            }
+            if (client_spot->order_book_cache.get_last_update_id() != 0) {
+                throw std::runtime_error("spot order book is not cleaned up");
             }
         }
-        spdlog::info("start waiting for price converge");
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            double bid_fut = client_fut->order_book_cache.get_top_bid().get_d();
-            double bid_spot =
-                client_spot->order_book_cache.get_top_bid().get_d();
-            double diff_rel = (bid_fut - bid_spot) / bid_spot * 100;
-            spdlog::info("bid_spot={:.6f} bid_fut={:.6f} diff_rel={:.2f}",
-                         bid_spot, bid_fut, diff_rel);
-            if (diff_rel < 0.5) {
-                break;
-            }
-        }
-        spdlog::info("start waiting for the next trade + close prev trades");
-        spdlog::info("obj={}", format_as(obj));
-        client_fut->unsubscribe_from_depth(symbol_fut);
-        client_spot->unsubscribe_from_depth(symbol_spot);
-        spreads_req = {};
-        trade_obj_raw_f = 0;
     });
     std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
     TradeContangoServiceImpl service;
