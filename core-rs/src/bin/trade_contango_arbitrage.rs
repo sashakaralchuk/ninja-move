@@ -149,15 +149,9 @@ fn run_fetch_process_tickers() {
     for f in fns {
         let tx = tx.clone();
         let t = std::thread::spawn(move || loop {
-            let start_millis = std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64;
+            let start_millis = now_millis();
             let tickers = backoff_call(f);
-            let end_millis = std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64;
+            let end_millis = now_millis();
             let t0 = &tickers[0];
             if end_millis - start_millis > 1000 {
                 log::warn!("dur_millis={} > 1000", end_millis - start_millis);
@@ -346,15 +340,34 @@ async fn write_to_worker(rx: std::sync::mpsc::Receiver<Vec<QTicker>>) {
         .await
         .unwrap();
     loop {
-        for t in rx.recv().unwrap() {
-            map.insert(&t);
+        let mut batch_vec = vec![];
+        while let Ok(t) = rx.try_recv() {
+            batch_vec.push(t);
         }
-        if let Some(vec_to_send) = map.find_spreads_all() {
-            log::info!("vec_to_send.len={}", vec_to_send.len());
-            let _ = client
-                .fire_trade(tonic::Request::new(FireTradeReq { list: vec_to_send }))
-                .await
-                .unwrap();
+        if batch_vec.len() > 0 {
+            if batch_vec.len() > 3 {
+                panic!("write_to_worker rx batch.len > 3");
+            }
+            log::info!("write_to_worker batch.len={}", batch_vec.len());
+            for b in batch_vec {
+                let insert_start = now_millis();
+                for t in b {
+                    map.insert(&t);
+                }
+                log::info!("write_to_worker insert_dur={}", now_millis() - insert_start);
+                let find_start = now_millis();
+                if let Some(vec_to_send) = map.find_spreads_all() {
+                    log::info!(
+                        "vec_to_send.len={} find_dur={}",
+                        vec_to_send.len(),
+                        now_millis() - find_start
+                    );
+                    let _ = client
+                        .fire_trade(tonic::Request::new(FireTradeReq { list: vec_to_send }))
+                        .await
+                        .unwrap();
+                }
+            }
         }
     }
 }
@@ -545,7 +558,7 @@ mod bybit_int {
 }
 
 mod binance_int {
-    use crate::{QEx, QKind, QSt, QTicker};
+    use crate::{now_millis, QEx, QKind, QSt, QTicker};
 
     static PATH_EXCHANGE_INFO: &str = "/tmp/binance_fapi_v1_exchange_info.json";
 
@@ -577,10 +590,7 @@ mod binance_int {
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
         let symbol_status = read_symbol_status_config();
         let url = "https://fapi.binance.com/fapi/v1/ticker/24hr";
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let ts = now_millis();
         Ok(
             serde_json::from_str::<serde_json::Value>(&reqwest::blocking::get(url)?.text()?)?
                 .as_array()
@@ -604,10 +614,7 @@ mod binance_int {
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
         let symbol_status = read_symbol_status_config();
         let url = "https://api.binance.com/api/v3/ticker/24hr";
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let ts = now_millis();
         Ok(
             serde_json::from_str::<serde_json::Value>(&reqwest::blocking::get(url)?.text()?)?
                 .as_array()
@@ -653,7 +660,7 @@ mod binance_int {
 }
 
 mod mexc_int {
-    use crate::{QEx, QKind, QSt, QTicker};
+    use crate::{now_millis, QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api(
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
@@ -682,10 +689,7 @@ mod mexc_int {
     pub fn fetch_spot_tickers_from_api(
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
         let url = "https://api.mexc.com/api/v3/ticker/24hr";
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let ts = now_millis();
         Ok(
             serde_json::from_str::<serde_json::Value>(&reqwest::blocking::get(url)?.text()?)?
                 .as_array()
@@ -751,15 +755,12 @@ mod kucoin_int {
 }
 
 mod gateio_int {
-    use crate::{QEx, QKind, QSt, QTicker};
+    use crate::{now_millis, QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api(
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
         let url = "https://fx-api.gateio.ws/api/v4/futures/usdt/tickers";
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let ts = now_millis();
         Ok(
             serde_json::from_str::<serde_json::Value>(&reqwest::blocking::get(url)?.text()?)?
                 .as_array()
@@ -778,10 +779,7 @@ mod gateio_int {
     pub fn fetch_spot_tickers_from_api(
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
         let url = "https://api.gateio.ws/api/v4/spot/tickers";
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let ts = now_millis();
         Ok(
             serde_json::from_str::<serde_json::Value>(&reqwest::blocking::get(url)?.text()?)?
                 .as_array()
@@ -793,6 +791,9 @@ mod gateio_int {
                     let p = if p_raw == "" { "-1.0" } else { p_raw };
                     // XXX: collect base_volume and quote_volume
                     let v = x.get("base_volume").unwrap().as_str().unwrap();
+                    if s == "KARATE_USDT" {
+                        log::debug!("capture KARATE_USDT ts={}", ts);
+                    }
                     QTicker::new(QEx::Gateio, s, QSt::Trading, QKind::Spot, ts, p, v)
                 })
                 .collect::<Vec<_>>(),
@@ -801,15 +802,12 @@ mod gateio_int {
 }
 
 mod bingx_int {
-    use crate::{QEx, QKind, QSt, QTicker};
+    use crate::{now_millis, QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api(
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
         let url = "https://open-api.bingx.com/openApi/swap/v2/quote/ticker";
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let ts = now_millis();
         Ok(
             serde_json::from_str::<serde_json::Value>(&reqwest::blocking::get(url)?.text()?)?
                 .get("data")
@@ -857,7 +855,7 @@ mod bingx_int {
 }
 
 mod htx_int {
-    use crate::{QEx, QKind, QSt, QTicker};
+    use crate::{now_millis, QEx, QKind, QSt, QTicker};
 
     pub fn fetch_derivatives_tickers_from_api(
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
@@ -895,10 +893,7 @@ mod htx_int {
     pub fn fetch_spot_tickers_from_api(
     ) -> std::result::Result<Vec<QTicker>, Box<dyn std::error::Error>> {
         let url = "https://api.huobi.pro/market/tickers";
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let ts = now_millis();
         Ok(
             serde_json::from_str::<serde_json::Value>(&reqwest::blocking::get(url)?.text()?)?
                 .get("data")
@@ -1055,11 +1050,11 @@ impl<'a> SpreadsMap<'a> {
             symbols_to_re_map,
             symbols: HashMap::new(),
             diff_ref_bottom: std::env::var("DIFF_REL_BOTTOM_THRESHOLD")
-                .unwrap()
+                .unwrap_or("0.0".into())
                 .parse::<f64>()
                 .unwrap(),
             diff_ref_top: std::env::var("DIFF_REL_TOP_THRESHOLD")
-                .unwrap()
+                .unwrap_or("100.0".into())
                 .parse::<f64>()
                 .unwrap(),
         }
@@ -1075,7 +1070,7 @@ impl<'a> SpreadsMap<'a> {
             log::debug!("ignoring {:?}", key_to_ignore);
             return;
         }
-        let (s_int_1, _) = Self::conv_to_symbol_int_1(
+        let (s_int_1, _) = Self::conv_to_symbol_int_1_v2(
             *self
                 .symbols_to_re_map
                 .get(&key_to_ignore)
@@ -1103,11 +1098,7 @@ impl<'a> SpreadsMap<'a> {
         }
         let mut min_spot: Option<QTicker> = None;
         let mut max_fut: Option<QTicker> = None;
-        let m1_millis = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64
-            - 60 * 1000;
+        let m1_millis = now_millis() - 60 * 1000;
         for (_, kind_map) in self.symbols.get(s).unwrap() {
             for (kind, t) in kind_map {
                 if t.ts < m1_millis {
@@ -1144,8 +1135,8 @@ impl<'a> SpreadsMap<'a> {
         for (k, _) in self.symbols.iter() {
             match self.find_spreads(k) {
                 Some(s) => {
-                    let (_, p_spot) = SpreadsMap::conv_to_symbol_int_1(&s.0.s, s.0.p);
-                    let (_, p_fut) = SpreadsMap::conv_to_symbol_int_1(&s.1.s, s.1.p);
+                    let (_, p_spot) = SpreadsMap::conv_to_symbol_int_1_v2(&s.0.s, s.0.p);
+                    let (_, p_fut) = SpreadsMap::conv_to_symbol_int_1_v2(&s.1.s, s.1.p);
                     let diff_rel = (p_fut - p_spot) / p_spot * 100.0;
                     if diff_rel >= self.diff_ref_bottom && diff_rel <= self.diff_ref_top {
                         log::debug!("k={} diff_rel={}", k, diff_rel);
@@ -1170,28 +1161,40 @@ impl<'a> SpreadsMap<'a> {
         }
     }
 
-    fn conv_to_symbol_int_1(symbol: &str, price: f64) -> (String, f64) {
-        // XXX: make regexp for all cases
-        let mut symbol_int_1 = regex::Regex::new(r"^10*")
-            .unwrap()
-            .replace_all(symbol, "")
-            .to_string()
-            .replace('-', "")
-            .replace('_', "");
-        if symbol.chars().nth(0).unwrap() == '1' && symbol.chars().nth(1).unwrap() != '0' {
-            symbol_int_1 = format!("1{}", symbol_int_1);
+    fn conv_to_symbol_int_1_v2(s: &str, p: f64) -> (String, f64) {
+        let s_int = s.replace('-', "").replace('_', "");
+        let chars = s_int.chars().collect::<Vec<_>>();
+        if chars[0] != '1' {
+            return (s_int, p);
         }
-        let mult: f64 = match regex::Regex::new(r"10*").unwrap().find(symbol) {
-            Some(v) => v.as_str().to_string().parse().unwrap(),
-            None => 1.0,
-        };
-        (symbol_int_1, price / mult)
+        let mut zeros_amount = 0;
+        for i in 1..chars.len() {
+            if chars[i] == '0' {
+                zeros_amount += 1;
+            } else {
+                break;
+            }
+        }
+        if zeros_amount == 0 {
+            return (s_int, p);
+        }
+        return (
+            s_int.split_at(zeros_amount + 1).1.to_string(),
+            p / 10.0_f64.powi(zeros_amount as i32),
+        );
     }
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{QEx, QKind, QSt, QTicker, SpreadsMap};
+    use crate::{now_millis, QEx, QKind, QSt, QTicker, SpreadsMap};
 
     #[test]
     fn test_validate_millis() {
@@ -1263,10 +1266,6 @@ mod test {
 
     #[test]
     fn test_trigger_price_spread() {
-        let now_millis = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
         {
             let mut map = crate::SpreadsMap::new();
             map.insert(&QTicker::new(
@@ -1274,11 +1273,11 @@ mod test {
                 "BTCUSDT",
                 QSt::Trading,
                 QKind::Spot,
-                now_millis,
+                now_millis(),
                 "65000.0",
                 "1.0",
             ));
-            for t in gen_tickers_for_price_spread(now_millis) {
+            for t in gen_tickers_for_price_spread(now_millis()) {
                 map.insert(&t);
             }
             let out = map.find_spreads("BTCUSDT").unwrap();
@@ -1287,42 +1286,42 @@ mod test {
         }
         {
             let mut map = crate::SpreadsMap::new();
-            for t in gen_tickers_for_price_spread(now_millis - 2 * 60 * 1000) {
+            for t in gen_tickers_for_price_spread(now_millis() - 2 * 60 * 1000) {
                 map.insert(&t);
             }
             let out = map.find_spreads("BTCUSDT");
             assert!(out.is_none());
         }
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("1000000PEPEUSDT", 100.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("1000000PEPEUSDT", 100.0),
             ("PEPEUSDT".into(), 0.00010)
         );
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("10PEPEUSDT", 100.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("10PEPEUSDT", 100.0),
             ("PEPEUSDT".into(), 10.0)
         );
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("1PEPEUSDT", 100.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("1PEPEUSDT", 100.0),
             ("1PEPEUSDT".into(), 100.0)
         );
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("PEPEUSDT", 100.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("PEPEUSDT", 100.0),
             ("PEPEUSDT".into(), 100.0)
         );
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("PEPE-USDT", 1.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("PEPE-USDT", 1.0),
             ("PEPEUSDT".into(), 1.0)
         );
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("PEPE_USDT", 1.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("PEPE_USDT", 1.0),
             ("PEPEUSDT".into(), 1.0)
         );
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("PEPE1-USDT", 1.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("PEPE1-USDT", 1.0),
             ("PEPE1USDT".into(), 1.0)
         );
         assert_eq!(
-            SpreadsMap::conv_to_symbol_int_1("0DOGUSDT", 1.0),
+            SpreadsMap::conv_to_symbol_int_1_v2("0DOGUSDT", 1.0),
             ("0DOGUSDT".into(), 1.0)
         );
     }

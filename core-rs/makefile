@@ -35,7 +35,7 @@ run-example-place-bybit-market-order:
 run-trade-contango-arbitrage-fetch-write-tickers:
 	${env_vars} \
 	RUST_BACKTRACE=full \
-	RUST_LOG=debug \
+	RUST_LOG=info \
 	TRADE_CONTANGO_FETCH_PROCESS_ACTION=write-to-worker \
 	DIFF_REL_BOTTOM_THRESHOLD=1.5 \
 	DIFF_REL_TOP_THRESHOLD=3.0 \
