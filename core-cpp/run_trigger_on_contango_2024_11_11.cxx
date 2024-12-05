@@ -150,6 +150,8 @@ std::ostream& operator<<(std::ostream& os, Depth const& d) {
 
 class ClientPublic : public hv::WebSocketClient {
    public:
+    bool ws_onopen_received = false;
+    bool ws_onclose_received = false;
     std::string ex;
     std::string kind;
     OrderBookCache order_book_cache;
@@ -173,8 +175,16 @@ class ClientPublic : public hv::WebSocketClient {
    protected:
     virtual void handle_onmessage(const std::string& msg) = 0;
     void init_idle_(std::string& url) {
-        onopen = [=]() { spdlog::info("{} onopen kind={}", ex, kind); };
-        onclose = [=]() { spdlog::info("{} onclose kind={}", ex, kind); };
+        ws_onopen_received = false;
+        ws_onclose_received = false;
+        onopen = [&]() {
+            ws_onopen_received = true;
+            spdlog::info("{} onopen kind={}", ex, kind);
+        };
+        onclose = [&]() {
+            spdlog::info("{} onclose kind={}", ex, kind);
+            ws_onclose_received = true;
+        };
         onmessage = [=](const std::string& msg) { handle_onmessage(msg); };
         setPingInterval(10000);
         reconn_setting_t reconn;
@@ -1295,6 +1305,7 @@ std::string replace_first(const std::string& s_in, std::string const& toReplace,
 }
 
 void configure_logger() {
+    // XXX: add file-name, fn-name, line-number
     auto level = spdlog::level::from_str(std::getenv("SPDLOG_LEVEL"));
     std::vector<spdlog::sink_ptr> sinks;
     sinks.push_back(
@@ -1404,20 +1415,23 @@ class SpreadsHouse {
     SpreadsHouse() {}
 
     void init_idle() {
-        ws_clients["bybit-fut"] = new ClientPublicBybit("fut");
-        ws_clients["bybit-spot"] = new ClientPublicBybit("spot");
-        ws_clients["mexc-fut"] = new ClientPublicMexc("fut");
-        ws_clients["mexc-spot"] = new ClientPublicMexc("spot");
-        ws_clients["gateio-fut"] = new ClientPublicGateio("fut");
-        ws_clients["gateio-spot"] = new ClientPublicGateio("spot");
-        ws_clients["htx-fut"] = new ClientPublicHtx("fut");
-        ws_clients["htx-spot"] = new ClientPublicHtx("spot");
+        if (ws_clients.size() == 0) {
+            ws_clients["bybit-fut"] = new ClientPublicBybit("fut");
+            ws_clients["bybit-spot"] = new ClientPublicBybit("spot");
+            ws_clients["mexc-fut"] = new ClientPublicMexc("fut");
+            ws_clients["mexc-spot"] = new ClientPublicMexc("spot");
+            ws_clients["gateio-fut"] = new ClientPublicGateio("fut");
+            ws_clients["gateio-spot"] = new ClientPublicGateio("spot");
+            ws_clients["htx-fut"] = new ClientPublicHtx("fut");
+            ws_clients["htx-spot"] = new ClientPublicHtx("spot");
+        }
         for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
             o->second->init_idle();
         }
         auto is_all_ws_connected = [&]() -> bool {
             for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
-                if (!o->second->isConnected()) {
+                if (!o->second->isConnected() ||
+                    !o->second->ws_onopen_received) {
                     return false;
                 }
             }
@@ -1438,6 +1452,30 @@ class SpreadsHouse {
     void ping() {
         for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
             o->second->ping();
+        }
+    }
+
+    void close_all() {
+        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+            o->second->close();
+        }
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            spdlog::debug("tick on if all ws clients are closed");
+            bool all_closed = true;
+            for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+                if (!o->second->ws_onclose_received) {
+                    all_closed = false;
+                }
+            }
+            if (all_closed) {
+                spdlog::debug("all closed => break");
+                break;
+            }
+        }
+        spdlog::debug("clean order-books");
+        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+            o->second->order_book_cache.clear();
         }
     }
 
@@ -1567,6 +1605,7 @@ class TradeContangoServiceImpl final : public TradeContango::Service {
             spreads_req = req->list()[0];
             for (auto& obj : req->list()) {
                 if (obj.diff_rel() > spreads_req.value().diff_rel()) {
+                    spdlog::debug("set spreads_req={}", format_as(obj));
                     spreads_req = obj;
                 }
             }
@@ -1636,32 +1675,22 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
                 spdlog::info("bid_spot={:.6f} bid_fut={:.6f} diff_rel={:.2f}",
                              bid_spot, bid_fut, diff_rel);
                 if (diff_rel < 0.5) {
-                    // TODO: raise exception with price converge here
+                    spdlog::info("price converged => close trades obj={}",
+                                 format_as(obj));
                     break;
                 }
             }
-            spdlog::info(
-                "start waiting for the next trade + close prev trades obj={}",
-                format_as(obj));
-            client_fut->unsubscribe_from_depth(symbol_fut);
-            client_spot->unsubscribe_from_depth(symbol_spot);
-            while (client_fut->order_book_cache.get_last_update_id() != 0 ||
-                   client_spot->order_book_cache.get_last_update_id() != 0) {
-                spdlog::info("tick wait for unsubscription");
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            }
+            // NOTE: order book cleaned up is checked here because sometimes
+            // bybit sends events in the next order (snapshot, subscribe, ...)
+            // NOTE: connections drop happens because of weird unsubscribe
+            // mechanism implemented in exchanges
+            spdlog::info("close connection and set-up them again");
+            sh.close_all();
+            spdlog::debug("all closed");
+            sh.init_idle();
+            spdlog::debug("all connected again");
             spreads_req = {};
             trade_obj_raw_f = 0;
-            spdlog::debug("debug-purpose: wait 10 seconds");
-            std::this_thread::sleep_for(std::chrono::milliseconds(10000));
-            // NOTE: is order book cleaned up is checked here because sometimes
-            // bybit sends events in the next order (snapshot, subscribe, ...)
-            if (client_fut->order_book_cache.get_last_update_id() != 0) {
-                throw std::runtime_error("fut order book is not cleaned up");
-            }
-            if (client_spot->order_book_cache.get_last_update_id() != 0) {
-                throw std::runtime_error("spot order book is not cleaned up");
-            }
         }
     });
     std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
