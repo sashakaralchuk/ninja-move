@@ -1457,7 +1457,7 @@ class SpreadsHouse {
 
     void close_all() {
         for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
-            o->second->close();
+            o->second->closesocket();
         }
         while (true) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -1636,10 +1636,18 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
             std::string symbol_fut = obj.t_fut().s();
             client_fut->onmessage_depth = [&](const Depth depth) {};
             client_fut->subscribe_to_depth(symbol_fut);
+            if (client_fut->order_book_cache.get_last_update_id() != 0) {
+                throw std::runtime_error(
+                    "fut order-book is not empty on start");
+            }
             auto client_spot = sh.get_client(obj.t_spot().ex(), "spot");
             std::string symbol_spot = obj.t_spot().s();
             client_spot->onmessage_depth = [&](const Depth depth) {};
             client_spot->subscribe_to_depth(symbol_spot);
+            if (client_spot->order_book_cache.get_last_update_id() != 0) {
+                throw std::runtime_error(
+                    "spot order-book is not empty on start");
+            }
             spdlog::info("wait for order-books to be downloaded");
             while (true) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
