@@ -25,6 +25,12 @@ struct TradeInt {
     }
 };
 
+struct Depth {
+    long u;
+    std::vector<std::tuple<std::string, double>> asks;
+    std::vector<std::tuple<std::string, double>> bids;
+};
+
 class OrderBookCache {
    public:
     OrderBookCache();

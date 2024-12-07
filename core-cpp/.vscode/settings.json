@@ -91,6 +91,7 @@
         "queue": "cpp",
         "*.def": "cpp",
         "*.inc": "cpp",
-        "string_span": "cpp"
+        "string_span": "cpp",
+        "multi_span": "cpp"
     }
 }

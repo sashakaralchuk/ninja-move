@@ -22,7 +22,8 @@
 #include "absl/strings/str_format.h"
 #include "grpcpp/grpcpp.h"
 #include "spdlog/sinks/daily_file_sink.h"
-#include "src/models.hpp"
+#include "src/clients.hpp"
+// #include "src/models.hpp"
 #include "trade_contango.grpc.pb.h"
 
 using grpc::Server;
@@ -66,6 +67,27 @@ std::string format_as(TradeInt const& o) {
     std::ostringstream ss;
     ss << o.toString();
     return std::move(ss).str();
+}
+
+std::ostream& operator<<(std::ostream& os, Depth const& d) {
+    os << "u=" << d.u << ", asks=[";
+    for (int i = 0; i < d.asks.size(); i++) {
+        os << "(" << std::get<0>(d.asks[i]) << "," << std::get<1>(d.asks[i])
+           << ")";
+        if (i < d.asks.size() - 1) {
+            os << ",";
+        }
+    }
+    os << "], bids=[";
+    for (int i = 0; i < d.bids.size(); i++) {
+        os << "(" << std::get<0>(d.bids[i]) << "," << std::get<1>(d.bids[i])
+           << ")";
+        if (i < d.bids.size() - 1) {
+            os << ",";
+        }
+    }
+    os << "]";
+    return os;
 }
 
 std::ostream& operator<<(std::ostream& os, QTickerReq const& o) {
@@ -120,83 +142,6 @@ bool str_ends_with(std::string s1, std::string s2) {
     }
     return s1.substr(s1.length() - s2.length(), s2.length()).compare(s2) == 0;
 }
-
-struct Depth {
-    long u;
-    std::vector<std::tuple<std::string, double>> asks;
-    std::vector<std::tuple<std::string, double>> bids;
-};
-
-std::ostream& operator<<(std::ostream& os, Depth const& d) {
-    os << "u=" << d.u << ", asks=[";
-    for (int i = 0; i < d.asks.size(); i++) {
-        os << "(" << std::get<0>(d.asks[i]) << "," << std::get<1>(d.asks[i])
-           << ")";
-        if (i < d.asks.size() - 1) {
-            os << ",";
-        }
-    }
-    os << "], bids=[";
-    for (int i = 0; i < d.bids.size(); i++) {
-        os << "(" << std::get<0>(d.bids[i]) << "," << std::get<1>(d.bids[i])
-           << ")";
-        if (i < d.bids.size() - 1) {
-            os << ",";
-        }
-    }
-    os << "]";
-    return os;
-}
-
-class ClientPublic : public hv::WebSocketClient {
-   public:
-    bool ws_onopen_received = false;
-    bool ws_onclose_received = false;
-    std::string ex;
-    std::string kind;
-    OrderBookCache order_book_cache;
-    std::function<void(const TradeInt trade_int)> onmessage_trade;
-    std::function<void(const Depth depth)> onmessage_depth;
-
-    ClientPublic(std::string ex_, std::string kind_,
-                 hv::EventLoopPtr loop = NULL)
-        : WebSocketClient(loop) {
-        ex = ex_;
-        kind = kind_;
-    }
-    ~ClientPublic() {}
-
-    virtual void init_idle() = 0;
-    virtual void subscribe_to_trades(std::string& symbol) = 0;
-    virtual void subscribe_to_depth(std::string& symbol) = 0;
-    virtual void unsubscribe_from_depth(std::string& symbol) = 0;
-    virtual void ping() = 0;
-
-   protected:
-    virtual void handle_onmessage(const std::string& msg) = 0;
-    void init_idle_(std::string& url) {
-        ws_onopen_received = false;
-        ws_onclose_received = false;
-        onopen = [&]() {
-            ws_onopen_received = true;
-            spdlog::info("{} onopen kind={}", ex, kind);
-        };
-        onclose = [&]() {
-            spdlog::info("{} onclose kind={}", ex, kind);
-            ws_onclose_received = true;
-        };
-        onmessage = [=](const std::string& msg) { handle_onmessage(msg); };
-        setPingInterval(10000);
-        reconn_setting_t reconn;
-        reconn_setting_init(&reconn);
-        reconn.min_delay = 100;
-        reconn.max_delay = 1000;
-        reconn.delay_policy = 2;
-        setReconnect(&reconn);
-        http_headers headers;
-        open(url.c_str(), headers);
-    }
-};
 
 class ClientPublicGateio : public ClientPublic {
    public:
@@ -1492,6 +1437,8 @@ class SpreadsHouse {
 };
 
 void listen_gateio_tickers_debug() {
+    spdlog::info("lala");
+    return;
     std::string symbol = "btcusdt";
     ClientPublicHtx client("spot");
     client.init_idle();

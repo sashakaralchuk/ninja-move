@@ -80,6 +80,7 @@ target_link_libraries(t PRIVATE
 add_executable(run_trigger_on_contango_2024_11_11
     run_trigger_on_contango_2024_11_11.cxx
     src/models.cxx
+    src/clients.cxx
 )
 target_include_directories(run_trigger_on_contango_2024_11_11 PRIVATE
     libs/libhv/build/include/hv
