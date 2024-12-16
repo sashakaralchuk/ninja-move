@@ -1,4 +1,5 @@
 #include <clickhouse/client.h>
+// #include <fmt/core.h>
 #include <gmpxx.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/health_check_service_interface.h>
@@ -18,6 +19,12 @@
 #include "spdlog/sinks/daily_file_sink.h"
 #include "src/clients.hpp"
 // #include "src/models.hpp" // TODO: how to do such imports types together
+#include <openssl/hmac.h>
+
+#include <cstring>
+#include <iomanip>
+#include <iostream>
+
 #include "trade_contango.grpc.pb.h"
 
 using grpc::Server;
@@ -33,15 +40,18 @@ using trade_contango::TradeContango;
 ABSL_FLAG(uint16_t, port, 50051, "Server port for the service");
 
 void configure_logger();
-void listen_gateio_tickers_debug();
+void debug_place_order();
+void debug_listen_gateio_tickers();
 void listen_gateio_tickers_v1();
 void listen_gateio_tickers_v2(int argc, char** argv);
 
 int main(int argc, char** argv) {
     configure_logger();
     std::string v = std::getenv("TICKERS_VERSION");
-    if (v == "debug") {
-        listen_gateio_tickers_debug();
+    if (v == "debug-order") {
+        debug_place_order();
+    } else if (v == "debug-depth") {
+        debug_listen_gateio_tickers();
     } else if (v == "v1") {
         listen_gateio_tickers_v1();
     } else if (v == "v2") {
@@ -160,7 +170,6 @@ std::string replace_first(const std::string& s_in, std::string const& toReplace,
 }
 
 void configure_logger() {
-    // XXX: add file-name, fn-name, line-number
     auto level = spdlog::level::from_str(std::getenv("SPDLOG_LEVEL"));
     std::vector<spdlog::sink_ptr> sinks;
     sinks.push_back(
@@ -169,6 +178,7 @@ void configure_logger() {
         ".var/logfile", 0, 0));
     for (auto& s : sinks) {
         s->set_level(level);
+        s->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] [%s %! %#] %v");
     }
     auto l = std::make_shared<spdlog::logger>("default–global", begin(sinks),
                                               end(sinks));
@@ -185,14 +195,15 @@ std::optional<OpportunityRow> is_opportunity_exists(
                 kind,
                 symbol,
                 UPPER(replaceRegexpAll(symbol, '[10*_-]?', '')) symbol_int_1,
-                price / COALESCE(toFloat64OrNull(regexpExtract(symbol, '10*', 0)), 1) price_int_1
+                price / COALESCE(toFloat64OrNull(regexpExtract(symbol, '10*',
+                0)), 1) price_int_1
             FROM default.trade_contango_arbitrage_v1
             FINAL
             WHERE timestamp >= (now() - toIntervalSecond(60))
-                AND length(replaceRegexpOne(symbol, '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) = length(symbol)
-                AND volume > 0
-                AND status = 'TRADING'
-                AND symbol_int_1 != 'DEFIUSDT'
+                AND length(replaceRegexpOne(symbol,
+                '(-[0-9][0-9][A-Z][A-Z][A-Z][0-9][0-9])', '')) =
+                length(symbol) AND volume > 0 AND status = 'TRADING' AND
+                symbol_int_1 != 'DEFIUSDT'
         )
         SELECT
             now() ts,
@@ -346,9 +357,390 @@ class SpreadsHouse {
     std::map<std::string, ClientPublic*> ws_clients;
 };
 
-void listen_gateio_tickers_debug() {
-    spdlog::info("lala");
-    return;
+void debug_place_listen_mexc_fut_v2() {
+    throw std::runtime_error("there is not opportunity for fut on mexc");
+}
+
+void debug_place_listen_mexc_spot_v2() {
+    ClientPrivateMexc client = ClientPrivateMexc("spot");
+    client.init_idle();
+    spdlog::info("wait for onopen event");
+    while (true) {
+        if (client.ws_onopen_received) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.subscribe_to_private_events();
+    spdlog::info("wait for subscribed event");
+    while (true) {
+        if (client.is_subscribed_to_private_channels) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_spot_limit_order("DNXUSDT", "BUY", "0.35", "60.0");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 0) {
+            spdlog::info("buy-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("buy-order is filled => finish");
+            break;
+        }
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_spot_limit_order(
+        "DNXUSDT", "SELL", "0.25",
+        std::to_string(client.get_last_order().filled_amount));
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 1) {
+            spdlog::info("sell-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("sell-order is filled => finish");
+            break;
+        }
+    }
+    client.clear_orders();
+}
+
+void debug_place_listen_gateio_fut_v2() {
+    ClientPrivateGateio client = ClientPrivateGateio("fut");
+    client.init_idle();
+    spdlog::info("wait for onopen event");
+    while (true) {
+        if (client.ws_onopen_received) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.subscribe_to_private_events();
+    spdlog::info("wait for subscribed event");
+    while (true) {
+        if (client.is_subscribed_to_private_channels) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_fut_limit_order("ETH_USDT", "SELL", "3800", "1");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 0) {
+            spdlog::info("buy-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("buy-order is filled => finish");
+            break;
+        }
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_fut_limit_order("ETH_USDT", "BUY", "4000", "1");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 1) {
+            spdlog::info("sell-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("sell-order is filled => finish");
+            break;
+        }
+    }
+    client.clear_orders();
+}
+
+void debug_place_listen_gateio_spot_v2() {
+    ClientPrivateGateio client = ClientPrivateGateio("spot");
+    client.init_idle();
+    spdlog::info("wait for onopen event");
+    while (true) {
+        if (client.ws_onopen_received) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.subscribe_to_private_events();
+    spdlog::info("wait for subscribed event");
+    while (true) {
+        if (client.is_subscribed_to_private_channels) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_spot_limit_order("ETH_USDT", "buy", "4050", "0.01");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 0) {
+            spdlog::info("buy-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("buy-order is filled => finish");
+            break;
+        }
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_spot_limit_order(
+        "ETH_USDT", "sell", "3950",
+        std::to_string(client.get_last_order().filled_amount));
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 1) {
+            spdlog::info("sell-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("sell-order is filled => finish");
+            break;
+        }
+    }
+    client.clear_orders();
+}
+
+void debug_place_listen_bybit_fut_v2() {
+    ClientPrivateBybit client = ClientPrivateBybit("fut");
+    client.init_idle();
+    spdlog::info("wait for onopen event");
+    while (true) {
+        if (client.ws_onopen_received) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.subscribe_to_private_events();
+    spdlog::info("wait for subscribed event");
+    while (true) {
+        if (client.is_subscribed_to_private_channels) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_fut_limit_order("ETHUSDT", "Sell", "3800", "0.01");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 0) {
+            spdlog::info("buy-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("buy-order is filled => finish");
+            break;
+        }
+    }
+    for (int i = 0; i < 25; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_fut_limit_order("ETHUSDT", "Buy", "4000", "0.01");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 1) {
+            spdlog::info("sell-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("sell-order is filled => finish");
+            break;
+        }
+    }
+    client.clear_orders();
+}
+
+void debug_place_listen_bybit_spot_v2() {
+    ClientPrivateBybit client = ClientPrivateBybit("spot");
+    client.init_idle();
+    spdlog::info("wait for onopen event");
+    while (true) {
+        if (client.ws_onopen_received) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.subscribe_to_private_events();
+    spdlog::info("wait for subscribed event");
+    while (true) {
+        if (client.is_subscribed_to_private_channels) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_spot_limit_order("ETHUSDT", "Buy", "4050", "0.01");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 0) {
+            spdlog::info("buy-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("buy-order is filled => finish");
+            break;
+        }
+    }
+    for (int i = 0; i < 5; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    client.place_spot_limit_order(
+        "ETHUSDT", "Sell", "3950",
+        std::to_string(client.get_last_order().filled_amount));
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_orders_len() > 1) {
+            spdlog::info("sell-order appeared");
+            break;
+        }
+    }
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (client.get_last_order().isFilled()) {
+            spdlog::info("sell-order is filled => finish");
+            break;
+        }
+    }
+    client.clear_orders();
+}
+
+void debug_place_order() {
+    // TODO: keep in PrivateClient just one order and one position without
+    // vector
+    // TODO: how to handle situation when you already sent order amend message
+    // and than order fills
+    // TODO: what's the features? what does it mean when you are buying short
+    // and buying long
+    // TODO: commit + do this exchange with some bullshit token (not with eth)
+    // TODO: write code to ahndle whole strategy
+    // TODO: think on do the same with on-chain exchanges + join "миша флипает"
+    // TODO: think how to abuse mms algorithms
+    // private chat
+    // debug_place_listen_mexc_fut_v2();
+    // debug_place_listen_mexc_spot_v2();
+    // debug_place_listen_gateio_fut_v2();
+    debug_place_listen_gateio_spot_v2();
+    // debug_place_listen_bybit_fut_v2();
+    // debug_place_listen_bybit_spot_v2();
+}
+
+void debug_trade_contango_private_client_interface() {
+    // ...
+    // private_clients.init_idle();
+    // ...
+    while (true) {
+        // ...
+        while (true) {
+            // ...
+            // if (is_ready_fut && is_ready_spot) {
+            //     break;
+            // }
+        }
+        spdlog::info("place orders and wait for fills");
+        // private_clients.place_fut_order();
+        // private_clients.place_spot_order();
+        while (true) {
+            // if (!fut_order.is_filled && fut_order.price >
+            // client_fut.last_bid_price) {
+            //     private_clients.amend_fut_order();
+            // }
+            // if (!spot_order.is_filled && spot_order.price >
+            // client_spot.last_bid_price) {
+            //     private_clients.amend_spot_order();
+            // }
+            // if (fut_order.is_filled && spot_order.is_filled) {
+            //     break;
+            // }
+        }
+        spdlog::info("orders filled => wait for prices converge");
+        while (true) {
+            // double diff_rel = (bid_fut - bid_spot) / bid_spot * 100;
+            // if (diff_rel < 0.1) {
+            //     break;
+            // }
+        }
+        spdlog::info("price converged => place exit orders and wait for fills");
+        // private_clients.place_fut_order();
+        // private_clients.place_spot_order();
+        while (true) {
+            // if (!fut_order.is_filled && fut_order.price >
+            // client_fut.last_bid_price) {
+            //     private_clients.amend_fut_order();
+            // }
+            // if (!spot_order.is_filled && spot_order.price >
+            // client_spot.last_bid_price) {
+            //     private_clients.amend_spot_order();
+            // }
+            // if (fut_order.is_filled && spot_order.is_filled) {
+            //     break;
+            // }
+        }
+        spdlog::info(
+            "exit orders closed => start looking for another opportunity");
+        // client_fut->clear_orders();
+        // client_spot->clear_orders();
+    }
+}
+
+void debug_listen_gateio_tickers() {
     std::string symbol = "btcusdt";
     ClientPublicHtx client("spot");
     client.init_idle();

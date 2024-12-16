@@ -4,6 +4,25 @@
 
 #include "models.hpp"
 
+struct Order {
+    std::string ex;
+    std::string k;
+    std::string id;
+    long open_ts;
+    std::string s;
+    std::string p;
+    double v;
+    double filled_amount;
+    std::string st;
+    std::string toString() const {
+        return fmt::format(
+            "{{ex={},k={},id={},open_ts={},s={},p={},v={},st={},"
+            "filled_amount={}}}",
+            ex, k, id, open_ts, s, p, v, st, filled_amount);
+    }
+    bool isFilled() { return st == "FILLED"; }
+};
+
 class ClientPublic : public hv::WebSocketClient {
    public:
     bool ws_onopen_received;
@@ -29,6 +48,37 @@ class ClientPublic : public hv::WebSocketClient {
     void init_idle_(std::string& url);
 };
 
+class ClientPrivate : public hv::WebSocketClient {
+   public:
+    bool ws_onopen_received;
+    bool ws_onclose_received;
+    bool is_subscribed_to_private_channels;
+    std::string ex;
+    std::string kind;
+    std::function<void()> onmessage_private_event;
+
+    ClientPrivate(std::string ex_, std::string kind_,
+                  hv::EventLoopPtr loop = NULL);
+    ~ClientPrivate();
+
+    virtual void init_idle() = 0;
+    virtual void subscribe_to_private_events() = 0;
+    virtual void place_fut_limit_order(std::string symbol, std::string side,
+                                       std::string price,
+                                       std::string quantity) = 0;
+    virtual void place_spot_limit_order(std::string symbol, std::string side,
+                                        std::string price,
+                                        std::string quantity) = 0;
+    Order get_last_order();
+    int get_orders_len();
+    void clear_orders();
+
+   protected:
+    std::vector<Order> orders;
+    virtual void handle_onmessage(const std::string& msg) = 0;
+    void init_idle_(std::string& url);
+};
+
 class ClientPublicGateio : public ClientPublic {
    public:
     ClientPublicGateio(std::string kind);
@@ -47,6 +97,28 @@ class ClientPublicGateio : public ClientPublic {
 
    protected:
     void handle_onmessage(const std::string& msg);
+};
+
+class ClientPrivateGateio : public ClientPrivate {
+   public:
+    ClientPrivateGateio(std::string kind);
+
+    virtual void init_idle();
+    virtual void subscribe_to_private_events();
+    virtual void place_fut_limit_order(std::string symbol, std::string side,
+                                       std::string price, std::string quantity);
+    virtual void place_spot_limit_order(std::string symbol, std::string side,
+                                        std::string price,
+                                        std::string quantity);
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+
+   private:
+    std::string api_key;
+    std::string api_secret;
+    std::string sign_str(std::string method, std::string t, std::string url,
+                         std::string query_str, std::string payload_str);
 };
 
 class ClientPublicMexc : public ClientPublic {
@@ -72,24 +144,26 @@ class ClientPublicMexc : public ClientPublic {
     bool subscribed_to_depth = false;
 };
 
-class ClientPrivateMexc : public ClientPublic {
+class ClientPrivateMexc : public ClientPrivate {
    public:
     ClientPrivateMexc(std::string kind);
 
-    void init_idle_private(std::string& listen_key);
+    virtual void init_idle();
+    virtual void subscribe_to_private_events();
+    virtual void place_fut_limit_order(std::string symbol, std::string side,
+                                       std::string price, std::string quantity);
+    virtual void place_spot_limit_order(std::string symbol, std::string side,
+                                        std::string price,
+                                        std::string quantity);
 
-    void subscribe_to_private_events();
-
-    void place_spot_limit_order();
-
-    static void place_fut_limit_order();
-
-    std::string create_listen_key();
+   protected:
+    void handle_onmessage(const std::string& msg);
 
    private:
     std::string api_key;
     std::string api_secret;
     std::string sign_str(std::string& query);
+    std::string create_listen_key();
 };
 
 class ClientPublicBybit : public ClientPublic {
@@ -111,6 +185,27 @@ class ClientPublicBybit : public ClientPublic {
 
    private:
     Depth parse_depth(nlohmann::json& msg_obj);
+};
+
+class ClientPrivateBybit : public ClientPrivate {
+   public:
+    ClientPrivateBybit(std::string kind);
+
+    virtual void init_idle();
+    virtual void subscribe_to_private_events();
+    virtual void place_fut_limit_order(std::string symbol, std::string side,
+                                       std::string price, std::string quantity);
+    virtual void place_spot_limit_order(std::string symbol, std::string side,
+                                        std::string price,
+                                        std::string quantity);
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+
+   private:
+    std::string api_key;
+    std::string api_secret;
+    std::string sign_str(std::string qs0, std::string payload0);
 };
 
 class ClientPublicHtx : public ClientPublic {
@@ -141,4 +236,25 @@ class ClientPublicHtx : public ClientPublic {
 
    private:
     std::vector<Depth> parse_depth_from_res(std::string s);
+};
+
+class ClientPrivateHtx : public ClientPrivate {
+   public:
+    ClientPrivateHtx(std::string kind);
+
+    virtual void init_idle();
+    virtual void subscribe_to_private_events();
+    virtual void place_fut_limit_order(std::string symbol, std::string side,
+                                       std::string price, std::string quantity);
+    virtual void place_spot_limit_order(std::string symbol, std::string side,
+                                        std::string price,
+                                        std::string quantity);
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+
+   private:
+    std::string api_key;
+    std::string api_secret;
+    std::string sign_str(std::string qs0, std::string payload0);
 };

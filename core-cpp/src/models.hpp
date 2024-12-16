@@ -1,4 +1,5 @@
 #include <gmpxx.h>
+#include <spdlog/spdlog.h>
 
 #include <iostream>
 #include <map>
