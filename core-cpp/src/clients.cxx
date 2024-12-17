@@ -578,6 +578,31 @@ void ClientPrivateGateio::place_fut_limit_order(std::string symbol,
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
 }
 
+void ClientPrivateGateio::set_leverage_to_1(std::string symbol) {
+    if (kind != "fut") {
+        throw std::runtime_error(fmt::format("unexpected kind=", kind));
+    }
+    double timestamp =
+        std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
+    std::string timestamp_str = std::to_string(timestamp);
+    std::string url = "https://api.gateio.ws";
+    std::string path =
+        fmt::format("/api/v4/futures/usdt/positions/{}/leverage", symbol);
+    std::string query_param = "leverage=1";
+    SPDLOG_INFO("set selerage query_param={}", query_param);
+    std::string sign = sign_str("POST", timestamp_str, path, query_param, "");
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, ("KEY: " + api_key).c_str());
+    headers =
+        curl_slist_append(headers, ("Timestamp: " + timestamp_str).c_str());
+    headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
+    nlohmann::json res_obj =
+        execute_http_post_req(url + path + "?" + query_param, headers, "");
+    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+}
+
 void ClientPrivateGateio::place_spot_limit_order(std::string symbol,
                                                  std::string side,
                                                  std::string price,
@@ -1099,6 +1124,10 @@ void ClientPrivateMexc::place_fut_limit_order(std::string symbol,
     throw std::runtime_error("not-implemented");
 }
 
+void ClientPrivateMexc::set_leverage_to_1(std::string symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
 void ClientPrivateMexc::place_spot_limit_order(std::string symbol,
                                                std::string side,
                                                std::string price,
@@ -1495,6 +1524,36 @@ void ClientPrivateBybit::place_fut_limit_order(std::string symbol,
                                         recw_window, body_str);
     std::string sign = gen_hmac_sha256(api_secret, param_str);
     std::string url = "https://api.bybit.com/v5/order/create";
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers =
+        curl_slist_append(headers, ("X-BAPI-API-KEY: " + api_key).c_str());
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-RECV-WINDOW: " + recw_window).c_str());
+    headers = curl_slist_append(headers, ("X-BAPI-SIGN: " + sign).c_str());
+    headers = curl_slist_append(headers, "X-BAPI-SIGN-TYPE: 2");
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
+    nlohmann::json res_obj = execute_http_post_req(url, headers, body_str);
+    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+}
+
+void ClientPrivateBybit::set_leverage_to_1(std::string symbol) {
+    if (kind != "fut") {
+        throw std::runtime_error(fmt::format("unexpected kind=", kind));
+    }
+    std::string timestamp_str = std::to_string(
+        (long)(std::chrono::system_clock::now().time_since_epoch().count() /
+               1000));
+    std::string recw_window = "5000";
+    std::string body_str = fmt::format(
+        R"({{"category": "linear", "symbol": "{}", "buyLeverage": "1", "sellLeverage": "1"}})",
+        symbol);
+    SPDLOG_INFO("set leverage body_str={}", body_str);
+    std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
+                                        recw_window, body_str);
+    std::string sign = gen_hmac_sha256(api_secret, param_str);
+    std::string url = "https://api.bybit.com/v5/position/set-leverage";
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers =
@@ -1951,6 +2010,10 @@ void ClientPrivateHtx::place_fut_limit_order(std::string symbol,
     std::cout << "res_buf=" << res_buf << std::endl;
     nlohmann::json res_obj = nlohmann::json::parse(res_buf);
     curl_easy_cleanup(curl);
+}
+
+void ClientPrivateHtx::set_leverage_to_1(std::string symbol) {
+    throw std::runtime_error("not-implemented");
 }
 
 void ClientPrivateHtx::place_spot_limit_order(std::string symbol,
