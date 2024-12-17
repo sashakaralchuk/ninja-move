@@ -110,7 +110,6 @@ target_link_libraries(run_trigger_on_contango_2024_11_11 PRIVATE
 )
 
 enable_testing()
-
 include(GoogleTest)
 add_executable(models_test src/models_test.cxx src/models.cxx)
 target_include_directories(models_test PRIVATE
@@ -123,7 +122,35 @@ target_link_libraries(models_test
     ${SPDLOG}
     ${GMP}
 )
-
 gtest_discover_tests(models_test)
+add_executable(clients_test src/clients_test.cxx src/clients.cxx src/models.cxx)
+target_include_directories(clients_test PRIVATE
+    libs/libhv/build/include/hv
+    libs/spdlog/include
+    libs/clickhouse-cpp
+    libs/zlib
+    libs/curl/include/curl
+    libs/gmp-6.3.0/build/include
+)
+target_link_libraries(clients_test
+    GTest::gtest_main
+    nlohmann_json::nlohmann_json
+    ${LIBHV}
+    ${SPDLOG}
+    clickhouse-cpp-lib
+    ${ZLIB}
+    ${CURL}
+    ${GMP}
+    OpenSSL::SSL
+    hw_grpc_proto
+    absl::check
+    absl::flags
+    absl::flags_parse
+    absl::log
+    gRPC::grpc++_reflection
+    gRPC::grpc++
+    protobuf::libprotobuf
+)
+gtest_discover_tests(clients_test)
 
 configure_file(t.cxx t_temp_source.cxx)

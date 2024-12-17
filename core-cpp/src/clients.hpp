@@ -4,6 +4,8 @@
 
 #include "models.hpp"
 
+std::string conv_to_dec_str_v2(double price, std::string tick_size);
+
 struct Order {
     std::string ex;
     std::string k;
@@ -63,6 +65,8 @@ class ClientPrivate : public hv::WebSocketClient {
 
     virtual void init_idle() = 0;
     virtual void subscribe_to_private_events() = 0;
+    virtual std::tuple<std::string, std::string> adjust_price_quantity(
+        std::string symbol, double price, double quantity) = 0;
     virtual void place_fut_limit_order(std::string symbol, std::string side,
                                        std::string price,
                                        std::string quantity) = 0;
@@ -74,6 +78,8 @@ class ClientPrivate : public hv::WebSocketClient {
     void clear_orders();
 
    protected:
+    std::optional<nlohmann::json> fut_exchange_info;
+    std::optional<nlohmann::json> spot_exchange_info;
     std::vector<Order> orders;
     virtual void handle_onmessage(const std::string& msg) = 0;
     void init_idle_(std::string& url);
@@ -105,6 +111,8 @@ class ClientPrivateGateio : public ClientPrivate {
 
     virtual void init_idle();
     virtual void subscribe_to_private_events();
+    virtual std::tuple<std::string, std::string> adjust_price_quantity(
+        std::string symbol, double price, double quantity);
     virtual void place_fut_limit_order(std::string symbol, std::string side,
                                        std::string price, std::string quantity);
     virtual void place_spot_limit_order(std::string symbol, std::string side,
@@ -150,6 +158,8 @@ class ClientPrivateMexc : public ClientPrivate {
 
     virtual void init_idle();
     virtual void subscribe_to_private_events();
+    virtual std::tuple<std::string, std::string> adjust_price_quantity(
+        std::string symbol, double price, double quantity);
     virtual void place_fut_limit_order(std::string symbol, std::string side,
                                        std::string price, std::string quantity);
     virtual void place_spot_limit_order(std::string symbol, std::string side,
@@ -193,6 +203,8 @@ class ClientPrivateBybit : public ClientPrivate {
 
     virtual void init_idle();
     virtual void subscribe_to_private_events();
+    virtual std::tuple<std::string, std::string> adjust_price_quantity(
+        std::string symbol, double price, double quantity);
     virtual void place_fut_limit_order(std::string symbol, std::string side,
                                        std::string price, std::string quantity);
     virtual void place_spot_limit_order(std::string symbol, std::string side,
@@ -235,7 +247,7 @@ class ClientPublicHtx : public ClientPublic {
     void handle_onmessage(const std::string& msg);
 
    private:
-    std::vector<Depth> parse_depth_from_res(std::string s);
+    std::vector<Depth> parse_depth_from_res(nlohmann::json obj);
 };
 
 class ClientPrivateHtx : public ClientPrivate {
@@ -244,6 +256,8 @@ class ClientPrivateHtx : public ClientPrivate {
 
     virtual void init_idle();
     virtual void subscribe_to_private_events();
+    virtual std::tuple<std::string, std::string> adjust_price_quantity(
+        std::string symbol, double price, double quantity);
     virtual void place_fut_limit_order(std::string symbol, std::string side,
                                        std::string price, std::string quantity);
     virtual void place_spot_limit_order(std::string symbol, std::string side,

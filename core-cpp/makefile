@@ -6,7 +6,7 @@ run:
 
 test:
 	# make && ctest
-	# cmake --build build -j 12 && ctest --test-dir build --output-on-failure -R NumbersThresholds -j 12
+	# cmake --build build -j 12 && ctest --test-dir build --output-on-failure -j 12
 
 run-trigger-on-contango-2024-11-11:
 	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./run_trigger_on_contango_2024_11_11
