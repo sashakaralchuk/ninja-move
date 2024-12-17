@@ -19,6 +19,30 @@
 #include <regex>
 #include <sstream>
 
+std::string gen_precision_str(int precision) {
+    if (precision == 0) {
+        return "1";
+    }
+    if (precision < 0) {
+        throw std::runtime_error(
+            fmt::format("unexpected precision={}", precision));
+    }
+    return fmt::format("0.{}1", std::string(precision - 1, '0'));
+}
+
+std::string conv_to_dec_str_v2(double price, std::string tick_size) {
+    int ticks_amount = (int)(price / stod(tick_size));
+    double price2 = (double)ticks_amount * stod(tick_size);
+    if (tick_size.find(".") == std::string::npos) {
+        return std::to_string((int)price2);
+    } else {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(tick_size.length() - 2)
+            << price2;
+        return oss.str();
+    }
+}
+
 static size_t execute_http_req_write_cb(void* contents, size_t size,
                                         size_t nmemb, void* userp) {
     ((std::string*)userp)->append((char*)contents, size * nmemb);
@@ -429,10 +453,16 @@ ClientPrivateGateio::ClientPrivateGateio(std::string kind)
 void ClientPrivateGateio::init_idle() {
     if (kind == "fut") {
         std::string url_str = "wss://fx-ws.gateio.ws/v4/ws/usdt";
+        std::string fut_exchange_info_url_str =
+            "https://api.gateio.ws/api/v4/futures/usdt/contracts";
         init_idle_(url_str);
+        fut_exchange_info = execute_http_get_req(fut_exchange_info_url_str);
     } else if (kind == "spot") {
         std::string url_str = "wss://api.gateio.ws/ws/v4/";
+        std::string spot_exchange_info_url_str =
+            "https://api.gateio.ws/api/v4/spot/currency_pairs";
         init_idle_(url_str);
+        spot_exchange_info = execute_http_get_req(spot_exchange_info_url_str);
     } else {
         throw std::runtime_error("unexpected kind=" + kind);
     }
@@ -470,7 +500,44 @@ void ClientPrivateGateio::subscribe_to_private_events() {
 
 std::tuple<std::string, std::string> ClientPrivateGateio::adjust_price_quantity(
     std::string symbol, double price, double quantity) {
-    throw std::runtime_error("not-implemented");
+    if (kind == "fut") {
+        std::string order_price_round = "";
+        std::string quanto_multiplier = "";
+        for (auto& obj : fut_exchange_info.value()) {
+            if (obj["name"] == symbol) {
+                order_price_round = obj["order_price_round"];
+                quanto_multiplier = obj["quanto_multiplier"];
+            }
+        }
+        if (order_price_round == "" || quanto_multiplier == "") {
+            throw std::runtime_error(
+                fmt::format("order_price_round or quanto_multiplier is not set "
+                            "for symbol={}",
+                            symbol));
+        }
+        return {conv_to_dec_str_v2(price, order_price_round),
+                conv_to_dec_str_v2(quantity, quanto_multiplier)};
+    } else if (kind == "spot") {
+        std::optional<int> precision = {};
+        std::optional<int> amount_precision = {};
+        for (auto& obj : spot_exchange_info.value()) {
+            if (obj["id"] == symbol) {
+                precision = obj["precision"];
+                amount_precision = obj["amount_precision"];
+            }
+        }
+        if (!precision.has_value() || !amount_precision.has_value()) {
+            throw std::runtime_error(fmt::format(
+                "precision or amount_precision is not set for symbol={}",
+                symbol));
+        }
+        std::string price_prec = gen_precision_str(precision.value());
+        std::string quantity_prec = gen_precision_str(amount_precision.value());
+        return {conv_to_dec_str_v2(price, price_prec),
+                conv_to_dec_str_v2(quantity, quantity_prec)};
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
 }
 
 void ClientPrivateGateio::place_fut_limit_order(std::string symbol,
@@ -478,7 +545,7 @@ void ClientPrivateGateio::place_fut_limit_order(std::string symbol,
                                                 std::string price,
                                                 std::string quantity) {
     if (kind != "fut") {
-        throw std::runtime_error("unexpected kind=" + kind);
+        throw std::runtime_error(fmt::format("unexpected kind=", kind));
     }
     double timestamp =
         std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
@@ -486,9 +553,6 @@ void ClientPrivateGateio::place_fut_limit_order(std::string symbol,
     std::string url = "https://api.gateio.ws";
     std::string path = "/api/v4/futures/usdt/orders";
     // NOTE: json serializon fields ordering is important
-    // TODO: calc quantity based on quanto_multiplier (amount of contracts),
-    // size is amount of contracts, to understand how much contracts i need i
-    // have to fetch quanto_multiplier => do it
     std::string size = "";
     if (side == "BUY") {
         size = quantity;
@@ -532,6 +596,7 @@ void ClientPrivateGateio::place_spot_limit_order(std::string symbol,
     std::string body_str = fmt::format(
         R"({{"text":"t-123","currency_pair":"{}","type":"limit","account":"spot","side":"{}","amount":"{}","price":"{}","time_in_force":"gtc","iceberg":"0"}})",
         symbol, side, quantity, price);
+    SPDLOG_INFO("place order side={} body_str={}", side, body_str);
     std::string sign = sign_str("POST", timestamp_str, path, "", body_str);
     std::string res_buf;
     struct curl_slist* headers = NULL;
@@ -541,7 +606,9 @@ void ClientPrivateGateio::place_spot_limit_order(std::string symbol,
     headers =
         curl_slist_append(headers, ("Timestamp: " + timestamp_str).c_str());
     headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
-    execute_http_post_req(url + path, headers, body_str);
+    nlohmann::json res_obj =
+        execute_http_post_req(url + path, headers, body_str);
+    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
 }
 
 void ClientPrivateGateio::handle_onmessage(const std::string& msg) {
@@ -597,7 +664,7 @@ void ClientPrivateGateio::handle_onmessage(const std::string& msg) {
                     .s = order_obj["contract"],
                     .p = std::to_string((double)order_obj["price"]),
                     .v = (double)order_obj["size"],
-                    .filled_amount = (double)order_obj["size"],
+                    .filled_amount = fabs((double)order_obj["size"]),
                     .st = "FILLED",
                 };
                 orders.push_back(order);
@@ -635,9 +702,8 @@ void ClientPrivateGateio::handle_onmessage(const std::string& msg) {
                 orders.push_back(order);
             } else if (finish_as == "filled") {
                 std::string order_id = order_obj["id"];
-                double filled_amount =
-                    stod((std::string)order_obj["filled_total"]) /
-                    stod((std::string)order_obj["avg_deal_price"]);
+                double filled_amount = stod((std::string)order_obj["amount"]) -
+                                       stod((std::string)order_obj["fee"]);
                 spdlog::info("gateio spot order filled order_id={}", order_id);
                 for (int i = 0; i < orders.size(); i++) {
                     if (orders[i].id == order_id) {
@@ -1002,8 +1068,8 @@ std::tuple<std::string, std::string> ClientPrivateMexc::adjust_price_quantity(
     if (!spot_exchange_info.has_value()) {
         throw std::runtime_error("spot_exchange_info is not set");
     }
-    int quoteAssetPrecision = 0;
-    int baseAssetPrecision = 0;
+    std::optional<int> quoteAssetPrecision = {};
+    std::optional<int> baseAssetPrecision = {};
     for (auto& obj : spot_exchange_info.value()["symbols"]) {
         if (obj["symbol"] == symbol) {
             quoteAssetPrecision = obj["quoteAssetPrecision"];
@@ -1011,16 +1077,14 @@ std::tuple<std::string, std::string> ClientPrivateMexc::adjust_price_quantity(
             break;
         }
     }
-    if (quoteAssetPrecision == 0 || baseAssetPrecision == 0) {
+    if (!quoteAssetPrecision.has_value() || !baseAssetPrecision.has_value()) {
         throw std::runtime_error(
-            fmt::format("quoteAssetPrecision={} or baseAssetPrecision={} is "
-                        "not set for symbol={}",
-                        quoteAssetPrecision, baseAssetPrecision, symbol));
+            fmt::format("quoteAssetPrecision or baseAssetPrecision is not set "
+                        "for symbol={}",
+                        symbol));
     }
-    std::string price_prec =
-        fmt::format("0.{}1", std::string(quoteAssetPrecision - 1, '0'));
-    std::string quantity_prec =
-        fmt::format("0.{}1", std::string(baseAssetPrecision - 1, '0'));
+    std::string price_prec = gen_precision_str(quoteAssetPrecision.value());
+    std::string quantity_prec = gen_precision_str(baseAssetPrecision.value());
     return {conv_to_dec_str_v2(price, price_prec),
             conv_to_dec_str_v2(quantity, quantity_prec)};
 }
@@ -1357,19 +1421,6 @@ void ClientPrivateBybit::subscribe_to_private_events() {
         "req_id": "t-req-id",
         "args": ["order"]
     })");
-}
-
-std::string conv_to_dec_str_v2(double price, std::string tick_size) {
-    int ticks_amount = (int)(price / stod(tick_size));
-    double price2 = (double)ticks_amount * stod(tick_size);
-    if (tick_size.find(".") == std::string::npos) {
-        return std::to_string((int)price2);
-    } else {
-        std::ostringstream oss;
-        oss << std::fixed << std::setprecision(tick_size.length() - 2)
-            << price2;
-        return oss.str();
-    }
 }
 
 std::tuple<std::string, std::string> ClientPrivateBybit::adjust_price_quantity(

@@ -6,6 +6,8 @@
 
 std::string conv_to_dec_str_v2(double price, std::string tick_size);
 
+std::string gen_precision_str(int precision);
+
 struct Order {
     std::string ex;
     std::string k;
