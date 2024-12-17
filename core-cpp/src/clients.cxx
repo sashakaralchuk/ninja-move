@@ -973,7 +973,10 @@ void ClientPrivateMexc::init_idle() {
     } else if (kind == "spot") {
         std::string url_str = fmt::format("wss://wbs.mexc.com/ws?listenKey={}",
                                           create_listen_key());
+        std::string spot_exchange_info_url_str =
+            "https://api.mexc.com/api/v3/exchangeInfo";
         init_idle_(url_str);
+        spot_exchange_info = execute_http_get_req(spot_exchange_info_url_str);
     } else {
         throw std::runtime_error("unexpected kind=" + kind);
     }
@@ -983,11 +986,7 @@ void ClientPrivateMexc::subscribe_to_private_events() {
     if (kind == "spot") {
         std::string s = R"({
             "method": "SUBSCRIPTION",
-            "params": [
-                "spot@private.account.v3.api",
-                "spot@private.deals.v3.api",
-                "spot@private.orders.v3.api"
-            ]
+            "params": ["spot@private.orders.v3.api"]
         })";
         send(s);
     } else {
@@ -997,7 +996,33 @@ void ClientPrivateMexc::subscribe_to_private_events() {
 
 std::tuple<std::string, std::string> ClientPrivateMexc::adjust_price_quantity(
     std::string symbol, double price, double quantity) {
-    throw std::runtime_error("not-implemented");
+    if (kind != "spot") {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+    if (!spot_exchange_info.has_value()) {
+        throw std::runtime_error("spot_exchange_info is not set");
+    }
+    int quoteAssetPrecision = 0;
+    int baseAssetPrecision = 0;
+    for (auto& obj : spot_exchange_info.value()["symbols"]) {
+        if (obj["symbol"] == symbol) {
+            quoteAssetPrecision = obj["quoteAssetPrecision"];
+            baseAssetPrecision = obj["baseAssetPrecision"];
+            break;
+        }
+    }
+    if (quoteAssetPrecision == 0 || baseAssetPrecision == 0) {
+        throw std::runtime_error(
+            fmt::format("quoteAssetPrecision={} or baseAssetPrecision={} is "
+                        "not set for symbol={}",
+                        quoteAssetPrecision, baseAssetPrecision, symbol));
+    }
+    std::string price_prec =
+        fmt::format("0.{}1", std::string(quoteAssetPrecision - 1, '0'));
+    std::string quantity_prec =
+        fmt::format("0.{}1", std::string(baseAssetPrecision - 1, '0'));
+    return {conv_to_dec_str_v2(price, price_prec),
+            conv_to_dec_str_v2(quantity, quantity_prec)};
 }
 
 void ClientPrivateMexc::place_fut_limit_order(std::string symbol,
@@ -1036,9 +1061,7 @@ void ClientPrivateMexc::place_spot_limit_order(std::string symbol,
 void ClientPrivateMexc::handle_onmessage(const std::string& msg) {
     nlohmann::json msg_obj = nlohmann::json::parse(msg);
     SPDLOG_DEBUG("ex={} kind={} msg_obj={}", ex, kind, msg_obj.dump());
-    std::string exp_channels =
-        "spot@private.deals.v3.api,spot@private.orders.v3.api,"
-        "spot@private.account.v3.api";
+    std::string exp_channels = "spot@private.orders.v3.api";
     if (msg_obj["id"] == 0 && msg_obj["code"] == 0 &&
         msg_obj["msg"] == exp_channels) {
         is_subscribed_to_private_channels = true;
