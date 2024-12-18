@@ -357,6 +357,22 @@ async fn write_to_worker(rx: std::sync::mpsc::Receiver<Vec<QTicker>>) {
                 log::info!("write_to_worker insert_dur={}", now_millis() - insert_start);
                 let find_start = now_millis();
                 if let Some(vec_to_send) = map.find_spreads_all() {
+                    // let mut vec_to_send_t = vec![];
+                    // for v in vec_to_send.iter() {
+                    //     let t_fut = v.clone().t_fut.unwrap();
+                    //     let t_spot = v.clone().t_spot.unwrap();
+                    //     if vec!["mexc", "gateio", "bybit"].contains(&t_spot.ex.as_str())
+                    //         && vec!["gateio", "bybit"].contains(&t_fut.ex.as_str())
+                    //     {
+                    //         vec_to_send_t.push(v.clone());
+                    //     }
+                    // }
+                    // if vec_to_send_t.len() > 0 {
+                    //     log::info!("vec_to_send_t={:?}", vec_to_send_t);
+                    //     panic!("vec_to_send_t.len > 0");
+                    // }
+                    // log::info!("vec_to_send_t.len={}", vec_to_send_t.len());
+                    // log::info!("vec_to_send={:?}", vec_to_send);
                     log::info!(
                         "vec_to_send.len={} find_dur={}",
                         vec_to_send.len(),
@@ -1138,6 +1154,18 @@ impl<'a> SpreadsMap<'a> {
                     let (_, p_spot) = SpreadsMap::conv_to_symbol_int_1_v2(&s.0.s, s.0.p);
                     let (_, p_fut) = SpreadsMap::conv_to_symbol_int_1_v2(&s.1.s, s.1.p);
                     let diff_rel = (p_fut - p_spot) / p_spot * 100.0;
+                    if s.0.ex == QEx::Htx || s.1.ex == QEx::Htx {
+                        continue;
+                    }
+                    if (s.0.s == "DHX_USDT" && s.0.ex == QEx::Mexc)
+                        || (s.1.s == "DHX_USDT" && s.1.ex == QEx::Mexc)
+                    {
+                        continue;
+                    }
+                    if s.1.ex == QEx::Mexc {
+                        // log::info!("temporary ignore mexc fut");
+                        continue;
+                    }
                     if diff_rel >= self.diff_ref_bottom && diff_rel <= self.diff_ref_top {
                         log::debug!("k={} diff_rel={}", k, diff_rel);
                         spreads.push(SpreadsReq {
