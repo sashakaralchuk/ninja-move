@@ -14,7 +14,7 @@ run-trigger-on-contango-2024-11-11:
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
 		THRESHOLD_REL=3.0 \
-		TICKERS_VERSION=v3 \
+		TICKERS_VERSION=v2 \
 		./build/run_trigger_on_contango_2024_11_11
 
 clone-libs:

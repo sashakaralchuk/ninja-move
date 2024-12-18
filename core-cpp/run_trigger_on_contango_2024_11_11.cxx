@@ -40,24 +40,43 @@ using trade_contango::TradeContango;
 ABSL_FLAG(uint16_t, port, 50051, "Server port for the service");
 
 void configure_logger();
-void debug_place_order();
+void debug_place_listen_mexc_fut_v2();
+void debug_place_listen_mexc_spot_v2();
+void debug_place_listen_gateio_fut_v2();
+void debug_place_listen_gateio_spot_v2();
+void debug_place_listen_bybit_fut_v2();
+void debug_place_listen_bybit_spot_v2();
 void debug_listen_gateio_tickers();
 void listen_gateio_tickers_v1();
 void listen_gateio_tickers_v2(int argc, char** argv);
+void listen_gateio_tickers_v3(int argc, char** argv);
 
 int main(int argc, char** argv) {
     configure_logger();
     std::string v = std::getenv("TICKERS_VERSION");
-    if (v == "debug-order") {
-        debug_place_order();
+    if (v == "debug-place-listen-mexc-fut-v2") {
+        debug_place_listen_mexc_fut_v2();
+    } else if (v == "debug-place-listen-mexc-spot-v2") {
+        debug_place_listen_mexc_spot_v2();
+    } else if (v == "debug-place-listen-gateio-fut-v2") {
+        debug_place_listen_gateio_fut_v2();
+    } else if (v == "debug-place-listen-gateio-spot-v2") {
+        debug_place_listen_gateio_spot_v2();
+    } else if (v == "debug-place-listen-bybit-fut-v2") {
+        debug_place_listen_bybit_fut_v2();
+    } else if (v == "debug-place-listen-bybit-spot-v2") {
+        debug_place_listen_bybit_spot_v2();
     } else if (v == "debug-depth") {
         debug_listen_gateio_tickers();
     } else if (v == "v1") {
         listen_gateio_tickers_v1();
     } else if (v == "v2") {
         listen_gateio_tickers_v2(argc, argv);
+    } else if (v == "v3") {
+        listen_gateio_tickers_v3(argc, argv);
     } else {
-        throw std::runtime_error("unexpected TICKERS_VERSION=" + v);
+        throw std::runtime_error(
+            fmt::format("unexpected TICKERS_VERSION={}", v));
     }
     return 0;
 }
@@ -276,26 +295,44 @@ std::optional<OpportunityRow> is_opportunity_exists(
     return opp_row_t;
 }
 
+void wait_until(std::function<bool()> callback) {
+    while (true) {
+        if (callback()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+}
+
+void wait_idle(int iters_amount = 5) {
+    for (int i = 0; i < iters_amount; i++) {
+        spdlog::info("idle tick");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+}
+
 class SpreadsHouse {
    public:
     SpreadsHouse() {}
 
-    void init_idle() {
-        if (ws_clients.size() == 0) {
-            ws_clients["bybit-fut"] = new ClientPublicBybit("fut");
-            ws_clients["bybit-spot"] = new ClientPublicBybit("spot");
-            ws_clients["mexc-fut"] = new ClientPublicMexc("fut");
-            ws_clients["mexc-spot"] = new ClientPublicMexc("spot");
-            ws_clients["gateio-fut"] = new ClientPublicGateio("fut");
-            ws_clients["gateio-spot"] = new ClientPublicGateio("spot");
-            ws_clients["htx-fut"] = new ClientPublicHtx("fut");
-            ws_clients["htx-spot"] = new ClientPublicHtx("spot");
+    void init_idle_public() {
+        if (ws_clients_public.size() == 0) {
+            ws_clients_public["bybit-fut"] = new ClientPublicBybit("fut");
+            ws_clients_public["bybit-spot"] = new ClientPublicBybit("spot");
+            ws_clients_public["mexc-fut"] = new ClientPublicMexc("fut");
+            ws_clients_public["mexc-spot"] = new ClientPublicMexc("spot");
+            ws_clients_public["gateio-fut"] = new ClientPublicGateio("fut");
+            ws_clients_public["gateio-spot"] = new ClientPublicGateio("spot");
+            ws_clients_public["htx-fut"] = new ClientPublicHtx("fut");
+            ws_clients_public["htx-spot"] = new ClientPublicHtx("spot");
         }
-        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+        for (auto o = ws_clients_public.cbegin(); o != ws_clients_public.cend();
+             ++o) {
             o->second->init_idle();
         }
         auto is_all_ws_connected = [&]() -> bool {
-            for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+            for (auto o = ws_clients_public.cbegin();
+                 o != ws_clients_public.cend(); ++o) {
                 if (!o->second->isConnected() ||
                     !o->second->ws_onopen_received) {
                     return false;
@@ -315,21 +352,61 @@ class SpreadsHouse {
         }
     }
 
+    void init_idle_private() {
+        if (ws_clients_private.size() == 0) {
+            ws_clients_private["mexc-spot"] = new ClientPrivateMexc("spot");
+            ws_clients_private["gateio-fut"] = new ClientPrivateGateio("fut");
+            ws_clients_private["gateio-spot"] = new ClientPrivateGateio("spot");
+            ws_clients_private["bybit-fut"] = new ClientPrivateBybit("fut");
+            ws_clients_private["bybit-spot"] = new ClientPrivateBybit("spot");
+        }
+        auto m = ws_clients_private;
+        for (auto o = m.cbegin(); o != m.cend(); ++o) {
+            o->second->init_idle();
+        }
+        SPDLOG_INFO("wait for onopen event");
+        wait_until([&]() {
+            for (auto o = m.cbegin(); o != m.cend(); ++o) {
+                if (!o->second->isConnected() ||
+                    !o->second->ws_onopen_received) {
+                    return false;
+                }
+            }
+            return true;
+        });
+        for (auto o = m.cbegin(); o != m.cend(); ++o) {
+            o->second->subscribe_to_private_events();
+        }
+        SPDLOG_INFO("wait for subscribed events");
+        wait_until([&]() {
+            for (auto o = m.cbegin(); o != m.cend(); ++o) {
+                if (!o->second->is_subscribed_to_private_channels) {
+                    return false;
+                }
+            }
+            return true;
+        });
+        SPDLOG_INFO("ws_clients_private been set up");
+    }
+
     void ping() {
-        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+        for (auto o = ws_clients_public.cbegin(); o != ws_clients_public.cend();
+             ++o) {
             o->second->ping();
         }
     }
 
     void close_all() {
-        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+        for (auto o = ws_clients_public.cbegin(); o != ws_clients_public.cend();
+             ++o) {
             o->second->closesocket();
         }
         while (true) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             spdlog::debug("tick on if all ws clients are closed");
             bool all_closed = true;
-            for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+            for (auto o = ws_clients_public.cbegin();
+                 o != ws_clients_public.cend(); ++o) {
                 if (!o->second->ws_onclose_received) {
                     all_closed = false;
                 }
@@ -340,21 +417,31 @@ class SpreadsHouse {
             }
         }
         spdlog::debug("clean order-books");
-        for (auto o = ws_clients.cbegin(); o != ws_clients.cend(); ++o) {
+        for (auto o = ws_clients_public.cbegin(); o != ws_clients_public.cend();
+             ++o) {
             o->second->order_book_cache.clear();
         }
     }
 
-    ClientPublic* get_client(std::string ex, std::string kind) {
+    ClientPublic* get_client_public(std::string ex, std::string kind) {
         std::string k = ex + "-" + kind;
-        if (ws_clients.find(k) == ws_clients.end()) {
-            throw std::runtime_error("unexpected key=" + k);
+        if (ws_clients_public.find(k) == ws_clients_public.end()) {
+            throw std::runtime_error(fmt::format("unexpected key={}", k));
         }
-        return ws_clients[k];
+        return ws_clients_public[k];
+    }
+
+    ClientPrivate* get_client_private(std::string ex, std::string kind) {
+        std::string k = ex + "-" + kind;
+        if (ws_clients_private.find(k) == ws_clients_private.end()) {
+            throw std::runtime_error(fmt::format("unexpected key={}", k));
+        }
+        return ws_clients_private[k];
     }
 
    private:
-    std::map<std::string, ClientPublic*> ws_clients;
+    std::map<std::string, ClientPublic*> ws_clients_public;
+    std::map<std::string, ClientPrivate*> ws_clients_private;
 };
 
 void debug_place_listen_mexc_fut_v2() {
@@ -362,382 +449,157 @@ void debug_place_listen_mexc_fut_v2() {
 }
 
 void debug_place_listen_mexc_spot_v2() {
+    double usdt_to_use = 20.0;
+    std::string symbol = "DNXUSDT";
+    double price = 0.2859;
     ClientPrivateMexc client = ClientPrivateMexc("spot");
     client.init_idle();
     spdlog::info("wait for onopen event");
-    while (true) {
-        if (client.ws_onopen_received) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
+    wait_until([&]() { return client.ws_onopen_received; });
     client.subscribe_to_private_events();
     spdlog::info("wait for subscribed event");
-    while (true) {
-        if (client.is_subscribed_to_private_channels) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_spot_limit_order("DNXUSDT", "BUY", "0.35", "60.0");
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 0) {
-            spdlog::info("buy-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("buy-order is filled => finish");
-            break;
-        }
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_spot_limit_order(
-        "DNXUSDT", "SELL", "0.25",
-        std::to_string(client.get_last_order().filled_amount));
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 1) {
-            spdlog::info("sell-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("sell-order is filled => finish");
-            break;
-        }
-    }
+    wait_until([&]() { return client.is_subscribed_to_private_channels; });
+    wait_idle();
+    auto [buy_price, buy_quantity] =
+        client.adjust_price_quantity(symbol, price * 1.1, usdt_to_use / price);
+    client.place_spot_limit_order(symbol, "buy", buy_price, buy_quantity);
+    wait_until([&]() { return client.get_orders_len() > 0; });
+    spdlog::info("buy-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("buy-order is filled => finish");
+    wait_idle();
+    auto [sell_price, sell_quantity] = client.adjust_price_quantity(
+        symbol, price * 0.9, client.get_last_order().filled_amount);
+    client.place_spot_limit_order(symbol, "sell", sell_price, sell_quantity);
+    wait_until([&]() { return client.get_orders_len() > 1; });
+    spdlog::info("sell-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("sell-order is filled => finish");
     client.clear_orders();
 }
 
 void debug_place_listen_gateio_fut_v2() {
+    double usdt_to_use = 20.0;
+    std::string symbol = "FLT_USDT";
+    double price = 0.4126;
     ClientPrivateGateio client = ClientPrivateGateio("fut");
     client.init_idle();
     spdlog::info("wait for onopen event");
-    while (true) {
-        if (client.ws_onopen_received) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
+    wait_until([&]() { return client.ws_onopen_received; });
     client.subscribe_to_private_events();
     spdlog::info("wait for subscribed event");
-    while (true) {
-        if (client.is_subscribed_to_private_channels) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_fut_limit_order("ETH_USDT", "SELL", "3800", "1");
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 0) {
-            spdlog::info("buy-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("buy-order is filled => finish");
-            break;
-        }
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_fut_limit_order("ETH_USDT", "BUY", "4000", "1");
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 1) {
-            spdlog::info("sell-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("sell-order is filled => finish");
-            break;
-        }
-    }
+    wait_until([&]() { return client.is_subscribed_to_private_channels; });
+    wait_idle();
+    auto [sell_price, sell_quantity] =
+        client.adjust_price_quantity(symbol, price * 0.9, usdt_to_use / price);
+    client.place_fut_limit_order(symbol, "sell", sell_price, sell_quantity);
+    wait_until([&]() { return client.get_orders_len() > 0; });
+    spdlog::info("buy-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("buy-order is filled => finish");
+    client.set_leverage_to_1(symbol);
+    spdlog::info("leverage been set to 1");
+    wait_idle();
+    auto [buy_price, buy_quantity] = client.adjust_price_quantity(
+        symbol, price * 1.1, client.get_last_order().filled_amount);
+    client.place_fut_limit_order(symbol, "buy", buy_price, buy_quantity);
+    wait_until([&]() { return client.get_orders_len() > 1; });
+    spdlog::info("sell-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("sell-order is filled => finish");
     client.clear_orders();
 }
 
 void debug_place_listen_gateio_spot_v2() {
+    double usdt_to_use = 20.0;
+    std::string symbol = "FLT_USDT";
+    double price = 0.4063;
     ClientPrivateGateio client = ClientPrivateGateio("spot");
     client.init_idle();
     spdlog::info("wait for onopen event");
-    while (true) {
-        if (client.ws_onopen_received) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
+    wait_until([&]() { return client.ws_onopen_received; });
     client.subscribe_to_private_events();
     spdlog::info("wait for subscribed event");
-    while (true) {
-        if (client.is_subscribed_to_private_channels) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_spot_limit_order("ETH_USDT", "buy", "4050", "0.01");
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 0) {
-            spdlog::info("buy-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("buy-order is filled => finish");
-            break;
-        }
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_spot_limit_order(
-        "ETH_USDT", "sell", "3950",
-        std::to_string(client.get_last_order().filled_amount));
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 1) {
-            spdlog::info("sell-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("sell-order is filled => finish");
-            break;
-        }
-    }
+    wait_until([&]() { return client.is_subscribed_to_private_channels; });
+    wait_idle();
+    auto [buy_price, buy_quantity] =
+        client.adjust_price_quantity(symbol, price * 1.1, usdt_to_use / price);
+    client.place_spot_limit_order(symbol, "buy", buy_price, buy_quantity);
+    wait_until([&]() { return client.get_orders_len() > 0; });
+    spdlog::info("buy-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("buy-order is filled => finish");
+    wait_idle();
+    auto [sell_price, sell_quantity] = client.adjust_price_quantity(
+        symbol, price * 0.9, client.get_last_order().filled_amount);
+    client.place_spot_limit_order(symbol, "sell", sell_price, sell_quantity);
+    wait_until([&]() { return client.get_orders_len() > 1; });
+    spdlog::info("sell-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("sell-order is filled => finish");
     client.clear_orders();
 }
 
 void debug_place_listen_bybit_fut_v2() {
+    double usdt_to_use = 20.0;
+    std::string symbol = "BILLYUSDT";
+    double price = 0.02876;
     ClientPrivateBybit client = ClientPrivateBybit("fut");
     client.init_idle();
     spdlog::info("wait for onopen event");
-    while (true) {
-        if (client.ws_onopen_received) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
+    wait_until([&]() { return client.ws_onopen_received; });
     client.subscribe_to_private_events();
     spdlog::info("wait for subscribed event");
-    while (true) {
-        if (client.is_subscribed_to_private_channels) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_fut_limit_order("ETHUSDT", "Sell", "3800", "0.01");
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 0) {
-            spdlog::info("buy-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("buy-order is filled => finish");
-            break;
-        }
-    }
-    for (int i = 0; i < 25; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_fut_limit_order("ETHUSDT", "Buy", "4000", "0.01");
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 1) {
-            spdlog::info("sell-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("sell-order is filled => finish");
-            break;
-        }
-    }
+    wait_until([&]() { return client.is_subscribed_to_private_channels; });
+    wait_idle();
+    auto [sell_price, sell_quantity] =
+        client.adjust_price_quantity(symbol, price * 0.96, usdt_to_use / price);
+    client.place_fut_limit_order(symbol, "sell", sell_price, sell_quantity);
+    wait_until([&]() { return client.get_orders_len() > 0; });
+    spdlog::info("buy-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("buy-order is filled => finish");
+    client.set_leverage_to_1(symbol);
+    spdlog::info("leverage been set to 1");
+    wait_idle(25);
+    auto [buy_price, buy_quantity] = client.adjust_price_quantity(
+        symbol, price * 1.04, client.get_last_order().filled_amount);
+    client.place_fut_limit_order(symbol, "buy", buy_price, buy_quantity);
+    wait_until([&]() { return client.get_orders_len() > 1; });
+    spdlog::info("sell-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("sell-order is filled => finish");
     client.clear_orders();
 }
 
 void debug_place_listen_bybit_spot_v2() {
+    double usdt_to_use = 20.0;
+    std::string symbol = "FLTUSDT";
+    double price = 0.3977;
     ClientPrivateBybit client = ClientPrivateBybit("spot");
     client.init_idle();
     spdlog::info("wait for onopen event");
-    while (true) {
-        if (client.ws_onopen_received) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
+    wait_until([&]() { return client.ws_onopen_received; });
     client.subscribe_to_private_events();
     spdlog::info("wait for subscribed event");
-    while (true) {
-        if (client.is_subscribed_to_private_channels) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_spot_limit_order("ETHUSDT", "Buy", "4050", "0.01");
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 0) {
-            spdlog::info("buy-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("buy-order is filled => finish");
-            break;
-        }
-    }
-    for (int i = 0; i < 5; i++) {
-        spdlog::info("idle tick");
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    client.place_spot_limit_order(
-        "ETHUSDT", "Sell", "3950",
-        std::to_string(client.get_last_order().filled_amount));
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_orders_len() > 1) {
-            spdlog::info("sell-order appeared");
-            break;
-        }
-    }
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        if (client.get_last_order().isFilled()) {
-            spdlog::info("sell-order is filled => finish");
-            break;
-        }
-    }
+    wait_until([&]() { return client.is_subscribed_to_private_channels; });
+    wait_idle();
+    auto [buy_price, buy_quantity] =
+        client.adjust_price_quantity(symbol, price * 1.04, usdt_to_use / price);
+    client.place_spot_limit_order(symbol, "buy", buy_price, buy_quantity);
+    wait_until([&]() { return client.get_orders_len() > 0; });
+    spdlog::info("buy-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("buy-order is filled => finish");
+    wait_idle();
+    auto [sell_price, sell_quantity] = client.adjust_price_quantity(
+        symbol, price * 0.96, client.get_last_order().filled_amount);
+    client.place_spot_limit_order(symbol, "sell", sell_price, sell_quantity);
+    wait_until([&]() { return client.get_orders_len() > 1; });
+    spdlog::info("sell-order appeared");
+    wait_until([&]() { return client.get_last_order().isFilled(); });
+    spdlog::info("sell-order is filled => finish");
     client.clear_orders();
-}
-
-void debug_place_order() {
-    // TODO: keep in PrivateClient just one order and one position without
-    // vector
-    // TODO: how to handle situation when you already sent order amend message
-    // and than order fills
-    // TODO: what's the features? what does it mean when you are buying short
-    // and buying long
-    // TODO: commit + do this exchange with some bullshit token (not with eth)
-    // TODO: write code to ahndle whole strategy
-    // TODO: think on do the same with on-chain exchanges + join "миша флипает"
-    // TODO: think how to abuse mms algorithms
-    // private chat
-    // debug_place_listen_mexc_fut_v2();
-    // debug_place_listen_mexc_spot_v2();
-    // debug_place_listen_gateio_fut_v2();
-    debug_place_listen_gateio_spot_v2();
-    // debug_place_listen_bybit_fut_v2();
-    // debug_place_listen_bybit_spot_v2();
-}
-
-void debug_trade_contango_private_client_interface() {
-    // ...
-    // private_clients.init_idle();
-    // ...
-    while (true) {
-        // ...
-        while (true) {
-            // ...
-            // if (is_ready_fut && is_ready_spot) {
-            //     break;
-            // }
-        }
-        spdlog::info("place orders and wait for fills");
-        // private_clients.place_fut_order();
-        // private_clients.place_spot_order();
-        while (true) {
-            // if (!fut_order.is_filled && fut_order.price >
-            // client_fut.last_bid_price) {
-            //     private_clients.amend_fut_order();
-            // }
-            // if (!spot_order.is_filled && spot_order.price >
-            // client_spot.last_bid_price) {
-            //     private_clients.amend_spot_order();
-            // }
-            // if (fut_order.is_filled && spot_order.is_filled) {
-            //     break;
-            // }
-        }
-        spdlog::info("orders filled => wait for prices converge");
-        while (true) {
-            // double diff_rel = (bid_fut - bid_spot) / bid_spot * 100;
-            // if (diff_rel < 0.1) {
-            //     break;
-            // }
-        }
-        spdlog::info("price converged => place exit orders and wait for fills");
-        // private_clients.place_fut_order();
-        // private_clients.place_spot_order();
-        while (true) {
-            // if (!fut_order.is_filled && fut_order.price >
-            // client_fut.last_bid_price) {
-            //     private_clients.amend_fut_order();
-            // }
-            // if (!spot_order.is_filled && spot_order.price >
-            // client_spot.last_bid_price) {
-            //     private_clients.amend_spot_order();
-            // }
-            // if (fut_order.is_filled && spot_order.is_filled) {
-            //     break;
-            // }
-        }
-        spdlog::info(
-            "exit orders closed => start looking for another opportunity");
-        // client_fut->clear_orders();
-        // client_spot->clear_orders();
-    }
 }
 
 void debug_listen_gateio_tickers() {
@@ -782,7 +644,7 @@ void listen_gateio_tickers_v1() {
     std::map<std::string, long> last_timestamps;
     std::map<std::string, double> last_prices;
     SpreadsHouse sh;
-    sh.init_idle();
+    sh.init_idle_public();
     std::thread _([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
@@ -808,10 +670,10 @@ void listen_gateio_tickers_v1() {
         last_timestamps[key] = trade_int.ts;
         last_prices[key] = trade_int.p;
     };
-    ClientPublic* client_fut = sh.get_client(opp_row.fut_ex, "fut");
+    ClientPublic* client_fut = sh.get_client_public(opp_row.fut_ex, "fut");
     client_fut->onmessage_trade = handle_trades;
     client_fut->subscribe_to_trades(opp_row.fut_symbol);
-    ClientPublic* client_spot = sh.get_client(opp_row.spot_ex, "spot");
+    ClientPublic* client_spot = sh.get_client_public(opp_row.spot_ex, "spot");
     client_spot->onmessage_trade = handle_trades;
     client_spot->subscribe_to_trades(opp_row.fut_symbol);
     while (true) {
@@ -864,9 +726,22 @@ class TradeContangoServiceImpl final : public TradeContango::Service {
     }
 };
 
+void run_listening_for_events() {
+    std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
+    TradeContangoServiceImpl service;
+    grpc::EnableDefaultHealthCheckService(true);
+    grpc::reflection::InitProtoReflectionServerBuilderPlugin();
+    ServerBuilder builder;
+    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+    builder.RegisterService(&service);
+    std::unique_ptr<Server> server(builder.BuildAndStart());
+    spdlog::info("Server listening on {}", server_address);
+    server->Wait();
+}
+
 void listen_gateio_tickers_v2(int argc, char** argv) {
     SpreadsHouse sh;
-    sh.init_idle();
+    sh.init_idle_public();
     std::thread _1([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
@@ -881,7 +756,7 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
             }
             SpreadsReq obj = spreads_req.value();
             spdlog::info("obj={}", format_as(obj));
-            auto client_fut = sh.get_client(obj.t_fut().ex(), "fut");
+            auto client_fut = sh.get_client_public(obj.t_fut().ex(), "fut");
             std::string symbol_fut = obj.t_fut().s();
             client_fut->onmessage_depth = [&](const Depth depth) {};
             client_fut->subscribe_to_depth(symbol_fut);
@@ -889,7 +764,7 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
                 throw std::runtime_error(
                     "fut order-book is not empty on start");
             }
-            auto client_spot = sh.get_client(obj.t_spot().ex(), "spot");
+            auto client_spot = sh.get_client_public(obj.t_spot().ex(), "spot");
             std::string symbol_spot = obj.t_spot().s();
             client_spot->onmessage_depth = [&](const Depth depth) {};
             client_spot->subscribe_to_depth(symbol_spot);
@@ -944,20 +819,184 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
             spdlog::info("close connection and set-up them again");
             sh.close_all();
             spdlog::debug("all closed");
-            sh.init_idle();
+            sh.init_idle_public();
             spdlog::debug("all connected again");
             spreads_req = {};
             trade_obj_raw_f = 0;
         }
     });
-    std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
-    TradeContangoServiceImpl service;
-    grpc::EnableDefaultHealthCheckService(true);
-    grpc::reflection::InitProtoReflectionServerBuilderPlugin();
-    ServerBuilder builder;
-    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-    builder.RegisterService(&service);
-    std::unique_ptr<Server> server(builder.BuildAndStart());
-    spdlog::info("Server listening on {}", server_address);
-    server->Wait();
+    run_listening_for_events();
+}
+
+void listen_gateio_tickers_v3(int argc, char** argv) {
+    SpreadsHouse sh;
+    sh.init_idle_public();
+    sh.init_idle_private();
+    std::thread _1([&]() {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            spdlog::info("ping");
+            sh.ping();
+        }
+    });
+    std::thread _2([&]() {
+        while (true) {
+            while (trade_obj_raw_f == 0) {
+                continue;
+            }
+            SpreadsReq obj = spreads_req.value();
+            spdlog::info("obj={}", format_as(obj));
+            double usdt_to_use = 45.0;
+            std::string ex_fut = obj.t_fut().ex();
+            std::string symbol_fut = obj.t_fut().s();
+            ClientPublic* client_public_fut =
+                sh.get_client_public(ex_fut, "fut");
+            client_public_fut->onmessage_depth = [&](const Depth depth) {};
+            client_public_fut->subscribe_to_depth(symbol_fut);
+            if (client_public_fut->order_book_cache.get_last_update_id() != 0) {
+                throw std::runtime_error(
+                    "fut order-book is not empty on start");
+            }
+            std::string ex_spot = obj.t_spot().ex();
+            std::string symbol_spot = obj.t_spot().s();
+            ClientPublic* client_public_spot =
+                sh.get_client_public(ex_spot, "spot");
+            client_public_spot->onmessage_depth = [&](const Depth depth) {};
+            client_public_spot->subscribe_to_depth(symbol_spot);
+            if (client_public_spot->order_book_cache.get_last_update_id() !=
+                0) {
+                throw std::runtime_error(
+                    "spot order-book is not empty on start");
+            }
+            spdlog::info("wait for order-books to be downloaded");
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                bool is_ready_fut =
+                    client_public_fut->order_book_cache.get_last_update_id() !=
+                    0;
+                bool is_ready_spot =
+                    client_public_spot->order_book_cache.get_last_update_id() !=
+                    0;
+                spdlog::info("tick is_ready_spot={} is_ready_fut={}",
+                             is_ready_spot, is_ready_fut);
+                if (is_ready_fut && is_ready_spot) {
+                    double bid_fut =
+                        client_public_fut->order_book_cache.get_top_bid()
+                            .get_d();
+                    double bid_spot =
+                        client_public_spot->order_book_cache.get_top_bid()
+                            .get_d();
+                    double diff_rel_2 = (bid_fut - bid_spot) / bid_spot * 100;
+                    spdlog::info("bid_spot={} bid_fut={} diff_rel_2={}",
+                                 bid_spot, bid_fut, diff_rel_2);
+                    spdlog::info("p_spot={} p_fut={} diff_rel={}",
+                                 obj.t_spot().p(), obj.t_fut().p(),
+                                 obj.diff_rel());
+                    spdlog::info("obj={}", format_as(obj));
+                    break;
+                }
+            }
+            ClientPrivate* client_private_fut =
+                sh.get_client_private(ex_fut, "fut");
+            double bid_open_fut =
+                client_public_fut->order_book_cache.get_top_bid().get_d();
+            auto [sell_price_fut, sell_quantity_fut] =
+                client_private_fut->adjust_price_quantity(
+                    symbol_fut, bid_open_fut * 0.96,
+                    usdt_to_use / bid_open_fut);
+            client_private_fut->place_fut_limit_order(
+                symbol_fut, "sell", sell_price_fut, sell_quantity_fut);
+            wait_until(
+                [&]() { return client_private_fut->get_orders_len() > 0; });
+            SPDLOG_INFO("buy-order appeared");
+            wait_until([&]() {
+                return client_private_fut->get_last_order().isFilled();
+            });
+            SPDLOG_INFO("buy-order is filled => finish");
+            client_private_fut->set_leverage_to_1(symbol_fut);
+            SPDLOG_INFO("leverage been set to 1");
+            double bid_open_spot =
+                client_public_spot->order_book_cache.get_top_bid().get_d();
+            ClientPrivate* client_private_spot =
+                sh.get_client_private(ex_spot, "spot");
+            auto [buy_price_spot, buy_quantity_spot] =
+                client_private_spot->adjust_price_quantity(
+                    symbol_spot, bid_open_spot * 1.04,
+                    usdt_to_use / bid_open_spot);
+            client_private_spot->place_spot_limit_order(
+                symbol_spot, "buy", buy_price_spot, buy_quantity_spot);
+            wait_until(
+                [&]() { return client_private_spot->get_orders_len() > 0; });
+            SPDLOG_INFO("buy-order appeared");
+            wait_until([&]() {
+                return client_private_spot->get_last_order().isFilled();
+            });
+            SPDLOG_INFO("buy-order is filled => finish");
+            SPDLOG_INFO("start waiting for price converge");
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                double bid_fut =
+                    client_public_fut->order_book_cache.get_top_bid().get_d();
+                double bid_spot =
+                    client_public_spot->order_book_cache.get_top_bid().get_d();
+                double diff_rel = (bid_fut - bid_spot) / bid_spot * 100;
+                spdlog::info(
+                    "bid_spot={:.6f} bid_fut={:.6f} diff_rel = { : .2f } ",
+                    bid_spot, bid_fut, diff_rel);
+                if (diff_rel < 0.5) {
+                    SPDLOG_INFO("price converged => close trades obj={}",
+                                format_as(obj));
+                    break;
+                }
+            }
+            double bid_close_fut =
+                client_public_fut->order_book_cache.get_top_bid().get_d();
+            auto [buy_price_fut, buy_quantity_fut] =
+                client_private_fut->adjust_price_quantity(
+                    symbol_fut, bid_close_fut * 1.04,
+                    client_private_fut->get_last_order().filled_amount);
+            client_private_fut->place_fut_limit_order(
+                symbol_fut, "buy", buy_price_fut, buy_quantity_fut);
+            wait_until(
+                [&]() { return client_private_fut->get_orders_len() > 1; });
+            SPDLOG_INFO("sell-order appeared");
+            wait_until([&]() {
+                return client_private_fut->get_last_order().isFilled();
+            });
+            SPDLOG_INFO("sell-order is filled => finish");
+            client_private_fut->clear_orders();
+            double bid_close_spot =
+                client_public_spot->order_book_cache.get_top_bid().get_d();
+            auto [sell_price, sell_quantity] =
+                client_private_spot->adjust_price_quantity(
+                    symbol_spot, bid_close_spot * 0.96,
+                    client_private_spot->get_last_order().filled_amount);
+            client_private_spot->place_spot_limit_order(
+                symbol_spot, "sell", sell_price, sell_quantity);
+            wait_until(
+                [&]() { return client_private_spot->get_orders_len() > 1; });
+            SPDLOG_INFO("sell-order appeared");
+            wait_until([&]() {
+                return client_private_spot->get_last_order().isFilled();
+            });
+            SPDLOG_INFO("sell-order is filled => finish");
+            client_private_spot->clear_orders();
+            TelegramBotPort::new_from_envs().notify_pretty(
+                __FILENAME__, "trade-executed-2024-12-18");
+            throw std::runtime_error(
+                "test[trade-executed-2024-12-18] done => exit");
+            // NOTE: order book cleaned up is checked here because sometimes
+            // bybit sends events in the next order (snapshot, subscribe, ...)
+            // NOTE: connections drop happens because of weird unsubscribe
+            // mechanism implemented in exchanges
+            spdlog::info("close connection and set-up them again");
+            sh.close_all();
+            spdlog::debug("all closed");
+            sh.init_idle_public();
+            spdlog::debug("all connected again");
+            spreads_req = {};
+            trade_obj_raw_f = 0;
+        }
+    });
+    run_listening_for_events();
 }

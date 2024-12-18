@@ -135,11 +135,11 @@ void ClientPublic::init_idle_(std::string& url) {
     ws_onopen_received = false;
     ws_onclose_received = false;
     onopen = [&]() {
+        SPDLOG_INFO("{} {} public onopen", ex, kind);
         ws_onopen_received = true;
-        spdlog::info("{} onopen kind={}", ex, kind);
     };
     onclose = [&]() {
-        spdlog::info("{} onclose kind={}", ex, kind);
+        SPDLOG_INFO("{} {} public onclose", ex, kind);
         ws_onclose_received = true;
     };
     onmessage = [=](const std::string& msg) { handle_onmessage(msg); };
@@ -169,11 +169,11 @@ void ClientPrivate::init_idle_(std::string& url) {
     ws_onopen_received = false;
     ws_onclose_received = false;
     onopen = [&]() {
+        SPDLOG_INFO("{} {} private onopen", ex, kind);
         ws_onopen_received = true;
-        spdlog::info("{} onopen kind={}", ex, kind);
     };
     onclose = [&]() {
-        spdlog::info("{} onclose kind={}", ex, kind);
+        SPDLOG_INFO("{} {} private onclose", ex, kind);
         ws_onclose_received = true;
     };
     onmessage = [=](const std::string& msg) { handle_onmessage(msg); };
@@ -558,9 +558,9 @@ void ClientPrivateGateio::place_fut_limit_order(std::string symbol,
     std::string path = "/api/v4/futures/usdt/orders";
     // NOTE: json serializon fields ordering is important
     std::string size = "";
-    if (side == "BUY") {
+    if (side == "buy") {
         size = quantity;
-    } else if (side == "SELL") {
+    } else if (side == "sell") {
         size = "-" + quantity;
     } else {
         throw std::runtime_error("unexpected side=" + side);
@@ -1136,16 +1136,21 @@ void ClientPrivateMexc::place_spot_limit_order(std::string symbol,
                                                std::string side,
                                                std::string price,
                                                std::string quantity) {
-    if (side != "BUY" && side != "SELL") {
-        throw std::runtime_error("unexpected side=" + side);
+    std::string side_int = "";
+    if (side == "buy") {
+        side_int = "BUY";
+    } else if (side == "sell") {
+        side_int = "SELL";
+    } else {
+        throw std::runtime_error(fmt::format("unexpected side=", side));
     }
     long timestamp =
         std::chrono::system_clock::now().time_since_epoch().count() / 1000;
     std::string q1 = fmt::format(
         "symbol={}&side={}&type=LIMIT&price={}&quantity={}&recvWindow=60000&"
         "timestamp={}",
-        symbol, side, price, quantity, timestamp);
-    SPDLOG_INFO("place order side={} q1={}", side, q1);
+        symbol, side_int, price, quantity, timestamp);
+    SPDLOG_INFO("place order side={} q1={}", side_int, q1);
     std::string q2 = fmt::format("{}&signature={}", q1, sign_str(q1));
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -1513,7 +1518,12 @@ void ClientPrivateBybit::place_fut_limit_order(std::string symbol,
     if (kind != "fut") {
         throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
-    if (side != "Sell" && side != "Buy") {
+    std::string side_int = "";
+    if (side == "buy") {
+        side_int = "Buy";
+    } else if (side == "sell") {
+        side_int = "Sell";
+    } else {
         throw std::runtime_error(fmt::format("unproper side={}", side));
     }
     std::string timestamp_str = std::to_string(
@@ -1522,8 +1532,8 @@ void ClientPrivateBybit::place_fut_limit_order(std::string symbol,
     std::string recw_window = "5000";
     std::string body_str = fmt::format(
         R"({{"category": "linear", "symbol": "{}", "side": "{}", "orderType": "Limit", "qty": "{}", "price": "{}", "timeInForce": "GTC", "isLeverage": 1}})",
-        symbol, side, quantity, price);
-    SPDLOG_INFO("place order side={} body_str={}", side, body_str);
+        symbol, side_int, quantity, price);
+    SPDLOG_INFO("place order side={} body_str={}", side_int, body_str);
     std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
                                         recw_window, body_str);
     std::string sign = gen_hmac_sha256(api_secret, param_str);
@@ -1579,8 +1589,13 @@ void ClientPrivateBybit::place_spot_limit_order(std::string symbol,
     if (kind != "spot") {
         throw std::runtime_error("unexpected kind=" + kind);
     }
-    if (side != "Buy" && side != "Sell") {
-        throw std::runtime_error("unproper side=" + side);
+    std::string side_int = "";
+    if (side == "buy") {
+        side_int = "Buy";
+    } else if (side == "sell") {
+        side_int = "Sell";
+    } else {
+        throw std::runtime_error(fmt::format("unexpected side=", side));
     }
     std::string timestamp_str = std::to_string(
         (long)(std::chrono::system_clock::now().time_since_epoch().count() /
@@ -1588,8 +1603,8 @@ void ClientPrivateBybit::place_spot_limit_order(std::string symbol,
     std::string recw_window = "5000";
     std::string body_str = fmt::format(
         R"({{"category": "spot", "symbol": "{}", "side": "{}", "orderType": "Limit", "qty": "{}", "price": "{}"}})",
-        symbol, side, quantity, price);
-    SPDLOG_INFO("place order side={} body_str={}", side, body_str);
+        symbol, side_int, quantity, price);
+    SPDLOG_INFO("place order side={} body_str={}", side_int, body_str);
     std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
                                         recw_window, body_str);
     std::string sign = gen_hmac_sha256(api_secret, param_str);
@@ -1972,6 +1987,7 @@ void ClientPrivateHtx::place_fut_limit_order(std::string symbol,
                                              std::string side,
                                              std::string price,
                                              std::string quantity) {
+    // TODO: adjust side
     // POST /v1/order/orders/place
     // https://api.huobi.pro
     // https://api.hbdm.com/linear-swap-api/v1/swap_order
@@ -2024,6 +2040,7 @@ void ClientPrivateHtx::place_spot_limit_order(std::string symbol,
                                               std::string side,
                                               std::string price,
                                               std::string quantity) {
+    // TODO: adjust side
     throw std::runtime_error("not-implemented");
 }
 
