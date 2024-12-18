@@ -84,6 +84,10 @@ class ClientPrivate : public hv::WebSocketClient {
     std::optional<nlohmann::json> fut_exchange_info;
     std::optional<nlohmann::json> spot_exchange_info;
     std::vector<Order> orders;
+    // NOTE: how to handle situation when you already sent order amend message
+    // and than order fills (race condition), you have to do this in one place
+    // based on (is-update-sent, timestamp), also you have to handle all
+    // possible states like amend declined, amend success etc
     virtual void handle_onmessage(const std::string& msg) = 0;
     void init_idle_(std::string& url);
 };
@@ -278,4 +282,15 @@ class ClientPrivateHtx : public ClientPrivate {
     std::string api_key;
     std::string api_secret;
     std::string sign_str(std::string qs0, std::string payload0);
+};
+
+class TelegramBotPort {
+   public:
+    TelegramBotPort(std::string token_, std::string chat_id_);
+    static TelegramBotPort new_from_envs();
+    void notify_pretty(std::string message, std::string action);
+
+   private:
+    std::string token;
+    std::string chat_id;
 };

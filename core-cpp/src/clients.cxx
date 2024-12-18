@@ -253,25 +253,23 @@ void ClientPublicGateio::subscribe_to_depth(std::string& symbol) {
     int ts_secs = std::chrono::system_clock::now().time_since_epoch().count() /
                   1000 / 1000;
     if (kind == "fut") {
-        std::string t_template = R"({
-                "time": %d,
+        send(fmt::format(
+            R"({{
+                "time": {},
                 "channel" : "futures.order_book_update",
                 "event": "subscribe",
-                "payload" : ["%s", "100ms", "100"]
-            })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
-        send(t);
+                "payload" : ["{}", "100ms", "100"]
+            }})",
+            ts_secs, symbol));
     } else if (kind == "spot") {
-        std::string t_template = R"({
-                "time": %d,
+        send(fmt::format(
+            R"({{
+                "time": {},
                 "channel": "spot.order_book_update",
                 "event": "subscribe",
-                "payload": ["%s", "100ms"]
-            })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
-        send(t);
+                "payload": ["{}", "100ms"]
+            }})",
+            ts_secs, symbol));
     } else {
         throw std::runtime_error("unexpected kind=" + kind);
     }
@@ -349,6 +347,7 @@ std::vector<Depth> ClientPublicGateio::fetch_depth_snapshot(
 
 void ClientPublicGateio::handle_onmessage(const std::string& msg) {
     nlohmann::json msg_obj = nlohmann::json::parse(msg);
+    SPDLOG_DEBUG("{} {} msg_obj={}", ex, kind, msg_obj.dump());
     std::string event = msg_obj["event"];
     if (event == "subscribe" && msg_obj["result"]["status"] == "success") {
         spdlog::info("gateio {} subscribed successfully", kind);
@@ -384,8 +383,13 @@ void ClientPublicGateio::handle_onmessage(const std::string& msg) {
                             .asks = asks,
                             .bids = bids};
             if (d.u > order_book_cache.get_last_update_id()) {
-                spdlog::warn(
-                    "[gateio] order book contains non-incremental depth");
+                SPDLOG_WARN(
+                    "{} {} order book contains non-incremental depth => apply "
+                    "last received asks/bids",
+                    ex, kind);
+                // TODO: workout why bids ain't proper, does it mean that i have
+                // to apply incrementally or clean and apply just last? P.s.
+                // DHXUSDT is ignored for now because of this reason
                 order_book_cache.apply_orders_force(d.u, d.asks, d.bids);
             }
             onmessage_depth(d);
@@ -2044,4 +2048,35 @@ std::string ClientPrivateHtx::sign_str(std::string qs0, std::string payload0) {
     std::string sign(bptr->data, bptr->length);
     BIO_free_all(bmem);
     return sign;
+}
+
+const std::string TELEGRAM_NOTIFY_PRETTY_TEMPLATE = R"({{
+    "message": "{}",
+    "action": "{}",
+    "now": "{}"
+}})";
+
+TelegramBotPort::TelegramBotPort(std::string token_, std::string chat_id_) {
+    token = token_;
+    chat_id = chat_id_;
+};
+
+TelegramBotPort TelegramBotPort::new_from_envs() {
+    return TelegramBotPort(std::getenv("TELEGRAM_BOT_API_KEY"),
+                           std::getenv("TELEGRAM_BOT_CHAT_ID"));
+}
+
+void TelegramBotPort::notify_pretty(std::string message, std::string action) {
+    std::time_t now_raw =
+        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::ostringstream now_oss;
+    now_oss << std::put_time(std::gmtime(&now_raw), "%F %T %Z");
+    std::string m_raw = fmt::format(TELEGRAM_NOTIFY_PRETTY_TEMPLATE, message,
+                                    action, now_oss.str());
+    std::string m_encoded = fmt::format("```%0A{}```", url_encode(m_raw));
+    std::string url_str = fmt::format(
+        "https://api.telegram.org/bot{}/"
+        "sendMessage?chat_id={}&text={}&parse_mode=Markdown",
+        token, chat_id, m_encoded);
+    execute_http_get_req(url_str);
 }
