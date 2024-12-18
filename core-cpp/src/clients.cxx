@@ -502,6 +502,16 @@ void ClientPrivateGateio::subscribe_to_private_events() {
     send(body_str);
 }
 
+///
+/// For fut: calculates which contracts amount i have to sent to api if i wanna
+/// buy `quantity` tokens of symbol `symbol` for price `price`
+/// Logic behind:
+/// usdt_to_use=54.0
+/// price=0.0000009
+/// => tokens_to_buy=60,000,000 (quantity)
+/// 1 contract represents 10,000,000 tokens (quanto_multiplier)
+/// => buy 6 contracts for 54 USDT
+///
 std::tuple<std::string, std::string> ClientPrivateGateio::adjust_price_quantity(
     std::string symbol, double price, double quantity) {
     if (kind == "fut") {
@@ -520,7 +530,7 @@ std::tuple<std::string, std::string> ClientPrivateGateio::adjust_price_quantity(
                             symbol));
         }
         return {conv_to_dec_str_v2(price, order_price_round),
-                conv_to_dec_str_v2(quantity, quanto_multiplier)};
+                std::to_string((int)(quantity / stod(quanto_multiplier)))};
     } else if (kind == "spot") {
         std::optional<int> precision = {};
         std::optional<int> amount_precision = {};

@@ -123,7 +123,11 @@ target_link_libraries(models_test
     ${GMP}
 )
 gtest_discover_tests(models_test)
-add_executable(clients_test src/clients_test.cxx src/clients.cxx src/models.cxx)
+add_executable(clients_test
+    src/clients_test.cxx
+    src/clients.cxx
+    src/models.cxx
+)
 target_include_directories(clients_test PRIVATE
     libs/libhv/build/include/hv
     libs/spdlog/include
@@ -134,6 +138,7 @@ target_include_directories(clients_test PRIVATE
 )
 target_link_libraries(clients_test
     GTest::gtest_main
+    GTest::gmock_main
     nlohmann_json::nlohmann_json
     ${LIBHV}
     ${SPDLOG}
