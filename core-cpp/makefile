@@ -8,14 +8,14 @@ test:
 	# make && ctest
 	# cmake --build build -j 12 && ctest --test-dir build --output-on-failure -j 12
 
-run-trigger-on-contango-2024-11-11:
-	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./run_trigger_on_contango_2024_11_11
+trade-contango-arbitrage-2024-11-11:
+	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./trade_contango_arbitrage_2024_11_11
 	cmake --build build -j 12 && \
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
 		THRESHOLD_REL=3.0 \
 		TICKERS_VERSION=v2 \
-		./build/run_trigger_on_contango_2024_11_11
+		./build/trade_contango_arbitrage_2024_11_11
 
 clone-libs:
 	git clone git@github.com:curl/curl.git libs/curl && \

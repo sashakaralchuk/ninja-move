@@ -77,12 +77,12 @@ target_link_libraries(t PRIVATE
     clickhouse-cpp-lib
 )
 
-add_executable(run_trigger_on_contango_2024_11_11
-    run_trigger_on_contango_2024_11_11.cxx
+add_executable(trade_contango_arbitrage_2024_11_11
+    trade_contango_arbitrage_2024_11_11.cxx
     src/models.cxx
     src/clients.cxx
 )
-target_include_directories(run_trigger_on_contango_2024_11_11 PRIVATE
+target_include_directories(trade_contango_arbitrage_2024_11_11 PRIVATE
     libs/libhv/build/include/hv
     libs/spdlog/include
     libs/clickhouse-cpp
@@ -90,7 +90,7 @@ target_include_directories(run_trigger_on_contango_2024_11_11 PRIVATE
     libs/curl/include/curl
     libs/gmp-6.3.0/build/include
 )
-target_link_libraries(run_trigger_on_contango_2024_11_11 PRIVATE
+target_link_libraries(trade_contango_arbitrage_2024_11_11 PRIVATE
     nlohmann_json::nlohmann_json
     ${LIBHV}
     ${SPDLOG}
