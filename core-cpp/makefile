@@ -8,7 +8,7 @@ test:
 	# make && ctest
 	# cmake --build build -j 12 && ctest --test-dir build --output-on-failure -j 12
 
-run-trade-contango-arbitrage-2024-11-11:
+trade-contango-arbitrage-2024-11-11:
 	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./trade_contango_arbitrage_2024_11_11
 	cmake --build build -j 12 && \
 		${env_vars} \
