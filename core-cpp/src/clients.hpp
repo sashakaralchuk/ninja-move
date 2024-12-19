@@ -8,6 +8,8 @@ std::string conv_to_dec_str_v2(double price, std::string tick_size);
 
 std::string gen_precision_str(int precision);
 
+std::string rstrip_zeros(std::string s);
+
 struct Order {
     std::string ex;
     std::string k;
@@ -79,6 +81,7 @@ class ClientPrivate : public hv::WebSocketClient {
     Order get_last_order();
     int get_orders_len();
     void clear_orders();
+    std::string conv_size_to_str(double size);
 
    protected:
     std::optional<nlohmann::json> fut_exchange_info;

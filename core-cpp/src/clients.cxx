@@ -202,6 +202,25 @@ void ClientPrivate::clear_orders() {
     spdlog::info("orders cleared");
 }
 
+std::string rstrip_zeros(std::string s) {
+    int j = s.length() - 1;
+    while (j >= 0 && s[j] == '0') {
+        j--;
+    }
+    return s.substr(0, j + 1);
+}
+
+std::string ClientPrivate::conv_size_to_str(double size) {
+    if (size < 0.0) {
+        throw std::runtime_error(fmt::format("unexpected size=", size));
+    }
+    if (size - (int)size > 0) {
+        return rstrip_zeros(std::to_string(size));
+    } else {
+        return std::to_string((int)size);
+    }
+}
+
 ClientPublicGateio::ClientPublicGateio(std::string kind)
     : ClientPublic("gateio", kind) {}
 

@@ -912,7 +912,7 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
             wait_until([&]() {
                 return client_private_fut->get_last_order().isFilled();
             });
-            SPDLOG_INFO("buy-order is filled => finish");
+            SPDLOG_INFO("buy-order is filled");
             client_private_fut->set_leverage_to_1(symbol_fut);
             SPDLOG_INFO("leverage been set to 1");
             double bid_open_spot =
@@ -931,8 +931,8 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
             wait_until([&]() {
                 return client_private_spot->get_last_order().isFilled();
             });
-            SPDLOG_INFO("buy-order is filled => finish");
-            SPDLOG_INFO("start waiting for price converge");
+            SPDLOG_INFO(
+                "buy-order is filled => start waiting for price converge");
             while (true) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
                 double bid_fut =
@@ -951,10 +951,10 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
             }
             double bid_close_fut =
                 client_public_fut->order_book_cache.get_top_bid().get_d();
-            auto [buy_price_fut, buy_quantity_fut] =
-                client_private_fut->adjust_price_quantity(
-                    symbol_fut, bid_close_fut * 1.04,
-                    client_private_fut->get_last_order().filled_amount);
+            auto [buy_price_fut, _] = client_private_fut->adjust_price_quantity(
+                symbol_fut, bid_close_fut * 1.04, 0.0);
+            std::string buy_quantity_fut = client_private_fut->conv_size_to_str(
+                client_private_fut->get_last_order().filled_amount);
             client_private_fut->place_fut_limit_order(
                 symbol_fut, "buy", buy_price_fut, buy_quantity_fut);
             wait_until(

@@ -80,3 +80,61 @@ TEST(ClientsTest, ClientPrivateGateio_adjust_price_quantity_fut) {
         EXPECT_EQ(std::get<1>(t1_ETH_USDT), "1");
     }
 }
+
+class ClientPrivateBybitMock : public ClientPrivateBybit {
+   public:
+    ClientPrivateBybitMock(std::string kind) : ClientPrivateBybit(kind) {
+        fut_exchange_info = nlohmann::json::parse(R"(
+            {
+                "result": {
+                    "list": [
+                        {
+                            "symbol": "VRAUSDT",
+                            "priceFilter": {"tickSize": "0.000001"},
+                            "lotSizeFilter": {"qtyStep": "100"}
+                        },
+                        {
+                            "symbol": "ETHUSDT",
+                            "priceFilter": {"tickSize": "0.01"},
+                            "lotSizeFilter": {"qtyStep": "0.01"}
+                        }
+                    ]
+                }
+            }
+        )");
+    }
+    ~ClientPrivateBybitMock() noexcept override {}
+};
+
+TEST(ClientsTest, ClientPrivateBybit_adjust_price_quantity_fut) {
+    setenv("BYBIT_API_KEY", "", 1);
+    setenv("BYBIT_API_SECRET", "", 1);
+    ClientPrivateBybitMock client = ClientPrivateBybitMock("fut");
+    {
+        double usdt_to_use = 20.0;
+        double price = 0.0058;
+        auto [buy_price, buy_quantity] =
+            client.adjust_price_quantity("VRAUSDT", price, usdt_to_use / price);
+        EXPECT_EQ(buy_price, "0.005800");
+        EXPECT_EQ(buy_quantity, "3400");
+    }
+    {
+        double usdt_to_use = 40.0;
+        double price = 3800.0;
+        auto [buy_price, buy_quantity] =
+            client.adjust_price_quantity("ETHUSDT", price, usdt_to_use / price);
+        EXPECT_EQ(buy_price, "3800.00");
+        EXPECT_EQ(buy_quantity, "0.01");
+    }
+}
+
+TEST(ClientsTest, ClientPrivate_conv_size_to_str) {
+    EXPECT_EQ(rstrip_zeros("7.000000"), "7.");
+    EXPECT_EQ(rstrip_zeros("7."), "7.");
+    EXPECT_EQ(rstrip_zeros("0"), "");
+    setenv("BYBIT_API_KEY", "", 1);
+    setenv("BYBIT_API_SECRET", "", 1);
+    ClientPrivateBybitMock client = ClientPrivateBybitMock("fut");
+    EXPECT_EQ(client.conv_size_to_str(7.0), "7");
+    EXPECT_EQ(client.conv_size_to_str(0.03), "0.03");
+}
