@@ -3,7 +3,7 @@ use exchanges_arbitrage::{pool, RedpandaPort, TelegramBotPort};
 use std::collections::{HashMap, HashSet};
 
 use trade_contango::trade_contango_client::TradeContangoClient;
-use trade_contango::{FireTradeReq, QTickerReq, SpreadsReq};
+use trade_contango::{FireTradeReqV2, QTickerReq, QTickerReqV2, SpreadsReqV2};
 
 pub mod trade_contango {
     tonic::include_proto!("trade_contango");
@@ -119,15 +119,15 @@ fn run_fetch_process_tickers() {
     let mut fns = vec![
         bybit_int::fetch_derivatives_tickers_from_api,
         bybit_int::fetch_spot_tickers_from_api,
-        mexc_int::fetch_derivatives_tickers_from_api,
         mexc_int::fetch_spot_tickers_from_api,
         gateio_int::fetch_derivatives_tickers_from_api,
         gateio_int::fetch_spot_tickers_from_api,
-        htx_int::fetch_derivatives_tickers_from_api,
-        htx_int::fetch_spot_tickers_from_api,
     ];
     if std::env::var("TRADE_CONTANGO_ALL_EXCHANGES").unwrap_or("0".into()) == "1" {
         fns.append(&mut vec![
+            mexc_int::fetch_derivatives_tickers_from_api,
+            htx_int::fetch_derivatives_tickers_from_api,
+            htx_int::fetch_spot_tickers_from_api,
             binance_int::fetch_derivatives_tickers_from_api,
             binance_int::fetch_spot_tickers_from_api,
             kucoin_int::fetch_derivatives_tickers_from_api,
@@ -363,7 +363,7 @@ async fn write_to_worker(rx: std::sync::mpsc::Receiver<Vec<QTicker>>) {
                         now_millis() - find_start
                     );
                     let _ = client
-                        .fire_trade(tonic::Request::new(FireTradeReq { list: vec_to_send }))
+                        .fire_trade_v2(tonic::Request::new(FireTradeReqV2 { list: vec_to_send }))
                         .await
                         .unwrap();
                 }
@@ -461,9 +461,19 @@ mod bybit_int {
             .iter()
             .map(|x| {
                 let s = x.get("symbol").unwrap().as_str().unwrap();
-                let p = x.get("bid1Price").unwrap().as_str().unwrap();
+                let p_bid = x.get("bid1Price").unwrap().as_str().unwrap();
+                let p_ask = x.get("ask1Price").unwrap().as_str().unwrap();
                 let v = x.get("volume24h").unwrap().as_str().unwrap();
-                QTicker::new(QEx::Bybit, s, QSt::Trading, QKind::Futures, ts, p, v)
+                QTicker::new_from_bid_ask(
+                    QEx::Bybit,
+                    s,
+                    QSt::Trading,
+                    QKind::Futures,
+                    ts,
+                    p_bid,
+                    p_ask,
+                    v,
+                )
             })
             .collect::<Vec<_>>())
     }
@@ -521,9 +531,19 @@ mod bybit_int {
             .iter()
             .map(|x| {
                 let s = x.get("symbol").unwrap().as_str().unwrap();
-                let p = x.get("bid1Price").unwrap().as_str().unwrap();
+                let p_bid = x.get("bid1Price").unwrap().as_str().unwrap();
+                let p_ask = x.get("ask1Price").unwrap().as_str().unwrap();
                 let v = x.get("volume24h").unwrap().as_str().unwrap();
-                QTicker::new(QEx::Bybit, s, QSt::Trading, QKind::Spot, ts, p, v)
+                QTicker::new_from_bid_ask(
+                    QEx::Bybit,
+                    s,
+                    QSt::Trading,
+                    QKind::Spot,
+                    ts,
+                    p_bid,
+                    p_ask,
+                    v,
+                )
             })
             .collect::<Vec<_>>())
     }
@@ -697,9 +717,19 @@ mod mexc_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("symbol").unwrap().as_str().unwrap();
-                    let p = x.get("bidPrice").unwrap().as_str().unwrap();
+                    let p_bid = x.get("bidPrice").unwrap().as_str().unwrap();
+                    let p_ask = x.get("askPrice").unwrap().as_str().unwrap();
                     let v = x.get("volume").unwrap().as_str().unwrap();
-                    QTicker::new(QEx::Mexc, s, QSt::Trading, QKind::Spot, ts, p, v)
+                    QTicker::new_from_bid_ask(
+                        QEx::Mexc,
+                        s,
+                        QSt::Trading,
+                        QKind::Spot,
+                        ts,
+                        p_bid,
+                        p_ask,
+                        v,
+                    )
                 })
                 .collect::<Vec<_>>(),
         )
@@ -768,9 +798,19 @@ mod gateio_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("contract").unwrap().as_str().unwrap();
-                    let p = x.get("highest_bid").unwrap().as_str().unwrap();
+                    let p_bid = x.get("highest_bid").unwrap().as_str().unwrap();
+                    let p_ask = x.get("lowest_ask").unwrap().as_str().unwrap();
                     let v = x.get("volume_24h").unwrap().as_str().unwrap();
-                    QTicker::new(QEx::Gateio, s, QSt::Trading, QKind::Futures, ts, p, v)
+                    QTicker::new_from_bid_ask(
+                        QEx::Gateio,
+                        s,
+                        QSt::Trading,
+                        QKind::Futures,
+                        ts,
+                        p_bid,
+                        p_ask,
+                        v,
+                    )
                 })
                 .collect::<Vec<_>>(),
         )
@@ -787,14 +827,22 @@ mod gateio_int {
                 .iter()
                 .map(|x| {
                     let s = x.get("currency_pair").unwrap().as_str().unwrap();
-                    let p_raw = x.get("highest_bid").unwrap().as_str().unwrap();
-                    let p = if p_raw == "" { "-1.0" } else { p_raw };
+                    let p_bid_raw = x.get("highest_bid").unwrap().as_str().unwrap();
+                    let p_bid = if p_bid_raw == "" { "-1.0" } else { p_bid_raw };
+                    let p_ask_raw = x.get("lowest_ask").unwrap().as_str().unwrap();
+                    let p_ask = if p_ask_raw == "" { "-1.0" } else { p_ask_raw };
                     // XXX: collect base_volume and quote_volume
                     let v = x.get("base_volume").unwrap().as_str().unwrap();
-                    if s == "KARATE_USDT" {
-                        log::debug!("capture KARATE_USDT ts={}", ts);
-                    }
-                    QTicker::new(QEx::Gateio, s, QSt::Trading, QKind::Spot, ts, p, v)
+                    QTicker::new_from_bid_ask(
+                        QEx::Gateio,
+                        s,
+                        QSt::Trading,
+                        QKind::Spot,
+                        ts,
+                        p_bid,
+                        p_ask,
+                        v,
+                    )
                 })
                 .collect::<Vec<_>>(),
         )
@@ -920,28 +968,38 @@ struct QTicker {
     k: QKind,
     ts: i64,
     p: f64,
+    p_bid: f64,
+    p_ask: f64,
     v: f64,
 }
 
 impl QTicker {
-    fn new(ex: QEx, s: &str, st: QSt, k: QKind, ts: i64, p: &str, v: &str) -> Self {
+    fn new(_ex: QEx, _s: &str, _st: QSt, _k: QKind, _ts: i64, _p: &str, _v: &str) -> Self {
+        unimplemented!("use new_from_bid_ask")
+    }
+
+    fn new_from_bid_ask(
+        ex: QEx,
+        s: &str,
+        st: QSt,
+        k: QKind,
+        ts: i64,
+        p_bid: &str,
+        p_ask: &str,
+        v: &str,
+    ) -> Self {
         if !Self::is_millis(ts) {
             panic!("ts={} is not in millis", ts);
         }
-        let p_ = match p.parse::<f64>() {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("p=\"{}\" e={}", p, e);
-                -0.0
-            }
-        };
         Self {
             ex: ex.into(),
             s: s.into(),
             st,
             k: k.into(),
             ts,
-            p: p_,
+            p: -1.0,
+            p_bid: Self::parse_p(p_bid),
+            p_ask: Self::parse_p(p_ask),
             v: v.parse::<f64>().unwrap(),
         }
     }
@@ -951,15 +1009,31 @@ impl QTicker {
         ts >= threshold
     }
 
+    #[allow(dead_code)]
     fn conv_to_ticker_req(&self) -> QTickerReq {
-        QTickerReq {
+        unimplemented!("use conv_to_ticker_req");
+    }
+
+    fn conv_to_ticker_req_v2(&self) -> QTickerReqV2 {
+        QTickerReqV2 {
             ex: self.ex.to_string().to_lowercase(),
             s: self.s.clone(),
             st: self.st.to_string().to_lowercase(),
             k: self.k.to_string().to_lowercase(),
             ts: self.ts,
-            p: self.p,
+            p_bid: self.p_bid,
+            p_ask: self.p_ask,
             v: self.v,
+        }
+    }
+
+    fn parse_p(p: &str) -> f64 {
+        match p.parse::<f64>() {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("p=\"{}\" e={}", p, e);
+                0.0
+            }
         }
     }
 }
@@ -1062,7 +1136,12 @@ impl<'a> SpreadsMap<'a> {
 
     fn insert(&mut self, t: &QTicker) {
         // XXX: workout USDC
-        if t.st != QSt::Trading || t.p == 0.0 || t.v == 0.0 || !t.s.ends_with("USDT") {
+        if t.st != QSt::Trading
+            || t.p_bid == 0.0
+            || t.p_ask == 0.0
+            || t.v == 0.0
+            || !t.s.ends_with("USDT")
+        {
             return;
         }
         let key_to_ignore = (t.s.as_str(), &t.ex, &t.k);
@@ -1107,7 +1186,7 @@ impl<'a> SpreadsMap<'a> {
                 match kind {
                     QKind::Futures => match &max_fut {
                         Some(v) => {
-                            if v.p < t.p {
+                            if v.p_bid < t.p_bid {
                                 max_fut = Some(t.clone());
                             }
                         }
@@ -1115,7 +1194,7 @@ impl<'a> SpreadsMap<'a> {
                     },
                     QKind::Spot => match &min_spot {
                         Some(v) => {
-                            if v.p > t.p {
+                            if v.p_ask > t.p_ask {
                                 min_spot = Some(t.clone());
                             }
                         }
@@ -1130,22 +1209,22 @@ impl<'a> SpreadsMap<'a> {
         Some((min_spot.unwrap(), max_fut.unwrap()))
     }
 
-    fn find_spreads_all(self: &Self) -> Option<Vec<SpreadsReq>> {
+    fn find_spreads_all(self: &Self) -> Option<Vec<SpreadsReqV2>> {
         let mut spreads = vec![];
         for (k, _) in self.symbols.iter() {
             match self.find_spreads(k) {
                 Some(s) => {
-                    let (_, p_spot) = SpreadsMap::conv_to_symbol_int_1_v2(&s.0.s, s.0.p);
-                    let (_, p_fut) = SpreadsMap::conv_to_symbol_int_1_v2(&s.1.s, s.1.p);
-                    let diff_rel = (p_fut - p_spot) / p_spot * 100.0;
+                    let (_, p_ask_spot) = SpreadsMap::conv_to_symbol_int_1_v2(&s.0.s, s.0.p_ask);
+                    let (_, p_bid_fut) = SpreadsMap::conv_to_symbol_int_1_v2(&s.1.s, s.1.p_bid);
+                    let diff_rel = (p_bid_fut - p_ask_spot) / p_ask_spot * 100.0;
                     if diff_rel >= self.diff_ref_bottom && diff_rel <= self.diff_ref_top {
                         log::debug!("k={} diff_rel={}", k, diff_rel);
-                        spreads.push(SpreadsReq {
-                            p_spot,
-                            p_fut,
+                        spreads.push(SpreadsReqV2 {
+                            p_ask_spot,
+                            p_bid_fut,
                             diff_rel,
-                            t_spot: Some(s.0.conv_to_ticker_req()),
-                            t_fut: Some(s.1.conv_to_ticker_req()),
+                            t_spot: Some(s.0.conv_to_ticker_req_v2()),
+                            t_fut: Some(s.1.conv_to_ticker_req_v2()),
                         });
                     } else {
                         log::debug!("k={} tiny spread", k);
@@ -1225,39 +1304,43 @@ mod test {
 
     fn gen_tickers_for_price_spread(ts_millis: i64) -> Vec<QTicker> {
         vec![
-            QTicker::new(
+            QTicker::new_from_bid_ask(
                 QEx::Mexc,
                 "BTCUSDT",
                 QSt::Trading,
                 QKind::Spot,
                 ts_millis,
                 "60000.0",
+                "60000.0",
                 "1.0",
             ),
-            QTicker::new(
+            QTicker::new_from_bid_ask(
                 QEx::Mexc,
                 "BTCUSDT",
                 QSt::Trading,
                 QKind::Spot,
                 ts_millis,
                 "61000.0",
+                "61000.0",
                 "1.0",
             ),
-            QTicker::new(
+            QTicker::new_from_bid_ask(
                 QEx::Mexc,
                 "BTCUSDT",
                 QSt::Trading,
                 QKind::Futures,
                 ts_millis,
                 "62000.0",
+                "62000.0",
                 "1.0",
             ),
-            QTicker::new(
+            QTicker::new_from_bid_ask(
                 QEx::Mexc,
                 "BTCUSDT",
                 QSt::Trading,
                 QKind::Futures,
                 ts_millis,
+                "63000.0",
                 "63000.0",
                 "1.0",
             ),
@@ -1268,12 +1351,13 @@ mod test {
     fn test_trigger_price_spread() {
         {
             let mut map = crate::SpreadsMap::new();
-            map.insert(&QTicker::new(
+            map.insert(&QTicker::new_from_bid_ask(
                 QEx::Mexc,
                 "BTCUSDT",
                 QSt::Trading,
                 QKind::Spot,
                 now_millis(),
+                "65000.0",
                 "65000.0",
                 "1.0",
             ));
@@ -1281,8 +1365,8 @@ mod test {
                 map.insert(&t);
             }
             let out = map.find_spreads("BTCUSDT").unwrap();
-            assert_eq!(out.0.p, 61000.0);
-            assert_eq!(out.1.p, 63000.0);
+            assert_eq!(out.0.p_ask, 61000.0);
+            assert_eq!(out.1.p_bid, 63000.0);
         }
         {
             let mut map = crate::SpreadsMap::new();
