@@ -156,18 +156,16 @@ fn run_fetch_process_tickers() {
             if end_millis - start_millis > 1000 {
                 log::warn!("dur_millis={} > 1000", end_millis - start_millis);
             }
-            let delay_millis = (1000 - (end_millis - start_millis) % 1000) as u64;
+            let delay_millis_expected = (1000 - (end_millis - start_millis) % 1000) as u64;
             log::info!(
-                "done {:?}_tickers l={} ex={:?} dur_millis={} delay_millis={}",
+                "done {:?}_tickers l={} ex={:?} dur_millis={} delay_millis_expected={}",
                 t0.k,
                 tickers.len(),
                 t0.ex,
                 end_millis - start_millis,
-                delay_millis
+                delay_millis_expected
             );
             tx.send(tickers).unwrap();
-            // XXX: remove delay
-            std::thread::sleep(std::time::Duration::from_millis(delay_millis));
         });
         threads.push(t);
     }
