@@ -63,6 +63,21 @@ nlohmann::json execute_http_get_req(std::string& url) {
     return res_obj;
 }
 
+nlohmann::json execute_http_get_req(std::string& url, curl_slist* headers) {
+    CURL* curl;
+    CURLcode res;
+    std::string readBuffer;
+    curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, execute_http_req_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    res = curl_easy_perform(curl);
+    nlohmann::json res_obj = nlohmann::json::parse(readBuffer);
+    curl_easy_cleanup(curl);
+    return res_obj;
+}
+
 nlohmann::json execute_http_post_req(std::string url, curl_slist* headers,
                                      std::string body) {
     std::string res_buf;
@@ -325,6 +340,40 @@ void ClientPublicGateio::unsubscribe_from_depth(std::string& symbol) {
 
 void ClientPublicGateio::ping() {}
 
+Ticker ClientPublicGateio::fetch_ticker(std::string& symbol) {
+    if (kind == "fut") {
+        std::string url_str = fmt::format(
+            "https://api.gateio.ws/api/v4/futures/usdt/tickers?contract={}",
+            symbol);
+        nlohmann::json res_obj = execute_http_get_req(url_str);
+        if (res_obj.size() != 1) {
+            throw std::runtime_error(
+                fmt::format("{} {} res_obj.size()", ex, kind));
+        }
+        return Ticker{
+            .s = res_obj[0]["contract"],
+            .bid = stod((std::string)res_obj[0]["highest_bid"]),
+            .ask = stod((std::string)res_obj[0]["lowest_ask"]),
+        };
+    } else if (kind == "spot") {
+        std::string url_str = fmt::format(
+            "https://api.gateio.ws/api/v4/spot/tickers?currency_pair={}",
+            symbol);
+        nlohmann::json res_obj = execute_http_get_req(url_str);
+        if (res_obj.size() != 1) {
+            throw std::runtime_error(
+                fmt::format("{} {} res_obj.size()", ex, kind));
+        }
+        return Ticker{
+            .s = res_obj[0]["currency_pair"],
+            .bid = stod((std::string)res_obj[0]["highest_bid"]),
+            .ask = stod((std::string)res_obj[0]["lowest_ask"]),
+        };
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+}
+
 std::vector<Depth> ClientPublicGateio::fetch_depth_snapshot(
     std::string& symbol) {
     if (kind == "fut") {
@@ -573,12 +622,12 @@ std::tuple<std::string, std::string> ClientPrivateGateio::adjust_price_quantity(
     }
 }
 
-void ClientPrivateGateio::place_fut_limit_order(std::string symbol,
-                                                std::string side,
-                                                std::string price,
-                                                std::string quantity) {
+Order ClientPrivateGateio::place_fut_limit_order(std::string symbol,
+                                                 std::string side,
+                                                 std::string price,
+                                                 std::string quantity) {
     if (kind != "fut") {
-        throw std::runtime_error(fmt::format("unexpected kind=", kind));
+        throw std::runtime_error(fmt::format("{} unexpected kind=", ex, kind));
     }
     double timestamp =
         std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
@@ -609,6 +658,17 @@ void ClientPrivateGateio::place_fut_limit_order(std::string symbol,
     nlohmann::json res_obj =
         execute_http_post_req(url + path, headers, body_str);
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    return Order{
+        .ex = ex,
+        .k = kind,
+        .id = std::to_string((long)res_obj["id"]),
+        .open_ts = (long)((double)res_obj["create_time"]) * 1000,
+        .s = res_obj["contract"],
+        .p = res_obj["price"],
+        .v = (double)res_obj["size"],
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
 }
 
 void ClientPrivateGateio::set_leverage_to_1(std::string symbol) {
@@ -636,10 +696,10 @@ void ClientPrivateGateio::set_leverage_to_1(std::string symbol) {
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
 }
 
-void ClientPrivateGateio::place_spot_limit_order(std::string symbol,
-                                                 std::string side,
-                                                 std::string price,
-                                                 std::string quantity) {
+Order ClientPrivateGateio::place_spot_limit_order(std::string symbol,
+                                                  std::string side,
+                                                  std::string price,
+                                                  std::string quantity) {
     if (kind != "spot") {
         throw std::runtime_error("unexpected kind=" + kind);
     }
@@ -667,6 +727,93 @@ void ClientPrivateGateio::place_spot_limit_order(std::string symbol,
     nlohmann::json res_obj =
         execute_http_post_req(url + path, headers, body_str);
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    return Order{
+        .ex = ex,
+        .k = kind,
+        .id = res_obj["id"],
+        .open_ts = res_obj["create_time_ms"],
+        .s = res_obj["currency_pair"],
+        .p = res_obj["price"],
+        .v = stod((std::string)res_obj["amount"]),
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
+}
+
+Order ClientPrivateGateio::fetch_order(Order& order) {
+    double timestamp =
+        std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
+    std::string timestamp_str = std::to_string(timestamp);
+    if (kind == "fut") {
+        std::string timestamp_str = std::to_string(timestamp);
+        std::string url = "https://api.gateio.ws";
+        std::string path =
+            fmt::format("/api/v4/futures/usdt/orders/{}", order.id);
+        std::string sign = sign_str("GET", timestamp_str, path, "", "");
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Accept: application/json");
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, ("KEY: " + api_key).c_str());
+        headers =
+            curl_slist_append(headers, ("Timestamp: " + timestamp_str).c_str());
+        headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
+        std::string url_path = url + path;
+        nlohmann::json res_obj = execute_http_get_req(url_path, headers);
+        SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+        Order order = Order{
+            .ex = ex,
+            .k = kind,
+            .id = std::to_string((long)res_obj["id"]),
+            .open_ts = (long)((double)res_obj["create_time"]) * 1000,
+            .s = res_obj["contract"],
+            .p = res_obj["price"],
+            .v = (double)res_obj["size"],
+            .filled_amount = .0,
+            .st = "PLACED_TO_ORDER_BOOK",
+        };
+        if (res_obj["status"] == "finished") {
+            order.filled_amount = fabs((double)res_obj["size"]);
+            order.st = "FILLED";
+        }
+        return order;
+    } else if (kind == "spot") {
+        std::string url = "https://api.gateio.ws";
+        std::string path = fmt::format("/api/v4/spot/orders/{}", order.id);
+        std::string query_param = fmt::format("currency_pair={}", order.s);
+        SPDLOG_DEBUG("{} {} path={}", ex, kind, path);
+        std::string sign =
+            sign_str("GET", timestamp_str, path, query_param, "");
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Accept: application/json");
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, ("KEY: " + api_key).c_str());
+        headers =
+            curl_slist_append(headers, ("Timestamp: " + timestamp_str).c_str());
+        headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
+        std::string url_path = fmt::format("{}{}?{}", url, path, query_param);
+        nlohmann::json res_obj = execute_http_get_req(url_path, headers);
+        SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+        Order order = Order{
+            .ex = ex,
+            .k = kind,
+            .id = res_obj["id"],
+            .open_ts = res_obj["create_time_ms"],
+            .s = res_obj["currency_pair"],
+            .p = res_obj["price"],
+            .v = stod((std::string)res_obj["amount"]),
+            .filled_amount = .0,
+            .st = "PLACED_TO_ORDER_BOOK",
+        };
+        if (res_obj.contains("status") && res_obj["status"] == "closed") {
+            order.filled_amount =
+                fabs(stod((std::string)res_obj["filled_amount"]));
+            order.st = "FILLED";
+        }
+        return order;
+    } else {
+        throw std::runtime_error(
+            fmt::format("{} unexpected kind={}", ex, kind));
+    }
 }
 
 void ClientPrivateGateio::handle_onmessage(const std::string& msg) {
@@ -913,6 +1060,21 @@ void ClientPublicMexc::ping() {
     }
 }
 
+Ticker ClientPublicMexc::fetch_ticker(std::string& symbol) {
+    if (kind == "spot") {
+        std::string url_str = fmt::format(
+            "https://api.mexc.com/api/v3/ticker/bookTicker?symbol={}", symbol);
+        nlohmann::json res_obj = execute_http_get_req(url_str);
+        return Ticker{
+            .s = res_obj["symbol"],
+            .bid = stod((std::string)res_obj["bidPrice"]),
+            .ask = stod((std::string)res_obj["askPrice"]),
+        };
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+}
+
 std::vector<Depth> ClientPublicMexc::fetch_depth_snapshot(std::string& symbol) {
     if (kind == "fut") {
         std::string url =
@@ -1147,10 +1309,10 @@ std::tuple<std::string, std::string> ClientPrivateMexc::adjust_price_quantity(
             conv_to_dec_str_v2(quantity, quantity_prec)};
 }
 
-void ClientPrivateMexc::place_fut_limit_order(std::string symbol,
-                                              std::string side,
-                                              std::string price,
-                                              std::string quantity) {
+Order ClientPrivateMexc::place_fut_limit_order(std::string symbol,
+                                               std::string side,
+                                               std::string price,
+                                               std::string quantity) {
     // NOTE: placing fut order is "Under maintenance"
     // https://mexcdevelop.github.io/apidocs/contract_v1_en/#order-under-maintenance
     // https://www.mexc.com/support/articles/15149585234969
@@ -1161,10 +1323,10 @@ void ClientPrivateMexc::set_leverage_to_1(std::string symbol) {
     throw std::runtime_error("not-implemented");
 }
 
-void ClientPrivateMexc::place_spot_limit_order(std::string symbol,
-                                               std::string side,
-                                               std::string price,
-                                               std::string quantity) {
+Order ClientPrivateMexc::place_spot_limit_order(std::string symbol,
+                                                std::string side,
+                                                std::string price,
+                                                std::string quantity) {
     std::string side_int = "";
     if (side == "buy") {
         side_int = "BUY";
@@ -1187,6 +1349,55 @@ void ClientPrivateMexc::place_spot_limit_order(std::string symbol,
     nlohmann::json res_obj =
         execute_http_post_req("https://api.mexc.com/api/v3/order", headers, q2);
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    return Order{
+        .ex = ex,
+        .k = kind,
+        .id = res_obj["orderId"],
+        .open_ts = res_obj["transactTime"],
+        .s = res_obj["symbol"],
+        .p = res_obj["price"],
+        .v = stod((std::string)res_obj["origQty"]),
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
+}
+
+Order ClientPrivateMexc::fetch_order(Order& order) {
+    if (kind == "spot") {
+        long timestamp =
+            std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+        std::string q1 = fmt::format("symbol={}&orderId={}&timestamp={}",
+                                     order.s, order.id, timestamp);
+        SPDLOG_INFO("fetch order q1={}", q1);
+        std::string q2 = fmt::format("{}&signature={}", q1, sign_str(q1));
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers =
+            curl_slist_append(headers, ("X-MEXC-APIKEY: " + api_key).c_str());
+        std::string url =
+            fmt::format("https://api.mexc.com/api/v3/order?{}", q2);
+        nlohmann::json res_obj = execute_http_get_req(url, headers);
+        SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+        Order order = Order{
+            .ex = ex,
+            .k = kind,
+            .id = res_obj["orderId"],
+            .open_ts = res_obj["updateTime"],
+            .s = res_obj["symbol"],
+            .p = res_obj["price"],
+            .v = stod((std::string)res_obj["origQty"]),
+            .filled_amount = .0,
+            .st = "PLACED_TO_ORDER_BOOK",
+        };
+        if (res_obj["status"] == "FILLED") {
+            order.filled_amount = stod((std::string)res_obj["executedQty"]);
+            order.st = "FILLED";
+        }
+        return order;
+    } else {
+        throw std::runtime_error(
+            fmt::format("{} unexpected kind={}", ex, kind));
+    }
 }
 
 void ClientPrivateMexc::handle_onmessage(const std::string& msg) {
@@ -1364,6 +1575,33 @@ void ClientPublicBybit::unsubscribe_from_depth(std::string& symbol) {
 
 void ClientPublicBybit::ping() {}
 
+Ticker ClientPublicBybit::fetch_ticker(std::string& symbol) {
+    std::string url_str = "";
+    if (kind == "fut") {
+        url_str = fmt::format(
+            "https://api.bybit.com/v5/market/tickers?category=linear&symbol={}",
+            symbol);
+    } else if (kind == "spot") {
+        url_str = fmt::format(
+            "https://api.bybit.com/v5/market/tickers?category=spot&symbol={}",
+            symbol);
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+    nlohmann::json res_obj = execute_http_get_req(url_str);
+    if (res_obj["retCode"] != 0 || res_obj["retMsg"] != "OK" ||
+        res_obj["result"]["list"].size() != 1) {
+        throw std::runtime_error(
+            fmt::format("{} {} res is not success", ex, kind));
+    }
+    nlohmann::json t = res_obj["result"]["list"][0];
+    return Ticker{
+        .s = t["symbol"],
+        .bid = stod((std::string)t["bid1Price"]),
+        .ask = stod((std::string)t["ask1Price"]),
+    };
+}
+
 void ClientPublicBybit::handle_onmessage(const std::string& msg) {
     nlohmann::json msg_obj = nlohmann::json::parse(msg);
     if (msg_obj.contains("op")) {
@@ -1540,10 +1778,10 @@ std::tuple<std::string, std::string> ClientPrivateBybit::adjust_price_quantity(
     }
 }
 
-void ClientPrivateBybit::place_fut_limit_order(std::string symbol,
-                                               std::string side,
-                                               std::string price,
-                                               std::string quantity) {
+Order ClientPrivateBybit::place_fut_limit_order(std::string symbol,
+                                                std::string side,
+                                                std::string price,
+                                                std::string quantity) {
     if (kind != "fut") {
         throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
@@ -1579,6 +1817,21 @@ void ClientPrivateBybit::place_fut_limit_order(std::string symbol,
                                 ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
     nlohmann::json res_obj = execute_http_post_req(url, headers, body_str);
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    if (res_obj["retCode"] != 0 || res_obj["retMsg"] != "OK") {
+        throw std::runtime_error(
+            fmt::format("{} {} order creation failed", ex, kind));
+    }
+    return Order{
+        .ex = ex,
+        .k = kind,
+        .id = res_obj["result"]["orderId"],
+        .open_ts = res_obj["time"],
+        .s = symbol,
+        .p = "0.0",
+        .v = .0,
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
 }
 
 void ClientPrivateBybit::set_leverage_to_1(std::string symbol) {
@@ -1611,10 +1864,10 @@ void ClientPrivateBybit::set_leverage_to_1(std::string symbol) {
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
 }
 
-void ClientPrivateBybit::place_spot_limit_order(std::string symbol,
-                                                std::string side,
-                                                std::string price,
-                                                std::string quantity) {
+Order ClientPrivateBybit::place_spot_limit_order(std::string symbol,
+                                                 std::string side,
+                                                 std::string price,
+                                                 std::string quantity) {
     if (kind != "spot") {
         throw std::runtime_error("unexpected kind=" + kind);
     }
@@ -1651,6 +1904,73 @@ void ClientPrivateBybit::place_spot_limit_order(std::string symbol,
                                 ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
     nlohmann::json res_obj = execute_http_post_req(url, headers, body_str);
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    return Order{
+        .ex = ex,
+        .k = kind,
+        .id = res_obj["result"]["orderId"],
+        .open_ts = res_obj["time"],
+        .s = symbol,
+        .p = "0.0",
+        .v = .0,
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
+}
+
+Order ClientPrivateBybit::fetch_order(Order& order) {
+    std::string query_params = "";
+    if (kind == "fut") {
+        query_params = fmt::format("category=linear&orderId={}", order.id);
+    } else if (kind == "spot") {
+        query_params = fmt::format("category=spot&orderId={}", order.id);
+    } else {
+        throw std::runtime_error(
+            fmt::format("{} unexpected kind={}", ex, kind));
+    }
+    std::string timestamp_str = std::to_string(
+        (long)(std::chrono::system_clock::now().time_since_epoch().count() /
+               1000));
+    std::string recw_window = "5000";
+    SPDLOG_INFO("fetch order query_params={}", query_params);
+    std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
+                                        recw_window, query_params);
+    std::string sign = gen_hmac_sha256(api_secret, param_str);
+    std::string url = "https://api.bybit.com/v5/order/realtime";
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers =
+        curl_slist_append(headers, ("X-BAPI-API-KEY: " + api_key).c_str());
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-RECV-WINDOW: " + recw_window).c_str());
+    headers = curl_slist_append(headers, ("X-BAPI-SIGN: " + sign).c_str());
+    headers = curl_slist_append(headers, "X-BAPI-SIGN-TYPE: 2");
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
+    std::string url_path = fmt::format("{}?{}", url, query_params);
+    nlohmann::json res_obj = execute_http_get_req(url_path, headers);
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+    if (res_obj["retCode"] != 0 || res_obj["retMsg"] != "OK" ||
+        res_obj["result"]["list"].size() != 1) {
+        throw std::runtime_error(
+            fmt::format("{} {} order fetch failed", ex, kind));
+    }
+    nlohmann::json t = res_obj["result"]["list"][0];
+    Order order_out = Order{
+        .ex = ex,
+        .k = kind,
+        .id = t["orderId"],
+        .open_ts = stol((std::string)t["createdTime"]),
+        .s = t["symbol"],
+        .p = t["price"],
+        .v = stod((std::string)t["qty"]),
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
+    if (t["orderStatus"] == "Filled") {
+        order_out.filled_amount = stod((std::string)t["cumExecQty"]);
+        order_out.st = "FILLED";
+    }
+    return order_out;
 }
 
 void ClientPrivateBybit::handle_onmessage(const std::string& msg) {
@@ -1792,6 +2112,10 @@ void ClientPublicHtx::unsubscribe_from_depth(std::string& symbol) {
 }
 
 void ClientPublicHtx::ping() {}
+
+Ticker ClientPublicHtx::fetch_ticker(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
 
 std::string ClientPublicHtx::parse_symbol_from_trade_ch(std::string& ch) {
     std::regex r("^market\\.(.*)\\.trade\\.detail$");
@@ -2012,10 +2336,10 @@ std::tuple<std::string, std::string> ClientPrivateHtx::adjust_price_quantity(
     throw std::runtime_error("not-implemented");
 }
 
-void ClientPrivateHtx::place_fut_limit_order(std::string symbol,
-                                             std::string side,
-                                             std::string price,
-                                             std::string quantity) {
+Order ClientPrivateHtx::place_fut_limit_order(std::string symbol,
+                                              std::string side,
+                                              std::string price,
+                                              std::string quantity) {
     // TODO: adjust side
     // POST /v1/order/orders/place
     // https://api.huobi.pro
@@ -2059,17 +2383,22 @@ void ClientPrivateHtx::place_fut_limit_order(std::string symbol,
     std::cout << "res_buf=" << res_buf << std::endl;
     nlohmann::json res_obj = nlohmann::json::parse(res_buf);
     curl_easy_cleanup(curl);
+    throw std::runtime_error("implement return Order");
 }
 
 void ClientPrivateHtx::set_leverage_to_1(std::string symbol) {
     throw std::runtime_error("not-implemented");
 }
 
-void ClientPrivateHtx::place_spot_limit_order(std::string symbol,
-                                              std::string side,
-                                              std::string price,
-                                              std::string quantity) {
+Order ClientPrivateHtx::place_spot_limit_order(std::string symbol,
+                                               std::string side,
+                                               std::string price,
+                                               std::string quantity) {
     // TODO: adjust side
+    throw std::runtime_error("not-implemented");
+}
+
+Order ClientPrivateHtx::fetch_order(Order& order) {
     throw std::runtime_error("not-implemented");
 }
 

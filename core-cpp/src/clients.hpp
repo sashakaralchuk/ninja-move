@@ -29,6 +29,15 @@ struct Order {
     bool isFilled() { return st == "FILLED"; }
 };
 
+struct Ticker {
+    std::string s;
+    double ask;
+    double bid;
+    std::string toString() const {
+        return fmt::format("Ticker{{s={},ask={},bid={}}}", s, ask, bid);
+    }
+};
+
 class ClientPublic : public hv::WebSocketClient {
    public:
     bool ws_onopen_received;
@@ -48,6 +57,7 @@ class ClientPublic : public hv::WebSocketClient {
     virtual void subscribe_to_depth(std::string& symbol) = 0;
     virtual void unsubscribe_from_depth(std::string& symbol) = 0;
     virtual void ping() = 0;
+    virtual Ticker fetch_ticker(std::string& symbol) = 0;
 
    protected:
     virtual void handle_onmessage(const std::string& msg) = 0;
@@ -71,13 +81,14 @@ class ClientPrivate : public hv::WebSocketClient {
     virtual void subscribe_to_private_events() = 0;
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity) = 0;
-    virtual void place_fut_limit_order(std::string symbol, std::string side,
-                                       std::string price,
-                                       std::string quantity) = 0;
-    virtual void set_leverage_to_1(std::string symbol) = 0;
-    virtual void place_spot_limit_order(std::string symbol, std::string side,
+    virtual Order place_fut_limit_order(std::string symbol, std::string side,
                                         std::string price,
                                         std::string quantity) = 0;
+    virtual void set_leverage_to_1(std::string symbol) = 0;
+    virtual Order place_spot_limit_order(std::string symbol, std::string side,
+                                         std::string price,
+                                         std::string quantity) = 0;
+    virtual Order fetch_order(Order& order) = 0;
     Order get_last_order();
     int get_orders_len();
     void clear_orders();
@@ -100,14 +111,11 @@ class ClientPublicGateio : public ClientPublic {
     ClientPublicGateio(std::string kind);
 
     void init_idle();
-
     void subscribe_to_trades(std::string& symbol);
-
     void subscribe_to_depth(std::string& symbol);
-
     void unsubscribe_from_depth(std::string& symbol);
-
     void ping();
+    Ticker fetch_ticker(std::string& symbol);
 
     std::vector<Depth> fetch_depth_snapshot(std::string& symbol);
 
@@ -123,12 +131,14 @@ class ClientPrivateGateio : public ClientPrivate {
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);
-    virtual void place_fut_limit_order(std::string symbol, std::string side,
-                                       std::string price, std::string quantity);
-    virtual void set_leverage_to_1(std::string symbol);
-    virtual void place_spot_limit_order(std::string symbol, std::string side,
+    virtual Order place_fut_limit_order(std::string symbol, std::string side,
                                         std::string price,
                                         std::string quantity);
+    virtual void set_leverage_to_1(std::string symbol);
+    virtual Order place_spot_limit_order(std::string symbol, std::string side,
+                                         std::string price,
+                                         std::string quantity);
+    virtual Order fetch_order(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -145,15 +155,11 @@ class ClientPublicMexc : public ClientPublic {
     ClientPublicMexc(std::string kind);
 
     void init_idle();
-
     void subscribe_to_trades(std::string& symbol);
-
     void subscribe_to_depth(std::string& symbol);
-
     void unsubscribe_from_depth(std::string& symbol);
-
     void ping();
-
+    Ticker fetch_ticker(std::string& symbol);
     std::vector<Depth> fetch_depth_snapshot(std::string& symbol);
 
    protected:
@@ -171,12 +177,14 @@ class ClientPrivateMexc : public ClientPrivate {
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);
-    virtual void place_fut_limit_order(std::string symbol, std::string side,
-                                       std::string price, std::string quantity);
-    virtual void set_leverage_to_1(std::string symbol);
-    virtual void place_spot_limit_order(std::string symbol, std::string side,
+    virtual Order place_fut_limit_order(std::string symbol, std::string side,
                                         std::string price,
                                         std::string quantity);
+    virtual void set_leverage_to_1(std::string symbol);
+    virtual Order place_spot_limit_order(std::string symbol, std::string side,
+                                         std::string price,
+                                         std::string quantity);
+    virtual Order fetch_order(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -193,14 +201,11 @@ class ClientPublicBybit : public ClientPublic {
     ClientPublicBybit(std::string kind);
 
     void init_idle();
-
     void subscribe_to_trades(std::string& symbol);
-
     void subscribe_to_depth(std::string& symbol);
-
     void unsubscribe_from_depth(std::string& symbol);
-
     void ping();
+    Ticker fetch_ticker(std::string& symbol);
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -217,12 +222,14 @@ class ClientPrivateBybit : public ClientPrivate {
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);
-    virtual void place_fut_limit_order(std::string symbol, std::string side,
-                                       std::string price, std::string quantity);
-    virtual void set_leverage_to_1(std::string symbol);
-    virtual void place_spot_limit_order(std::string symbol, std::string side,
+    virtual Order place_fut_limit_order(std::string symbol, std::string side,
                                         std::string price,
                                         std::string quantity);
+    virtual void set_leverage_to_1(std::string symbol);
+    virtual Order place_spot_limit_order(std::string symbol, std::string side,
+                                         std::string price,
+                                         std::string quantity);
+    virtual Order fetch_order(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -238,22 +245,15 @@ class ClientPublicHtx : public ClientPublic {
     ClientPublicHtx(std::string kind);
 
     void init_idle();
-
     void subscribe_to_trades(std::string& symbol);
-
     void subscribe_to_depth(std::string& symbol);
-
     void unsubscribe_from_depth(std::string& symbol);
-
     void ping();
-
+    Ticker fetch_ticker(std::string& symbol);
     static std::string parse_symbol_from_trade_ch(std::string& ch);
-
     static std::string parse_symbol_from_depth_ch(std::string& ch);
-
     static int gzDecompress(const char* src, int srcLen, const char* dst,
                             int dstLen);
-
     std::vector<Depth> fetch_depth_snapshot(std::string& symbol);
 
    protected:
@@ -271,12 +271,14 @@ class ClientPrivateHtx : public ClientPrivate {
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);
-    virtual void place_fut_limit_order(std::string symbol, std::string side,
-                                       std::string price, std::string quantity);
-    virtual void set_leverage_to_1(std::string symbol);
-    virtual void place_spot_limit_order(std::string symbol, std::string side,
+    virtual Order place_fut_limit_order(std::string symbol, std::string side,
                                         std::string price,
                                         std::string quantity);
+    virtual void set_leverage_to_1(std::string symbol);
+    virtual Order place_spot_limit_order(std::string symbol, std::string side,
+                                         std::string price,
+                                         std::string quantity);
+    virtual Order fetch_order(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);
