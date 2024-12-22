@@ -10,12 +10,18 @@ test:
 
 run-trade-contango-arbitrage-2024-11-11:
 	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./trade_contango_arbitrage_2024_11_11
-	cmake --build build -j 12 && \
+	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
 		THRESHOLD_REL=3.0 \
-		TICKERS_VERSION=v2 \
+		TICKERS_VERSION=execute_v4 \
 		./build/trade_contango_arbitrage_2024_11_11
+
+run-trade-contango-arbitrage-2024-11-11-req:
+	grpcurl -plaintext \
+	-d '{"list":[{"p_ask_spot":0.0,"p_bid_fut":0.0,"diff_rel":0.0,"t_spot":{"ex":"-","s":"-","st":"-","k":"-","ts":0,"p_bid":0.0,"p_ask":0.0,"v":0.0},"t_fut":{"ex":"-","s":"-","st":"-","k":"-","ts":0,"p_bid":0.0,"p_ask":0.0,"v":0.0}}]}' \
+	127.0.0.1:50051 \
+	trade_contango.TradeContango/FireTradeV2
 
 clone-libs:
 	git clone git@github.com:curl/curl.git libs/curl && \
@@ -44,4 +50,10 @@ install-grpc:
 	# make -j 16
 	# make install
 
-
+install-cpp-backward:
+	# git clone git@github.com:bombela/backward-cpp.git
+	# cd backward-cpp
+	# mkdir build
+	# cd build
+	# cmake ..
+	# make

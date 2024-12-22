@@ -225,6 +225,10 @@ std::string rstrip_zeros(std::string s) {
     return s.substr(0, j + 1);
 }
 
+long now_millis() {
+    return std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+}
+
 std::string ClientPrivate::conv_size_to_str(double size) {
     if (size < 0.0) {
         throw std::runtime_error(fmt::format("unexpected size=", size));
@@ -341,6 +345,7 @@ void ClientPublicGateio::unsubscribe_from_depth(std::string& symbol) {
 void ClientPublicGateio::ping() {}
 
 Ticker ClientPublicGateio::fetch_ticker(std::string& symbol) {
+    long start_millis = now_millis();
     if (kind == "fut") {
         std::string url_str = fmt::format(
             "https://api.gateio.ws/api/v4/futures/usdt/tickers?contract={}",
@@ -350,6 +355,8 @@ Ticker ClientPublicGateio::fetch_ticker(std::string& symbol) {
             throw std::runtime_error(
                 fmt::format("{} {} res_obj.size()", ex, kind));
         }
+        SPDLOG_DEBUG("{} {} fetch_ticker dur={} res_obj={}", ex, kind,
+                     now_millis() - start_millis, res_obj.dump());
         return Ticker{
             .s = res_obj[0]["contract"],
             .bid = stod((std::string)res_obj[0]["highest_bid"]),
@@ -364,6 +371,8 @@ Ticker ClientPublicGateio::fetch_ticker(std::string& symbol) {
             throw std::runtime_error(
                 fmt::format("{} {} res_obj.size()", ex, kind));
         }
+        SPDLOG_DEBUG("{} {} fetch_ticker dur={} res_obj={}", ex, kind,
+                     now_millis() - start_millis, res_obj.dump());
         return Ticker{
             .s = res_obj[0]["currency_pair"],
             .bid = stod((std::string)res_obj[0]["highest_bid"]),
@@ -525,18 +534,27 @@ ClientPrivateGateio::ClientPrivateGateio(std::string kind)
 void ClientPrivateGateio::init_idle() {
     if (kind == "fut") {
         std::string url_str = "wss://fx-ws.gateio.ws/v4/ws/usdt";
-        std::string fut_exchange_info_url_str =
-            "https://api.gateio.ws/api/v4/futures/usdt/contracts";
         init_idle_(url_str);
-        fut_exchange_info = execute_http_get_req(fut_exchange_info_url_str);
     } else if (kind == "spot") {
         std::string url_str = "wss://api.gateio.ws/ws/v4/";
-        std::string spot_exchange_info_url_str =
-            "https://api.gateio.ws/api/v4/spot/currency_pairs";
         init_idle_(url_str);
-        spot_exchange_info = execute_http_get_req(spot_exchange_info_url_str);
     } else {
-        throw std::runtime_error("unexpected kind=" + kind);
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+    init_exchange_info();
+}
+
+void ClientPrivateGateio::init_exchange_info() {
+    if (kind == "fut") {
+        std::string url_str =
+            "https://api.gateio.ws/api/v4/futures/usdt/contracts";
+        fut_exchange_info = execute_http_get_req(url_str);
+    } else if (kind == "spot") {
+        std::string url_str =
+            "https://api.gateio.ws/api/v4/spot/currency_pairs";
+        spot_exchange_info = execute_http_get_req(url_str);
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
 }
 
@@ -1259,12 +1277,19 @@ void ClientPrivateMexc::init_idle() {
     } else if (kind == "spot") {
         std::string url_str = fmt::format("wss://wbs.mexc.com/ws?listenKey={}",
                                           create_listen_key());
-        std::string spot_exchange_info_url_str =
-            "https://api.mexc.com/api/v3/exchangeInfo";
         init_idle_(url_str);
-        spot_exchange_info = execute_http_get_req(spot_exchange_info_url_str);
     } else {
         throw std::runtime_error("unexpected kind=" + kind);
+    }
+    init_exchange_info();
+}
+
+void ClientPrivateMexc::init_exchange_info() {
+    if (kind == "spot") {
+        std::string url_str = "https://api.mexc.com/api/v3/exchangeInfo";
+        spot_exchange_info = execute_http_get_req(url_str);
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
 }
 
@@ -1698,15 +1723,21 @@ ClientPrivateBybit::ClientPrivateBybit(std::string kind)
 
 void ClientPrivateBybit::init_idle() {
     std::string url_str = "wss://stream.bybit.com/v5/private";
+    init_idle_(url_str);
+    init_exchange_info();
+}
+
+void ClientPrivateBybit::init_exchange_info() {
     std::string fut_ex_info_url_str =
         "https://api.bybit.com/v5/market/instruments-info?category=linear";
     std::string spot_ex_info_url_str =
         "https://api.bybit.com/v5/market/instruments-info?category=spot";
-    init_idle_(url_str);
     if (kind == "fut") {
         fut_exchange_info = execute_http_get_req(fut_ex_info_url_str);
     } else if (kind == "spot") {
         spot_exchange_info = execute_http_get_req(spot_ex_info_url_str);
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
 }
 
@@ -2295,6 +2326,10 @@ ClientPrivateHtx::ClientPrivateHtx(std::string kind)
 }
 
 void ClientPrivateHtx::init_idle() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPrivateHtx::init_exchange_info() {
     throw std::runtime_error("not-implemented");
 }
 

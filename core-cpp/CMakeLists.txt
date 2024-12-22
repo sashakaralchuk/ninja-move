@@ -27,6 +27,7 @@ find_library(CURL NAMES curl PATHS libs/curl/build/lib)
 find_library(SPDLOG NAMES spdlog PATHS libs/spdlog/build)
 find_library(ZLIB NAMES z PATHS libs/zlib/build)
 find_library(GMP NAMES gmp PATHS libs/gmp-6.3.0/build/lib)
+find_library(BACKWARD NAMES backward PATHS libs/backward-cpp/build)
 
 add_subdirectory(tt/SqrtLibrary)
 add_subdirectory(libs/json)
@@ -89,6 +90,7 @@ target_include_directories(trade_contango_arbitrage_2024_11_11 PRIVATE
     libs/zlib
     libs/curl/include/curl
     libs/gmp-6.3.0/build/include
+    libs/backward-cpp
 )
 target_link_libraries(trade_contango_arbitrage_2024_11_11 PRIVATE
     nlohmann_json::nlohmann_json
@@ -107,6 +109,7 @@ target_link_libraries(trade_contango_arbitrage_2024_11_11 PRIVATE
     gRPC::grpc++_reflection
     gRPC::grpc++
     protobuf::libprotobuf
+    ${BACKWARD}
 )
 
 enable_testing()

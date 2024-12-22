@@ -10,6 +10,8 @@ std::string gen_precision_str(int precision);
 
 std::string rstrip_zeros(std::string s);
 
+long now_millis();
+
 struct Order {
     std::string ex;
     std::string k;
@@ -78,6 +80,7 @@ class ClientPrivate : public hv::WebSocketClient {
     ~ClientPrivate();
 
     virtual void init_idle() = 0;
+    virtual void init_exchange_info() = 0;
     virtual void subscribe_to_private_events() = 0;
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity) = 0;
@@ -97,6 +100,8 @@ class ClientPrivate : public hv::WebSocketClient {
    protected:
     std::optional<nlohmann::json> fut_exchange_info;
     std::optional<nlohmann::json> spot_exchange_info;
+    // XXX: keep in ClientPrivate just one order for (buy, sell) for (fut, spot)
+    // without vector inside
     std::vector<Order> orders;
     // NOTE: how to handle situation when you already sent order amend message
     // and than order fills (race condition), you have to do this in one place
@@ -128,6 +133,7 @@ class ClientPrivateGateio : public ClientPrivate {
     ClientPrivateGateio(std::string kind);
 
     virtual void init_idle();
+    virtual void init_exchange_info();
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);
@@ -174,6 +180,7 @@ class ClientPrivateMexc : public ClientPrivate {
     ClientPrivateMexc(std::string kind);
 
     virtual void init_idle();
+    virtual void init_exchange_info();
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);
@@ -219,6 +226,7 @@ class ClientPrivateBybit : public ClientPrivate {
     ClientPrivateBybit(std::string kind);
 
     virtual void init_idle();
+    virtual void init_exchange_info();
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);
@@ -268,6 +276,7 @@ class ClientPrivateHtx : public ClientPrivate {
     ClientPrivateHtx(std::string kind);
 
     virtual void init_idle();
+    virtual void init_exchange_info();
     virtual void subscribe_to_private_events();
     virtual std::tuple<std::string, std::string> adjust_price_quantity(
         std::string symbol, double price, double quantity);

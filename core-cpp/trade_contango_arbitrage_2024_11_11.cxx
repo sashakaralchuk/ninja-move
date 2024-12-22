@@ -1,11 +1,11 @@
 #include <clickhouse/client.h>
-// #include <fmt/core.h>
 #include <gmpxx.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <spdlog/cfg/env.h>
 #include <spdlog/spdlog.h>
 
+#include <backward.hpp>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -32,12 +32,18 @@ using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::Status;
 using trade_contango::FireTradeReq;
+using trade_contango::FireTradeReqV2;
 using trade_contango::FireTradeRes;
 using trade_contango::QTickerReq;
+using trade_contango::QTickerReqV2;
 using trade_contango::SpreadsReq;
+using trade_contango::SpreadsReqV2;
 using trade_contango::TradeContango;
 
+#define GET_FN_NAME_TO_FN(fn) {#fn, fn}
+
 ABSL_FLAG(uint16_t, port, 50051, "Server port for the service");
+backward::SignalHandling sh{};
 
 void configure_logger();
 void debug_place_listen_mexc_fut_v2();
@@ -47,37 +53,46 @@ void debug_place_listen_gateio_spot_v2();
 void debug_place_listen_bybit_fut_v2();
 void debug_place_listen_bybit_spot_v2();
 void debug_listen_gateio_tickers();
-void listen_gateio_tickers_v1();
-void listen_gateio_tickers_v2(int argc, char** argv);
-void listen_gateio_tickers_v3(int argc, char** argv);
+void execute_v1();
+void execute_v2();
+void execute_v3();
+void debug_fetch_tickers();
+void debug_place_fetch_order_gateio_fut();
+void debug_place_fetch_order_gateio_spot();
+void debug_place_fetch_order_mexc_spot();
+void debug_place_fetch_order_bybit_fut();
+void debug_place_fetch_order_bybit_spot();
+void execute_v4();
+
+std::map<std::string, void (*)()> FNS_MAP{
+    GET_FN_NAME_TO_FN(debug_place_listen_mexc_fut_v2),
+    GET_FN_NAME_TO_FN(debug_place_listen_mexc_spot_v2),
+    GET_FN_NAME_TO_FN(debug_place_listen_gateio_fut_v2),
+    GET_FN_NAME_TO_FN(debug_place_listen_gateio_spot_v2),
+    GET_FN_NAME_TO_FN(debug_place_listen_bybit_fut_v2),
+    GET_FN_NAME_TO_FN(debug_place_listen_bybit_spot_v2),
+    GET_FN_NAME_TO_FN(debug_listen_gateio_tickers),
+    GET_FN_NAME_TO_FN(execute_v1),
+    GET_FN_NAME_TO_FN(execute_v2),
+    GET_FN_NAME_TO_FN(execute_v3),
+    GET_FN_NAME_TO_FN(debug_fetch_tickers),
+    GET_FN_NAME_TO_FN(debug_place_fetch_order_gateio_fut),
+    GET_FN_NAME_TO_FN(debug_place_fetch_order_gateio_spot),
+    GET_FN_NAME_TO_FN(debug_place_fetch_order_mexc_spot),
+    GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_fut),
+    GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_spot),
+    GET_FN_NAME_TO_FN(execute_v4),
+};
 
 int main(int argc, char** argv) {
     configure_logger();
     std::string v = std::getenv("TICKERS_VERSION");
-    if (v == "debug-place-listen-mexc-fut-v2") {
-        debug_place_listen_mexc_fut_v2();
-    } else if (v == "debug-place-listen-mexc-spot-v2") {
-        debug_place_listen_mexc_spot_v2();
-    } else if (v == "debug-place-listen-gateio-fut-v2") {
-        debug_place_listen_gateio_fut_v2();
-    } else if (v == "debug-place-listen-gateio-spot-v2") {
-        debug_place_listen_gateio_spot_v2();
-    } else if (v == "debug-place-listen-bybit-fut-v2") {
-        debug_place_listen_bybit_fut_v2();
-    } else if (v == "debug-place-listen-bybit-spot-v2") {
-        debug_place_listen_bybit_spot_v2();
-    } else if (v == "debug-depth") {
-        debug_listen_gateio_tickers();
-    } else if (v == "v1") {
-        listen_gateio_tickers_v1();
-    } else if (v == "v2") {
-        listen_gateio_tickers_v2(argc, argv);
-    } else if (v == "v3") {
-        listen_gateio_tickers_v3(argc, argv);
-    } else {
+    auto fn = FNS_MAP.find(v);
+    if (fn == FNS_MAP.end()) {
         throw std::runtime_error(
             fmt::format("unexpected TICKERS_VERSION={}", v));
     }
+    fn->second();
     return 0;
 }
 
@@ -128,6 +143,26 @@ std::ostream& operator<<(std::ostream& os, SpreadsReq const& o) {
 }
 
 std::string format_as(SpreadsReq const& o) {
+    std::ostringstream ss;
+    ss << o;
+    return std::move(ss).str();
+}
+
+std::ostream& operator<<(std::ostream& os, QTickerReqV2 const& o) {
+    os << "QTickerReqV2{ex=" << o.ex() << ",s=" << o.s() << ",st=" << o.st()
+       << ",k=" << o.k() << ",ts=" << o.ts() << ",p_bid=" << o.p_bid()
+       << ",p_ask=" << o.p_ask() << ",v=" << o.v() << "}";
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, SpreadsReqV2 const& o) {
+    os << "SpreadsReqV2{p_ask_spot=" << o.p_ask_spot()
+       << ",p_bid_fut=" << o.p_bid_fut() << ",diff_rel=" << o.diff_rel()
+       << ",t_spot=" << o.t_spot() << ",t_fut=" << o.t_fut() << "}";
+    return os;
+}
+
+std::string format_as(SpreadsReqV2 const& o) {
     std::ostringstream ss;
     ss << o;
     return std::move(ss).str();
@@ -194,13 +229,12 @@ void configure_logger() {
     sinks.push_back(
         std::make_shared<spdlog::sinks::ansicolor_stdout_sink_st>());
     sinks.push_back(std::make_shared<spdlog::sinks::daily_file_sink_st>(
-        ".var/logfile", 0, 0));
+        ".var/logs/logfile", 0, 0));
     for (auto& s : sinks) {
         s->set_level(level);
-        s->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] [%s %! %#] %v");
+        s->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [t=%t] [%l] [%s %! %#] %v");
     }
-    auto l = std::make_shared<spdlog::logger>("default–global", begin(sinks),
-                                              end(sinks));
+    auto l = std::make_shared<spdlog::logger>("t", begin(sinks), end(sinks));
     l->set_level(level);
     spdlog::set_default_logger(l);
 }
@@ -295,12 +329,12 @@ std::optional<OpportunityRow> is_opportunity_exists(
     return opp_row_t;
 }
 
-void wait_until(std::function<bool()> callback) {
+void wait_until(std::function<bool()> callback, int interval_millis = 250) {
     while (true) {
         if (callback()) {
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval_millis));
     }
 }
 
@@ -311,20 +345,13 @@ void wait_idle(int iters_amount = 5) {
     }
 }
 
-class SpreadsHouse {
+class ClientsHouse {
    public:
-    SpreadsHouse() {}
+    ClientsHouse() {}
 
     void init_idle_public() {
         if (ws_clients_public.size() == 0) {
-            ws_clients_public["bybit-fut"] = new ClientPublicBybit("fut");
-            ws_clients_public["bybit-spot"] = new ClientPublicBybit("spot");
-            ws_clients_public["mexc-fut"] = new ClientPublicMexc("fut");
-            ws_clients_public["mexc-spot"] = new ClientPublicMexc("spot");
-            ws_clients_public["gateio-fut"] = new ClientPublicGateio("fut");
-            ws_clients_public["gateio-spot"] = new ClientPublicGateio("spot");
-            ws_clients_public["htx-fut"] = new ClientPublicHtx("fut");
-            ws_clients_public["htx-spot"] = new ClientPublicHtx("spot");
+            init_public_clients();
         }
         for (auto o = ws_clients_public.cbegin(); o != ws_clients_public.cend();
              ++o) {
@@ -352,13 +379,20 @@ class SpreadsHouse {
         }
     }
 
+    void init_public_clients() {
+        ws_clients_public["bybit-fut"] = new ClientPublicBybit("fut");
+        ws_clients_public["bybit-spot"] = new ClientPublicBybit("spot");
+        ws_clients_public["mexc-fut"] = new ClientPublicMexc("fut");
+        ws_clients_public["mexc-spot"] = new ClientPublicMexc("spot");
+        ws_clients_public["gateio-fut"] = new ClientPublicGateio("fut");
+        ws_clients_public["gateio-spot"] = new ClientPublicGateio("spot");
+        ws_clients_public["htx-fut"] = new ClientPublicHtx("fut");
+        ws_clients_public["htx-spot"] = new ClientPublicHtx("spot");
+    }
+
     void init_idle_private() {
         if (ws_clients_private.size() == 0) {
-            ws_clients_private["mexc-spot"] = new ClientPrivateMexc("spot");
-            ws_clients_private["gateio-fut"] = new ClientPrivateGateio("fut");
-            ws_clients_private["gateio-spot"] = new ClientPrivateGateio("spot");
-            ws_clients_private["bybit-fut"] = new ClientPrivateBybit("fut");
-            ws_clients_private["bybit-spot"] = new ClientPrivateBybit("spot");
+            init_private_clients();
         }
         auto m = ws_clients_private;
         for (auto o = m.cbegin(); o != m.cend(); ++o) {
@@ -387,6 +421,19 @@ class SpreadsHouse {
             return true;
         });
         SPDLOG_INFO("ws_clients_private been set up");
+    }
+
+    void init_private_clients() {
+        ws_clients_private["mexc-spot"] = new ClientPrivateMexc("spot");
+        ws_clients_private["gateio-fut"] = new ClientPrivateGateio("fut");
+        ws_clients_private["gateio-spot"] = new ClientPrivateGateio("spot");
+        ws_clients_private["bybit-fut"] = new ClientPrivateBybit("fut");
+        ws_clients_private["bybit-spot"] = new ClientPrivateBybit("spot");
+        SPDLOG_INFO("ws_clients_private been created => init exchanges infos");
+        for (auto o = ws_clients_private.cbegin();
+             o != ws_clients_private.cend(); ++o) {
+            o->second->init_exchange_info();
+        }
     }
 
     void ping() {
@@ -638,18 +685,18 @@ void debug_listen_gateio_tickers() {
     }
 }
 
-void listen_gateio_tickers_v1() {
+void execute_v1() {
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
     std::map<std::string, long> last_timestamps;
     std::map<std::string, double> last_prices;
-    SpreadsHouse sh;
-    sh.init_idle_public();
+    ClientsHouse ch;
+    ch.init_idle_public();
     std::thread _([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
-            sh.ping();
+            ch.ping();
         }
     });
     OpportunityRow opp_row;
@@ -670,20 +717,20 @@ void listen_gateio_tickers_v1() {
         last_timestamps[key] = trade_int.ts;
         last_prices[key] = trade_int.p;
     };
-    ClientPublic* client_fut = sh.get_client_public(opp_row.fut_ex, "fut");
+    ClientPublic* client_fut = ch.get_client_public(opp_row.fut_ex, "fut");
     client_fut->onmessage_trade = handle_trades;
     client_fut->subscribe_to_trades(opp_row.fut_symbol);
-    ClientPublic* client_spot = sh.get_client_public(opp_row.spot_ex, "spot");
+    ClientPublic* client_spot = ch.get_client_public(opp_row.spot_ex, "spot");
     client_spot->onmessage_trade = handle_trades;
     client_spot->subscribe_to_trades(opp_row.fut_symbol);
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
-        long now_millis =
-            std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+        long now_millis_ = now_millis();
         std::string b1;
         for (auto o = last_timestamps.cbegin(); o != last_timestamps.cend();
              ++o) {
-            b1 += o->first + ":" + std::to_string(now_millis - o->second) + ",";
+            b1 +=
+                o->first + ":" + std::to_string(now_millis_ - o->second) + ",";
         }
         if (!b1.empty()) {
             b1.pop_back();
@@ -706,6 +753,7 @@ void listen_gateio_tickers_v1() {
 
 static int trade_obj_raw_f = 0;
 static std::optional<SpreadsReq> spreads_req = {};
+static std::optional<SpreadsReqV2> spreads_req_v2 = {};
 
 class TradeContangoServiceImpl final : public TradeContango::Service {
     Status FireTrade(ServerContext* context, const FireTradeReq* req,
@@ -724,9 +772,25 @@ class TradeContangoServiceImpl final : public TradeContango::Service {
         }
         return Status::OK;
     }
+    Status FireTradeV2(ServerContext* context, const FireTradeReqV2* req,
+                       FireTradeRes* reply) override {
+        SPDLOG_DEBUG("fire-trade-v2 req->list.size={}", req->list().size());
+        reply->set_run_initiated(trade_obj_raw_f == 0 ? 1 : 0);
+        if (trade_obj_raw_f == 0) {
+            spreads_req_v2 = req->list()[0];
+            for (auto& obj : req->list()) {
+                if (obj.diff_rel() > spreads_req_v2.value().diff_rel()) {
+                    spdlog::debug("set spreads_req_v2={}", format_as(obj));
+                    spreads_req_v2 = obj;
+                }
+            }
+            trade_obj_raw_f = 1;
+        }
+        return Status::OK;
+    }
 };
 
-void run_listening_for_events() {
+void run_listening_for_events_sync() {
     std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
     TradeContangoServiceImpl service;
     grpc::EnableDefaultHealthCheckService(true);
@@ -739,14 +803,14 @@ void run_listening_for_events() {
     server->Wait();
 }
 
-void listen_gateio_tickers_v2(int argc, char** argv) {
-    SpreadsHouse sh;
-    sh.init_idle_public();
+void execute_v2() {
+    ClientsHouse ch;
+    ch.init_idle_public();
     std::thread _1([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
-            sh.ping();
+            ch.ping();
         }
     });
     std::thread _2([&]() {
@@ -756,7 +820,7 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
             }
             SpreadsReq obj = spreads_req.value();
             spdlog::info("obj={}", format_as(obj));
-            auto client_fut = sh.get_client_public(obj.t_fut().ex(), "fut");
+            auto client_fut = ch.get_client_public(obj.t_fut().ex(), "fut");
             std::string symbol_fut = obj.t_fut().s();
             client_fut->onmessage_depth = [&](const Depth depth) {};
             client_fut->subscribe_to_depth(symbol_fut);
@@ -764,7 +828,7 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
                 throw std::runtime_error(
                     "fut order-book is not empty on start");
             }
-            auto client_spot = sh.get_client_public(obj.t_spot().ex(), "spot");
+            auto client_spot = ch.get_client_public(obj.t_spot().ex(), "spot");
             std::string symbol_spot = obj.t_spot().s();
             client_spot->onmessage_depth = [&](const Depth depth) {};
             client_spot->subscribe_to_depth(symbol_spot);
@@ -817,26 +881,26 @@ void listen_gateio_tickers_v2(int argc, char** argv) {
             // NOTE: connections drop happens because of weird unsubscribe
             // mechanism implemented in exchanges
             spdlog::info("close connection and set-up them again");
-            sh.close_all();
+            ch.close_all();
             spdlog::debug("all closed");
-            sh.init_idle_public();
+            ch.init_idle_public();
             spdlog::debug("all connected again");
             spreads_req = {};
             trade_obj_raw_f = 0;
         }
     });
-    run_listening_for_events();
+    run_listening_for_events_sync();
 }
 
-void listen_gateio_tickers_v3(int argc, char** argv) {
-    SpreadsHouse sh;
-    sh.init_idle_public();
-    sh.init_idle_private();
+void execute_v3() {
+    ClientsHouse ch;
+    ch.init_idle_public();
+    ch.init_idle_private();
     std::thread _1([&]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(30));
             spdlog::info("ping");
-            sh.ping();
+            ch.ping();
         }
     });
     std::thread _2([&]() {
@@ -850,7 +914,7 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
             std::string ex_fut = obj.t_fut().ex();
             std::string symbol_fut = obj.t_fut().s();
             ClientPublic* client_public_fut =
-                sh.get_client_public(ex_fut, "fut");
+                ch.get_client_public(ex_fut, "fut");
             client_public_fut->onmessage_depth = [&](const Depth depth) {};
             client_public_fut->subscribe_to_depth(symbol_fut);
             if (client_public_fut->order_book_cache.get_last_update_id() != 0) {
@@ -860,7 +924,7 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
             std::string ex_spot = obj.t_spot().ex();
             std::string symbol_spot = obj.t_spot().s();
             ClientPublic* client_public_spot =
-                sh.get_client_public(ex_spot, "spot");
+                ch.get_client_public(ex_spot, "spot");
             client_public_spot->onmessage_depth = [&](const Depth depth) {};
             client_public_spot->subscribe_to_depth(symbol_spot);
             if (client_public_spot->order_book_cache.get_last_update_id() !=
@@ -889,15 +953,14 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
                     double diff_rel_2 = (bid_fut - bid_spot) / bid_spot * 100;
                     spdlog::info("bid_spot={} bid_fut={} diff_rel_2={}",
                                  bid_spot, bid_fut, diff_rel_2);
-                    spdlog::info("p_spot={} p_fut={} diff_rel={}",
+                    spdlog::info("p_spot={} p_fut={} diff_rel={} obj={}",
                                  obj.t_spot().p(), obj.t_fut().p(),
-                                 obj.diff_rel());
-                    spdlog::info("obj={}", format_as(obj));
+                                 obj.diff_rel(), format_as(obj));
                     break;
                 }
             }
             ClientPrivate* client_private_fut =
-                sh.get_client_private(ex_fut, "fut");
+                ch.get_client_private(ex_fut, "fut");
             double bid_open_fut =
                 client_public_fut->order_book_cache.get_top_bid().get_d();
             auto [sell_price_fut, sell_quantity_fut] =
@@ -918,7 +981,7 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
             double bid_open_spot =
                 client_public_spot->order_book_cache.get_top_bid().get_d();
             ClientPrivate* client_private_spot =
-                sh.get_client_private(ex_spot, "spot");
+                ch.get_client_private(ex_spot, "spot");
             auto [buy_price_spot, buy_quantity_spot] =
                 client_private_spot->adjust_price_quantity(
                     symbol_spot, bid_open_spot * 1.04,
@@ -990,13 +1053,239 @@ void listen_gateio_tickers_v3(int argc, char** argv) {
             // NOTE: connections drop happens because of weird unsubscribe
             // mechanism implemented in exchanges
             spdlog::info("close connection and set-up them again");
-            sh.close_all();
+            ch.close_all();
             spdlog::debug("all closed");
-            sh.init_idle_public();
+            ch.init_idle_public();
             spdlog::debug("all connected again");
             spreads_req = {};
             trade_obj_raw_f = 0;
         }
     });
-    run_listening_for_events();
+    run_listening_for_events_sync();
+}
+
+void debug_fetch_tickers() {
+    std::string symbol_gateio_fut = "PHIL_USDT";
+    Ticker t_gateio_fut =
+        ClientPublicGateio("fut").fetch_ticker(symbol_gateio_fut);
+    std::cout << "t_gateio_fut=" << t_gateio_fut.toString() << std::endl;
+    std::string symbol_gateio_spot = "ZZZ_USDT";
+    Ticker t_gateio_spot =
+        ClientPublicGateio("spot").fetch_ticker(symbol_gateio_spot);
+    std::cout << "t_gateio_spot=" << t_gateio_spot.toString() << std::endl;
+    std::string symbol_mexc_spot = "ETHUSDT";
+    Ticker t_mexc_spot =
+        ClientPublicMexc("spot").fetch_ticker(symbol_mexc_spot);
+    std::cout << "t_mexc_spot=" << t_mexc_spot.toString() << std::endl;
+    std::string symbol_bybit_fut = "XVSUSDT";
+    Ticker t_bybit_fut =
+        ClientPublicBybit("fut").fetch_ticker(symbol_bybit_fut);
+    std::cout << "t_bybit_fut=" << t_bybit_fut.toString() << std::endl;
+    std::string symbol_bybit_spot = "ODOSUSDT";
+    Ticker t_bybit_spot =
+        ClientPublicBybit("spot").fetch_ticker(symbol_bybit_spot);
+    std::cout << "t_bybit_spot=" << t_bybit_spot.toString() << std::endl;
+}
+
+void debug_place_fetch_order_gateio_fut() {
+    ClientPrivateGateio client_private_gateio_fut("fut");
+    Order order_1 = client_private_gateio_fut.place_fut_limit_order(
+        "DHX_USDT", "sell", "0.02", "1");
+    std::cout << "order_gateio_fut_1=" << order_1.toString() << std::endl;
+    Order order_2 = client_private_gateio_fut.fetch_order(order_1);
+    std::cout << "order_2=" << order_2.toString() << std::endl;
+}
+
+void debug_place_fetch_order_gateio_spot() {
+    ClientPrivateGateio client_private_gateio_spot("spot");
+    Order order_gateio_spot_1 =
+        client_private_gateio_spot.place_spot_limit_order("ZRX_USDT", "buy",
+                                                          "0.38", "20");
+    std::cout << "order_gateio_spot_1=" << order_gateio_spot_1.toString()
+              << std::endl;
+    Order order_gateio_spot_2 =
+        client_private_gateio_spot.fetch_order(order_gateio_spot_1);
+    std::cout << "order_gateio_spot_2=" << order_gateio_spot_2.toString()
+              << std::endl;
+}
+
+void debug_place_fetch_order_mexc_spot() {
+    ClientPrivateMexc client_private_mexc_spot("spot");
+    Order order_mexc_spot_1 = client_private_mexc_spot.place_spot_limit_order(
+        "XMRUSDT", "buy", "160", "0.05");
+    std::cout << "order_mexc_spot_1=" << order_mexc_spot_1.toString()
+              << std::endl;
+    Order order_mexc_spot_2 =
+        client_private_mexc_spot.fetch_order(order_mexc_spot_1);
+    std::cout << "order_mexc_spot_2=" << order_mexc_spot_2.toString()
+              << std::endl;
+}
+
+void debug_place_fetch_order_bybit_fut() {
+    ClientPrivateBybit client("fut");
+    Order order_1 =
+        client.place_fut_limit_order("XVSUSDT", "buy", "6.5", "1.5");
+    std::cout << "order_1=" << order_1.toString() << std::endl;
+    Order order_2 = client.fetch_order(order_1);
+    std::cout << "order_mexc_spot_2=" << order_2.toString() << std::endl;
+}
+
+void debug_place_fetch_order_bybit_spot() {
+    ClientPrivateBybit client("spot");
+    Order order_1 =
+        client.place_spot_limit_order("GRASSUSDT", "buy", "2.17", "10");
+    std::cout << "order_1=" << order_1.toString() << std::endl;
+    Order order_2 = client.fetch_order(order_1);
+    std::cout << "order_2=" << order_2.toString() << std::endl;
+}
+
+enum StateV4 { wait_for_spread, place_open_orders, place_close_orders };
+
+void execute_v4() {
+    // NOTE: it's impossible to fill 2 orders on (fut, spot) with the same
+    // prices because i cant use limit orders
+    ClientsHouse ch = ClientsHouse();
+    ch.init_public_clients();
+    ch.init_private_clients();
+    StateV4 state = StateV4::wait_for_spread;
+    std::map<std::string, Order> orders_map;
+    std::map<std::string, Ticker> last_tickers_map;
+    std::mutex orders_map_mutex;
+    double usdt_to_use = 25.0;
+    std::thread _place_wait_fut([&]() {
+        SPDLOG_INFO("_place_wait_fut wait for place_open_orders");
+        wait_until([&]() { return state == StateV4::place_open_orders; });
+        SpreadsReqV2 obj = spreads_req_v2.value();
+        ClientPrivate* client_fut =
+            ch.get_client_private(obj.t_fut().ex(), "fut");
+        {
+            SPDLOG_INFO("_place_wait_fut place sell order");
+            auto [sell_price, sell_quantity] =
+                client_fut->adjust_price_quantity(
+                    obj.t_fut().s(), obj.t_fut().p_bid() * 0.96,
+                    usdt_to_use / obj.t_fut().p_bid());
+            Order sell_order = client_fut->place_fut_limit_order(
+                obj.t_fut().s(), "sell", sell_price, sell_quantity);
+            SPDLOG_INFO("_place_wait_fut wait for sell order fill");
+            wait_until([&]() {
+                sell_order = client_fut->fetch_order(sell_order);
+                return sell_order.st == "FILLED";
+            });
+            // TODO: set leverage to 1
+            orders_map_mutex.lock();
+            orders_map["fut-open"] = sell_order;
+            orders_map_mutex.unlock();
+        }
+        {
+            SPDLOG_INFO("_place_wait_fut wait for place_close_orders");
+            wait_until([&]() { return state == StateV4::place_close_orders; });
+            SPDLOG_INFO("_place_wait_fut place buy order");
+            auto [buy_price, _] = client_fut->adjust_price_quantity(
+                obj.t_fut().s(), last_tickers_map["fut"].ask * 1.04, 0.0);
+            std::string buy_quantity = client_fut->conv_size_to_str(
+                orders_map["fut-open"].filled_amount);
+            Order buy_order = client_fut->place_fut_limit_order(
+                obj.t_fut().s(), "buy", buy_price, buy_quantity);
+            SPDLOG_INFO("_place_wait_fut wait for buy order fill");
+            wait_until([&]() {
+                buy_order = client_fut->fetch_order(buy_order);
+                return buy_order.st == "FILLED";
+            });
+            orders_map_mutex.lock();
+            orders_map["fut-close"] = buy_order;
+            orders_map_mutex.unlock();
+        }
+    });
+    std::thread _place_wait_spot([&]() {
+        SPDLOG_INFO("_place_wait_spot wait for place_open_orders");
+        wait_until([&]() { return state == StateV4::place_open_orders; });
+        SpreadsReqV2 obj = spreads_req_v2.value();
+        ClientPrivate* client_spot =
+            ch.get_client_private(obj.t_spot().ex(), "spot");
+        {
+            SPDLOG_INFO("_place_wait_spot place buy order");
+            auto [buy_price, buy_quantity] = client_spot->adjust_price_quantity(
+                obj.t_spot().s(), obj.t_spot().p_ask() * 1.04,
+                usdt_to_use / obj.t_spot().p_ask());
+            Order buy_order = client_spot->place_spot_limit_order(
+                obj.t_spot().s(), "buy", buy_price, buy_quantity);
+            SPDLOG_INFO("_place_wait_spot wait for buy order fill");
+            wait_until([&]() {
+                buy_order = client_spot->fetch_order(buy_order);
+                return buy_order.st == "FILLED";
+            });
+            orders_map_mutex.lock();
+            orders_map["spot-open"] = buy_order;
+            orders_map_mutex.unlock();
+        }
+        {
+            SPDLOG_INFO("_place_wait_spot wait for place_close_orders");
+            wait_until([&]() { return state == StateV4::place_close_orders; });
+            SPDLOG_INFO("_place_wait_spot place sell order");
+            auto [sell_price, sell_quantity] =
+                client_spot->adjust_price_quantity(
+                    obj.t_spot().s(), last_tickers_map["fut"].bid * 0.96,
+                    orders_map["spot-open"].filled_amount);
+            Order sell_order = client_spot->place_spot_limit_order(
+                obj.t_spot().s(), "sell", sell_price, sell_quantity);
+            SPDLOG_INFO("_place_wait_spot wait for sell order fill");
+            wait_until([&]() {
+                sell_order = client_spot->fetch_order(sell_order);
+                return sell_order.st == "FILLED";
+            });
+            orders_map_mutex.lock();
+            orders_map["spot-close"] = sell_order;
+            orders_map_mutex.unlock();
+        }
+    });
+    std::thread _1([&]() {
+        wait_until([&]() { return trade_obj_raw_f != 0; });
+        SpreadsReqV2 obj = spreads_req_v2.value();
+        spdlog::info("set status to place_open_orders obj={}", format_as(obj));
+        state = StateV4::place_open_orders;
+        SPDLOG_INFO("wait for orders to appear in orders_map");
+        wait_until([&]() {
+            orders_map_mutex.lock();
+            bool are_orders_appeared =
+                orders_map.find("fut-open") != orders_map.end() &&
+                orders_map.find("spot-open") != orders_map.end();
+            orders_map_mutex.unlock();
+            return are_orders_appeared;
+        });
+        SPDLOG_INFO("listen for prices converge");
+        std::string symbol_fut = obj.t_fut().s();
+        std::string symbol_spot = obj.t_spot().s();
+        ClientPublic* client_fut =
+            ch.get_client_public(obj.t_fut().ex(), "fut");
+        ClientPublic* client_spot =
+            ch.get_client_public(obj.t_spot().ex(), "spot");
+        wait_until([&]() {
+            long t1 = now_millis();
+            // XXX: fetch them in parallel
+            Ticker t_fut = client_fut->fetch_ticker(symbol_fut);
+            Ticker t_spot = client_spot->fetch_ticker(symbol_spot);
+            last_tickers_map["fut"] = t_fut;
+            last_tickers_map["spot"] = t_spot;
+            double diff_ask_bid = (t_fut.bid - t_spot.ask) / t_spot.ask * 100;
+            double diff_bid_ask = (t_fut.ask - t_spot.bid) / t_spot.bid * 100;
+            SPDLOG_INFO("diff_ask_bid={:.4f} diff_ask_bid={:.4f} dur={}",
+                        diff_ask_bid, diff_bid_ask, now_millis() - t1);
+            return diff_bid_ask < 0.5;  // XXX: adjust this value
+        });
+        state = StateV4::place_close_orders;
+        wait_until([&]() {
+            orders_map_mutex.lock();
+            bool are_orders_appeared =
+                orders_map.find("fut-close") != orders_map.end() &&
+                orders_map.find("spot-close") != orders_map.end();
+            orders_map_mutex.unlock();
+            return are_orders_appeared;
+        });
+        // TODO: calc fill prices and commisions
+        SPDLOG_INFO("v4 execution is finished");
+        for (auto& [key, order] : orders_map) {
+            SPDLOG_INFO("key={} order={}", key, order.toString());
+        }
+    });
+    run_listening_for_events_sync();
 }
