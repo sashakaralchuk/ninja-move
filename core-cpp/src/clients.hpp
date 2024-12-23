@@ -19,14 +19,17 @@ struct Order {
     long open_ts;
     std::string s;
     std::string p;
+    double p_avg_fill;
     double v;
     double filled_amount;
     std::string st;
+    double fee_usdt;
     std::string toString() const {
         return fmt::format(
-            "{{ex={},k={},id={},open_ts={},s={},p={},v={},st={},"
-            "filled_amount={}}}",
-            ex, k, id, open_ts, s, p, v, st, filled_amount);
+            "{{ex={},k={},id={},open_ts={},s={},p={},p_avg_fill={},v={},st={},"
+            "filled_amount={},fee_usdt={}}}",
+            ex, k, id, open_ts, s, p, p_avg_fill, v, st, filled_amount,
+            fee_usdt);
     }
     bool isFilled() { return st == "FILLED"; }
 };
@@ -92,6 +95,7 @@ class ClientPrivate : public hv::WebSocketClient {
                                          std::string price,
                                          std::string quantity) = 0;
     virtual Order fetch_order(Order& order) = 0;
+    virtual double fetch_order_fee_usdt(Order& order) = 0;
     Order get_last_order();
     int get_orders_len();
     void clear_orders();
@@ -145,6 +149,7 @@ class ClientPrivateGateio : public ClientPrivate {
                                          std::string price,
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
+    virtual double fetch_order_fee_usdt(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -192,6 +197,7 @@ class ClientPrivateMexc : public ClientPrivate {
                                          std::string price,
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
+    virtual double fetch_order_fee_usdt(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -238,6 +244,7 @@ class ClientPrivateBybit : public ClientPrivate {
                                          std::string price,
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
+    virtual double fetch_order_fee_usdt(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -288,6 +295,7 @@ class ClientPrivateHtx : public ClientPrivate {
                                          std::string price,
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
+    virtual double fetch_order_fee_usdt(Order& order);
 
    protected:
     void handle_onmessage(const std::string& msg);

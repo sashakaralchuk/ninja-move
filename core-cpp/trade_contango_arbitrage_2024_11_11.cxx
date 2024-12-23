@@ -23,7 +23,6 @@
 
 #include <cstring>
 #include <iomanip>
-#include <iostream>
 
 #include "trade_contango.grpc.pb.h"
 
@@ -62,7 +61,10 @@ void debug_place_fetch_order_gateio_spot();
 void debug_place_fetch_order_mexc_spot();
 void debug_place_fetch_order_bybit_fut();
 void debug_place_fetch_order_bybit_spot();
+void print_out_execute_v4(std::map<std::string, Order>& orders_map,
+                          ch& ClientsHouse);
 void execute_v4();
+void debug_init_obj();
 
 std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_listen_mexc_fut_v2),
@@ -82,6 +84,7 @@ std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_fut),
     GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_spot),
     GET_FN_NAME_TO_FN(execute_v4),
+    GET_FN_NAME_TO_FN(debug_init_obj),
 };
 
 int main(int argc, char** argv) {
@@ -1281,11 +1284,86 @@ void execute_v4() {
             orders_map_mutex.unlock();
             return are_orders_appeared;
         });
-        // TODO: calc fill prices and commisions
         SPDLOG_INFO("v4 execution is finished");
-        for (auto& [key, order] : orders_map) {
-            SPDLOG_INFO("key={} order={}", key, order.toString());
-        }
+        print_out_execute_v4(orders_map, ch);
     });
     run_listening_for_events_sync();
+}
+
+class DebugInitObj {
+   public:
+    DebugInitObj() : myNum(44), myString("default-44") {
+        std::cout << "DebugInitObj constructor/blueprint" << std::endl;
+        myNum = 77;
+    }
+    DebugInitObj(int n) : myString("default-44") { myNum = n; }
+    ~DebugInitObj() { std::cout << "DebugInitObj destructor" << std::endl; }
+    int myNum;
+    std::string myString;
+};
+
+void debug_init_obj() {
+    {
+        DebugInitObj o;
+        std::cout << "o.myNum=" << o.myNum << std::endl;
+    }
+    {
+        DebugInitObj o(144);
+        std::cout << "o.myNum=" << o.myNum << std::endl;
+    }
+    {
+        DebugInitObj o = DebugInitObj();
+        std::cout << "o.myNum=" << o.myNum << std::endl;
+    }
+    {
+        DebugInitObj* o = new DebugInitObj();
+        std::cout << "o->myNum=" << o->myNum << std::endl;
+    }
+    {
+        std::cout << (2 << 4) << std::endl;
+        std::cout << (400 >> 1) << std::endl;
+    }
+    {
+        mpf_class num1("123456789.123456789123456789");
+        mpf_class num2("987654321.987654321987654321");
+        mpf_class num3("0.00000000123456789");
+        mpf_class sum = num1 + num2 + num3;
+        std::cout << std::setprecision(12) << "Sum: " << sum.get_d()
+                  << std::endl;
+    }
+}
+
+///
+/// Print results in the next way https://prnt.sc/PLUCwmAhr4YT.
+///
+void print_out_execute_v4(std::map<std::string, Order>& orders_map,
+                          ch& ClientsHouse) {
+    Order fo_t = orders_map["fut-open"];
+    double fo_fee =
+        ch.get_client_private(fo_t.ex, "fut").fetch_order_fee_usdt(fo_t);
+    Order so_t = orders_map["spot-open"];
+    double so_fee =
+        ch.get_client_private(so_t.ex, "spot").fetch_order_fee_usdt(so_t);
+    Order fc_t = orders_map["fut-close"];
+    double fc_fee =
+        ch.get_client_private(fc_t.ex, "fut").fetch_order_fee_usdt(fc_t);
+    Order sc_t = orders_map["spot-close"];
+    double sc_fee =
+        ch.get_client_private(sc_t.ex, "spot").fetch_order_fee_usdt(sc_t);
+    std::cout << "fut-open:\t" << fo_t.p_avg_fill << "\t" << fo_fee
+              << std::endl;
+    std::cout << "spot-open:\t" << so_t.p_avg_fill << "\t" << so_fee
+              << std::endl;
+    std::cout << "fut-close:\t" << fc_t.p_avg_fill << "\t" << fc_fee
+              << std::endl;
+    std::cout << "spot-close:\t" << sc_t.p_avg_fill << "\t" << sc_fee
+              << std::endl;
+    std::cout << "spread-open:\t"
+              << (fo_t.p_avg_fill - so_t.p_avg_fill) / so_t.p_avg_fill
+              << std::endl;
+    std::cout << "spread-close:\t"
+              << (fc_t.p_avg_fill - sc_t.p_avg_fill) / sc_t.p_avg_fill
+              << std::endl;
+    std::cout << "Total fees USDT:\t" << fo_fee + so_fee + fc_fee + sc_fee
+              << std::endl;
 }
