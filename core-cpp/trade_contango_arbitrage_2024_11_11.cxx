@@ -61,8 +61,6 @@ void debug_place_fetch_order_gateio_spot();
 void debug_place_fetch_order_mexc_spot();
 void debug_place_fetch_order_bybit_fut();
 void debug_place_fetch_order_bybit_spot();
-void print_out_execute_v4(std::map<std::string, Order>& orders_map,
-                          ch& ClientsHouse);
 void execute_v4();
 void debug_init_obj();
 
@@ -1142,6 +1140,48 @@ void debug_place_fetch_order_bybit_spot() {
     std::cout << "order_2=" << order_2.toString() << std::endl;
 }
 
+///
+/// Print results in the next way https://prnt.sc/TwSTJHuWFEGO.
+///
+void print_out_execute_v4(std::map<std::string, Order>& orders_map,
+                          ClientsHouse& ch, double usdt_to_use) {
+    Order fo_t = orders_map["fut-open"];
+    double fo_fee =
+        ch.get_client_private(fo_t.ex, "fut")->fetch_order_fee_usdt(fo_t);
+    Order so_t = orders_map["spot-open"];
+    double so_fee =
+        ch.get_client_private(so_t.ex, "spot")->fetch_order_fee_usdt(so_t);
+    Order fc_t = orders_map["fut-close"];
+    double fc_fee =
+        ch.get_client_private(fc_t.ex, "fut")->fetch_order_fee_usdt(fc_t);
+    Order sc_t = orders_map["spot-close"];
+    double sc_fee =
+        ch.get_client_private(sc_t.ex, "spot")->fetch_order_fee_usdt(sc_t);
+    double spread_open = (fo_t.p_avg_fill - so_t.p_avg_fill) / so_t.p_avg_fill;
+    double spread_close = (fc_t.p_avg_fill - sc_t.p_avg_fill) / sc_t.p_avg_fill;
+    double fee_total = fo_fee + so_fee + fc_fee + sc_fee;
+    double profit =
+        (spread_close - spread_open) / 100.0 * usdt_to_use - fee_total;
+    std::ostringstream out_ss;
+    out_ss << "now:\t" << now_utc_str() << std::endl;
+    out_ss << "fut-open:\t" << fo_t.p_avg_fill << "\t" << fo_fee << std::endl;
+    out_ss << "spot-open:\t" << so_t.p_avg_fill << "\t" << so_fee << std::endl;
+    out_ss << "fut-close:\t" << fc_t.p_avg_fill << "\t" << fc_fee << std::endl;
+    out_ss << "spot-close:\t" << sc_t.p_avg_fill << "\t" << sc_fee << std::endl;
+    out_ss << "usdt-to-use:\t" << usdt_to_use << "\t" << usdt_to_use
+           << std::endl;
+    out_ss << "spread-open:\t" << spread_open << std::endl;
+    out_ss << "spread-close:\t" << spread_close << std::endl;
+    out_ss << "Total fees USDT:\t" << fee_total << std::endl;
+    out_ss << "Profit USDT:\t" << profit << std::endl;
+    std::cout << out_ss.str();
+    std::ofstream outfile(".var/out-trade-contango-arbitrage-2024-11-11-v4",
+                          std::ios_base::app);
+    outfile << out_ss.str() << std::endl;
+    outfile << "-----" << std::endl;
+    outfile.close();
+}
+
 enum StateV4 { wait_for_spread, place_open_orders, place_close_orders };
 
 void execute_v4() {
@@ -1285,7 +1325,7 @@ void execute_v4() {
             return are_orders_appeared;
         });
         SPDLOG_INFO("v4 execution is finished");
-        print_out_execute_v4(orders_map, ch);
+        print_out_execute_v4(orders_map, ch, usdt_to_use);
     });
     run_listening_for_events_sync();
 }
@@ -1331,39 +1371,4 @@ void debug_init_obj() {
         std::cout << std::setprecision(12) << "Sum: " << sum.get_d()
                   << std::endl;
     }
-}
-
-///
-/// Print results in the next way https://prnt.sc/PLUCwmAhr4YT.
-///
-void print_out_execute_v4(std::map<std::string, Order>& orders_map,
-                          ch& ClientsHouse) {
-    Order fo_t = orders_map["fut-open"];
-    double fo_fee =
-        ch.get_client_private(fo_t.ex, "fut").fetch_order_fee_usdt(fo_t);
-    Order so_t = orders_map["spot-open"];
-    double so_fee =
-        ch.get_client_private(so_t.ex, "spot").fetch_order_fee_usdt(so_t);
-    Order fc_t = orders_map["fut-close"];
-    double fc_fee =
-        ch.get_client_private(fc_t.ex, "fut").fetch_order_fee_usdt(fc_t);
-    Order sc_t = orders_map["spot-close"];
-    double sc_fee =
-        ch.get_client_private(sc_t.ex, "spot").fetch_order_fee_usdt(sc_t);
-    std::cout << "fut-open:\t" << fo_t.p_avg_fill << "\t" << fo_fee
-              << std::endl;
-    std::cout << "spot-open:\t" << so_t.p_avg_fill << "\t" << so_fee
-              << std::endl;
-    std::cout << "fut-close:\t" << fc_t.p_avg_fill << "\t" << fc_fee
-              << std::endl;
-    std::cout << "spot-close:\t" << sc_t.p_avg_fill << "\t" << sc_fee
-              << std::endl;
-    std::cout << "spread-open:\t"
-              << (fo_t.p_avg_fill - so_t.p_avg_fill) / so_t.p_avg_fill
-              << std::endl;
-    std::cout << "spread-close:\t"
-              << (fc_t.p_avg_fill - sc_t.p_avg_fill) / sc_t.p_avg_fill
-              << std::endl;
-    std::cout << "Total fees USDT:\t" << fo_fee + so_fee + fc_fee + sc_fee
-              << std::endl;
 }

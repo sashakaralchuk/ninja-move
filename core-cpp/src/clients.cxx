@@ -229,6 +229,14 @@ long now_millis() {
     return std::chrono::system_clock::now().time_since_epoch().count() / 1000;
 }
 
+std::string now_utc_str(std::string format_str) {
+    std::time_t now_raw =
+        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::ostringstream now_oss;
+    now_oss << std::put_time(std::gmtime(&now_raw), format_str.c_str());
+    return now_oss.str();
+}
+
 std::string ClientPrivate::conv_size_to_str(double size) {
     if (size < 0.0) {
         throw std::runtime_error(fmt::format("unexpected size=", size));
@@ -664,7 +672,8 @@ Order ClientPrivateGateio::place_fut_limit_order(std::string symbol,
     std::string body_str = fmt::format(
         R"({{"contract":"{}","size":{},"iceberg":0,"price":"{}","tif":"gtc","text":"t-my-custom-id","stp_act":"-"}})",
         symbol, size, price);
-    SPDLOG_INFO("place order side={} body_str={}", side, body_str);
+    SPDLOG_INFO("{} {} place order side={} body_str={}", ex, kind, side,
+                body_str);
     std::string sign = sign_str("POST", timestamp_str, path, "", body_str);
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, "Accept: application/json");
@@ -675,7 +684,7 @@ Order ClientPrivateGateio::place_fut_limit_order(std::string symbol,
     headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
     nlohmann::json res_obj =
         execute_http_post_req(url + path, headers, body_str);
-    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
     return Order{
         .ex = ex,
         .k = kind,
@@ -732,7 +741,8 @@ Order ClientPrivateGateio::place_spot_limit_order(std::string symbol,
     std::string body_str = fmt::format(
         R"({{"text":"t-123","currency_pair":"{}","type":"limit","account":"spot","side":"{}","amount":"{}","price":"{}","time_in_force":"gtc","iceberg":"0"}})",
         symbol, side, quantity, price);
-    SPDLOG_INFO("place order side={} body_str={}", side, body_str);
+    SPDLOG_INFO("{} {} place order side={} body_str={}", ex, kind, side,
+                body_str);
     std::string sign = sign_str("POST", timestamp_str, path, "", body_str);
     std::string res_buf;
     struct curl_slist* headers = NULL;
@@ -744,7 +754,7 @@ Order ClientPrivateGateio::place_spot_limit_order(std::string symbol,
     headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
     nlohmann::json res_obj =
         execute_http_post_req(url + path, headers, body_str);
-    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
     return Order{
         .ex = ex,
         .k = kind,
@@ -825,7 +835,8 @@ Order ClientPrivateGateio::fetch_order(Order& order) {
         if (res_obj.contains("status") && res_obj["status"] == "closed") {
             order.p_avg_fill = stod((std::string)res_obj["avg_deal_price"]);
             order.filled_amount =
-                fabs(stod((std::string)res_obj["filled_amount"]));
+                fabs(stod((std::string)res_obj["filled_amount"])) -
+                stod((std::string)res_obj["fee"]);
             order.st = "FILLED";
             order.fee_usdt = stod((std::string)res_obj["fee"]);
         }
@@ -1403,14 +1414,14 @@ Order ClientPrivateMexc::place_spot_limit_order(std::string symbol,
         "symbol={}&side={}&type=LIMIT&price={}&quantity={}&recvWindow=60000&"
         "timestamp={}",
         symbol, side_int, price, quantity, timestamp);
-    SPDLOG_INFO("place order side={} q1={}", side_int, q1);
+    SPDLOG_INFO("{} {} place order side={} q1={}", ex, kind, side_int, q1);
     std::string q2 = fmt::format("{}&signature={}", q1, sign_str(q1));
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, ("X-MEXC-APIKEY: " + api_key).c_str());
     nlohmann::json res_obj =
         execute_http_post_req("https://api.mexc.com/api/v3/order", headers, q2);
-    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
     return Order{
         .ex = ex,
         .k = kind,
@@ -1898,7 +1909,8 @@ Order ClientPrivateBybit::place_fut_limit_order(std::string symbol,
     std::string body_str = fmt::format(
         R"({{"category": "linear", "symbol": "{}", "side": "{}", "orderType": "Limit", "qty": "{}", "price": "{}", "timeInForce": "GTC", "isLeverage": 1}})",
         symbol, side_int, quantity, price);
-    SPDLOG_INFO("place order side={} body_str={}", side_int, body_str);
+    SPDLOG_INFO("{} {} place order side={} body_str={}", ex, kind, side_int,
+                body_str);
     std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
                                         recw_window, body_str);
     std::string sign = gen_hmac_sha256(api_secret, param_str);
@@ -1914,7 +1926,7 @@ Order ClientPrivateBybit::place_fut_limit_order(std::string symbol,
     headers = curl_slist_append(headers,
                                 ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
     nlohmann::json res_obj = execute_http_post_req(url, headers, body_str);
-    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
     if (res_obj["retCode"] != 0 || res_obj["retMsg"] != "OK") {
         throw std::runtime_error(
             fmt::format("{} {} order creation failed", ex, kind));
@@ -1984,7 +1996,8 @@ Order ClientPrivateBybit::place_spot_limit_order(std::string symbol,
     std::string body_str = fmt::format(
         R"({{"category": "spot", "symbol": "{}", "side": "{}", "orderType": "Limit", "qty": "{}", "price": "{}"}})",
         symbol, side_int, quantity, price);
-    SPDLOG_INFO("place order side={} body_str={}", side_int, body_str);
+    SPDLOG_INFO("{} {} place order side={} body_str={}", ex, kind, side_int,
+                body_str);
     std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
                                         recw_window, body_str);
     std::string sign = gen_hmac_sha256(api_secret, param_str);
@@ -2001,7 +2014,7 @@ Order ClientPrivateBybit::place_spot_limit_order(std::string symbol,
     headers = curl_slist_append(headers,
                                 ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
     nlohmann::json res_obj = execute_http_post_req(url, headers, body_str);
-    SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
     return Order{
         .ex = ex,
         .k = kind,
@@ -2066,9 +2079,16 @@ Order ClientPrivateBybit::fetch_order(Order& order) {
     };
     if (t["orderStatus"] == "Filled") {
         order_out.p_avg_fill = stod((std::string)t["avgPrice"]);
-        order_out.filled_amount = stod((std::string)t["cumExecQty"]);
         order_out.st = "FILLED";
         order_out.fee_usdt = stod((std::string)t["cumExecFee"]);
+        if (kind == "fut") {
+            order_out.filled_amount = stod((std::string)t["cumExecQty"]);
+        } else if (kind == "spot") {
+            order_out.filled_amount = stod((std::string)t["cumExecQty"]) -
+                                      stod((std::string)t["cumExecFee"]);
+        } else {
+            throw std::runtime_error(fmt::format("unexpected kind=", kind));
+        }
     }
     return order_out;
 }
@@ -2453,15 +2473,10 @@ Order ClientPrivateHtx::place_fut_limit_order(std::string symbol,
     // POST /v1/order/orders/place
     // https://api.huobi.pro
     // https://api.hbdm.com/linear-swap-api/v1/swap_order
-    std::time_t timestamp =
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::stringstream timestamp_oss;
-    timestamp_oss << std::put_time(std::gmtime(&timestamp), "%FT%T");
-    std::string timestamp_str = timestamp_oss.str();
     std::string qs0 = fmt::format(
         "AccessKeyId={}&SignatureVersion=2&SignatureMethod=HmacSHA256&"
         "Timestamp={}",
-        api_key, url_encode(timestamp_str));
+        api_key, url_encode(now_utc_str("%FT%T")));
     // std::string qs0 =
     //     "AccessKeyId=api-key-44&SignatureMethod=HmacSHA256&SignatureVersion=2&"
     //     "Timestamp=2024-12-08T17%3A42%3A27";
@@ -2555,12 +2570,8 @@ TelegramBotPort TelegramBotPort::new_from_envs() {
 }
 
 void TelegramBotPort::notify_pretty(std::string message, std::string action) {
-    std::time_t now_raw =
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::ostringstream now_oss;
-    now_oss << std::put_time(std::gmtime(&now_raw), "%F %T %Z");
     std::string m_raw = fmt::format(TELEGRAM_NOTIFY_PRETTY_TEMPLATE, message,
-                                    action, now_oss.str());
+                                    action, now_utc_str());
     std::string m_encoded = fmt::format("```%0A{}```", url_encode(m_raw));
     std::string url_str = fmt::format(
         "https://api.telegram.org/bot{}/"

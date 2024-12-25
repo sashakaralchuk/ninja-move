@@ -23,6 +23,18 @@ run-trade-contango-arbitrage-2024-11-11-req:
 	127.0.0.1:50051 \
 	trade_contango.TradeContango/FireTradeV2
 
+run-trade-contango-arbitrage-2024-11-11-print-balances:
+	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
+		${env_vars} \
+		SPDLOG_LEVEL=debug \
+		TICKERS_VERSION=execute_v4 \
+		./build/trade_contango_arbitrage_2024_11_11
+
+print-doc-on-remote-server-execution:
+	# * figure out latency: curl -o /dev/null -s -w 'Total: %{time_total}s\n' 'https://api.gateio.ws/api/v4/futures/usdt/tickers?contract=BTC_USDT'
+	# * figure out ip + country: dig +short 'api.gateio.ws' | grep "^[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*$" | xargs -I{} curl "ipinfo.io/{}/country"
+	# * server: default choice - gcp, hetzner, digitalocean
+
 clone-libs:
 	git clone git@github.com:curl/curl.git libs/curl && \
 	git clone git@github.com:nlohmann/json.git libs/json && \

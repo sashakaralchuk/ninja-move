@@ -12,6 +12,8 @@ std::string rstrip_zeros(std::string s);
 
 long now_millis();
 
+std::string now_utc_str(std::string format_str = "%F %T %Z");
+
 struct Order {
     std::string ex;
     std::string k;
