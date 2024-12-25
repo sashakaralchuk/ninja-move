@@ -882,6 +882,50 @@ double ClientPrivateGateio::fetch_order_fee_usdt(Order& order) {
     }
 }
 
+std::map<std::string, double> ClientPrivateGateio::fetch_balances() {
+    if (kind == "fut") {
+        std::string timestamp_str = std::to_string(now_millis() / 1000);
+        std::string url = "https://api.gateio.ws";
+        std::string path = "/api/v4/futures/usdt/accounts";
+        std::string sign = sign_str("GET", timestamp_str, path, "", "");
+        SPDLOG_INFO("{} {} fetch balances", ex, kind);
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Accept: application/json");
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, ("KEY: " + api_key).c_str());
+        headers =
+            curl_slist_append(headers, ("Timestamp: " + timestamp_str).c_str());
+        headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
+        std::string url_path = fmt::format("{}{}", url, path);
+        nlohmann::json res_obj = execute_http_get_req(url_path, headers);
+        SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+        return {{"USDT", stod((std::string)res_obj["available"])}};
+    } else if (kind == "spot") {
+        std::string timestamp_str = std::to_string(now_millis() / 1000);
+        std::string url = "https://api.gateio.ws";
+        std::string path = "/api/v4/spot/accounts";
+        std::string sign = sign_str("GET", timestamp_str, path, "", "");
+        SPDLOG_INFO("{} {} fetch balances", ex, kind);
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Accept: application/json");
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, ("KEY: " + api_key).c_str());
+        headers =
+            curl_slist_append(headers, ("Timestamp: " + timestamp_str).c_str());
+        headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
+        std::string url_path = fmt::format("{}{}", url, path);
+        nlohmann::json res_obj = execute_http_get_req(url_path, headers);
+        SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+        std::map<std::string, double> balances;
+        for (auto& obj : res_obj) {
+            balances[obj["currency"]] = stod((std::string)obj["available"]);
+        }
+        return balances;
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+}
+
 void ClientPrivateGateio::handle_onmessage(const std::string& msg) {
     nlohmann::json msg_obj = nlohmann::json::parse(msg);
     SPDLOG_DEBUG("ex={} kind={} msg_obj={}", ex, kind, msg_obj.dump());
@@ -1503,6 +1547,32 @@ double ClientPrivateMexc::fetch_order_fee_usdt(Order& order) {
     }
 }
 
+std::map<std::string, double> ClientPrivateMexc::fetch_balances() {
+    if (kind == "spot") {
+        long timestamp =
+            std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+        std::string q1 = fmt::format("timestamp={}", timestamp);
+        SPDLOG_INFO("{} {} fetch balances q1={}", ex, kind, q1);
+        std::string q2 = fmt::format("{}&signature={}", q1, sign_str(q1));
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers =
+            curl_slist_append(headers, ("X-MEXC-APIKEY: " + api_key).c_str());
+        std::string url =
+            fmt::format("https://api.mexc.com/api/v3/account?{}", q2);
+        nlohmann::json res_obj = execute_http_get_req(url, headers);
+        SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+        std::map<std::string, double> balances;
+        for (auto& obj : res_obj["balances"]) {
+            balances[obj["asset"]] = stod((std::string)obj["free"]);
+        }
+        return balances;
+    } else {
+        throw std::runtime_error(
+            fmt::format("{} unexpected kind={}", ex, kind));
+    }
+}
+
 void ClientPrivateMexc::handle_onmessage(const std::string& msg) {
     nlohmann::json msg_obj = nlohmann::json::parse(msg);
     SPDLOG_DEBUG("ex={} kind={} msg_obj={}", ex, kind, msg_obj.dump());
@@ -2038,9 +2108,7 @@ Order ClientPrivateBybit::fetch_order(Order& order) {
         throw std::runtime_error(
             fmt::format("{} unexpected kind={}", ex, kind));
     }
-    std::string timestamp_str = std::to_string(
-        (long)(std::chrono::system_clock::now().time_since_epoch().count() /
-               1000));
+    std::string timestamp_str = std::to_string((long)(now_millis()));
     std::string recw_window = "5000";
     SPDLOG_INFO("fetch order query_params={}", query_params);
     std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
@@ -2096,6 +2164,35 @@ Order ClientPrivateBybit::fetch_order(Order& order) {
 double ClientPrivateBybit::fetch_order_fee_usdt(Order& order) {
     SPDLOG_INFO("{} fee_usdt is already fetched from /order/realtime", ex);
     return order.fee_usdt;
+}
+
+std::map<std::string, double> ClientPrivateBybit::fetch_balances() {
+    std::string query_params = "accountType=UNIFIED";
+    std::string timestamp_str = std::to_string(now_millis());
+    std::string recw_window = "5000";
+    SPDLOG_INFO("fetch wallet balances query_params={}", query_params);
+    std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
+                                        recw_window, query_params);
+    std::string sign = gen_hmac_sha256(api_secret, param_str);
+    std::string url = "https://api.bybit.com/v5/account/wallet-balance";
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers =
+        curl_slist_append(headers, ("X-BAPI-API-KEY: " + api_key).c_str());
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-RECV-WINDOW: " + recw_window).c_str());
+    headers = curl_slist_append(headers, ("X-BAPI-SIGN: " + sign).c_str());
+    headers = curl_slist_append(headers, "X-BAPI-SIGN-TYPE: 2");
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
+    std::string url_path = fmt::format("{}?{}", url, query_params);
+    nlohmann::json res_obj = execute_http_get_req(url_path, headers);
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+    std::map<std::string, double> balances;
+    for (auto& obj : res_obj["result"]["list"][0]["coin"]) {
+        balances[obj["coin"]] = stod((std::string)obj["walletBalance"]);
+    }
+    return balances;
 }
 
 void ClientPrivateBybit::handle_onmessage(const std::string& msg) {
@@ -2527,6 +2624,10 @@ Order ClientPrivateHtx::fetch_order(Order& order) {
 }
 
 double ClientPrivateHtx::fetch_order_fee_usdt(Order& order) {
+    throw std::runtime_error("not-implemented");
+}
+
+std::map<std::string, double> ClientPrivateHtx::fetch_balances() {
     throw std::runtime_error("not-implemented");
 }
 

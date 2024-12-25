@@ -98,6 +98,7 @@ class ClientPrivate : public hv::WebSocketClient {
                                          std::string quantity) = 0;
     virtual Order fetch_order(Order& order) = 0;
     virtual double fetch_order_fee_usdt(Order& order) = 0;
+    virtual std::map<std::string, double> fetch_balances() = 0;
     Order get_last_order();
     int get_orders_len();
     void clear_orders();
@@ -152,6 +153,7 @@ class ClientPrivateGateio : public ClientPrivate {
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
     virtual double fetch_order_fee_usdt(Order& order);
+    virtual std::map<std::string, double> fetch_balances();
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -200,6 +202,7 @@ class ClientPrivateMexc : public ClientPrivate {
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
     virtual double fetch_order_fee_usdt(Order& order);
+    virtual std::map<std::string, double> fetch_balances();
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -247,6 +250,7 @@ class ClientPrivateBybit : public ClientPrivate {
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
     virtual double fetch_order_fee_usdt(Order& order);
+    virtual std::map<std::string, double> fetch_balances();
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -298,6 +302,7 @@ class ClientPrivateHtx : public ClientPrivate {
                                          std::string quantity);
     virtual Order fetch_order(Order& order);
     virtual double fetch_order_fee_usdt(Order& order);
+    virtual std::map<std::string, double> fetch_balances();
 
    protected:
     void handle_onmessage(const std::string& msg);

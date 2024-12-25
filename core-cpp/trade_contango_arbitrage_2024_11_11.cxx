@@ -61,6 +61,7 @@ void debug_place_fetch_order_gateio_spot();
 void debug_place_fetch_order_mexc_spot();
 void debug_place_fetch_order_bybit_fut();
 void debug_place_fetch_order_bybit_spot();
+void debug_print_balances();
 void execute_v4();
 void debug_init_obj();
 
@@ -81,6 +82,7 @@ std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_fetch_order_mexc_spot),
     GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_fut),
     GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_spot),
+    GET_FN_NAME_TO_FN(debug_print_balances),
     GET_FN_NAME_TO_FN(execute_v4),
     GET_FN_NAME_TO_FN(debug_init_obj),
 };
@@ -1143,8 +1145,8 @@ void debug_place_fetch_order_bybit_spot() {
 ///
 /// Print results in the next way https://prnt.sc/TwSTJHuWFEGO.
 ///
-void print_out_execute_v4(std::map<std::string, Order>& orders_map,
-                          ClientsHouse& ch, double usdt_to_use) {
+void print_out_on_execute_v4(std::map<std::string, Order>& orders_map,
+                             ClientsHouse& ch, double usdt_to_use) {
     Order fo_t = orders_map["fut-open"];
     double fo_fee =
         ch.get_client_private(fo_t.ex, "fut")->fetch_order_fee_usdt(fo_t);
@@ -1180,6 +1182,17 @@ void print_out_execute_v4(std::map<std::string, Order>& orders_map,
     outfile << out_ss.str() << std::endl;
     outfile << "-----" << std::endl;
     outfile.close();
+}
+
+void debug_print_balances() {
+    auto mexc_spot = ClientPrivateMexc("spot").fetch_balances();
+    auto gateio_fut = ClientPrivateGateio("fut").fetch_balances();
+    auto gateio_spot = ClientPrivateGateio("spot").fetch_balances();
+    auto bybit_unified = ClientPrivateBybit("").fetch_balances();
+    std::cout << "mexc-spot:\t" << mexc_spot["USDT"] << std::endl;
+    std::cout << "gateio-fut:\t" << gateio_fut["USDT"] << std::endl;
+    std::cout << "gateio-spot:\t" << gateio_spot["USDT"] << std::endl;
+    std::cout << "bybit-unified:\t" << bybit_unified["USDT"] << std::endl;
 }
 
 enum StateV4 { wait_for_spread, place_open_orders, place_close_orders };
@@ -1325,7 +1338,7 @@ void execute_v4() {
             return are_orders_appeared;
         });
         SPDLOG_INFO("v4 execution is finished");
-        print_out_execute_v4(orders_map, ch, usdt_to_use);
+        print_out_on_execute_v4(orders_map, ch, usdt_to_use);
     });
     run_listening_for_events_sync();
 }
