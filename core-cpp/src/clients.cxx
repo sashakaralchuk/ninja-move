@@ -237,6 +237,39 @@ std::string now_utc_str(std::string format_str) {
     return now_oss.str();
 }
 
+std::string replace_all(std::string s, std::string from, std::string to) {
+    size_t start_pos = 0;
+    while ((start_pos = s.find(from, start_pos)) != std::string::npos) {
+        s.replace(start_pos, from.length(), to);
+        start_pos += to.length();
+    }
+    return s;
+}
+
+///
+/// Copy of core-rs/trade_contango_arbitrage.SpreadsMap.conv_to_symbol_int_1_v2.
+/// Function is needed to make conversion: ("1000000PEPEUSDT", 100.0) ->
+/// ("PEPEUSDT", 0.00010)
+///
+std::tuple<std::string, double> conv_symbol_price_to_atomic_v1(
+    std::string symbol, double price) {
+    std::string s_int = replace_all(replace_all(symbol, "_", ""), "-", "");
+    if (s_int[0] != '1') {
+        return std::make_tuple(s_int, price);
+    }
+    int zeros_amount = 0;
+    for (int i = 1; i < s_int.length(); i++) {
+        if (s_int[i] == '0') {
+            zeros_amount += 1;
+        }
+    }
+    if (zeros_amount == 0) {
+        return std::make_tuple(s_int, price);
+    }
+    return std::make_tuple(s_int.substr(zeros_amount + 1, s_int.length()),
+                           price / std::pow(10.0, zeros_amount));
+}
+
 std::string ClientPrivate::conv_size_to_str(double size) {
     if (size < 0.0) {
         throw std::runtime_error(fmt::format("unexpected size=", size));

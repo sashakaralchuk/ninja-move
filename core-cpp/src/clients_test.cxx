@@ -138,3 +138,22 @@ TEST(ClientsTest, ClientPrivate_conv_size_to_str) {
     EXPECT_EQ(client.conv_size_to_str(7.0), "7");
     EXPECT_EQ(client.conv_size_to_str(0.03), "0.03");
 }
+
+TEST(ClientsTest, conv_symbol_price_to_atomic_v1) {
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("1000000PEPEUSDT", 100.0),
+              std::make_tuple("PEPEUSDT", 0.00010));
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("10PEPEUSDT", 100.0),
+              std::make_tuple("PEPEUSDT", 10.0));
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("1PEPEUSDT", 100.0),
+              std::make_tuple("1PEPEUSDT", 100.0));
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("PEPEUSDT", 100.0),
+              std::make_tuple("PEPEUSDT", 100.0));
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("PEPE-USDT", 1.0),
+              std::make_tuple("PEPEUSDT", 1.0));
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("PEPE_USDT", 1.0),
+              std::make_tuple("PEPEUSDT", 1.0));
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("PEPE1-USDT", 1.0),
+              std::make_tuple("PEPE1USDT", 1.0));
+    EXPECT_EQ(conv_symbol_price_to_atomic_v1("0DOGUSDT", 1.0),
+              std::make_tuple("0DOGUSDT", 1.0));
+}

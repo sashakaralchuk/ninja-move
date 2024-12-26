@@ -1318,12 +1318,17 @@ void execute_v4() {
         wait_until([&]() {
             long t1 = now_millis();
             // XXX: fetch them in parallel
+            auto f = conv_symbol_price_to_atomic_v1;
             Ticker t_fut = client_fut->fetch_ticker(symbol_fut);
+            auto [_1, t_fut_ask] = f(t_fut.s, t_fut.ask);
+            auto [_2, t_fut_bid] = f(t_fut.s, t_fut.bid);
             Ticker t_spot = client_spot->fetch_ticker(symbol_spot);
+            auto [_3, t_spot_ask] = f(t_spot.s, t_spot.ask);
+            auto [_4, t_spot_bid] = f(t_spot.s, t_spot.bid);
             last_tickers_map["fut"] = t_fut;
             last_tickers_map["spot"] = t_spot;
-            double diff_ask_bid = (t_fut.bid - t_spot.ask) / t_spot.ask * 100;
-            double diff_bid_ask = (t_fut.ask - t_spot.bid) / t_spot.bid * 100;
+            double diff_ask_bid = (t_fut_bid - t_spot_ask) / t_spot_ask * 100;
+            double diff_bid_ask = (t_fut_ask - t_spot_bid) / t_spot_bid * 100;
             SPDLOG_INFO("diff_ask_bid={:.4f} diff_ask_bid={:.4f} dur={}",
                         diff_ask_bid, diff_bid_ask, now_millis() - t1);
             return diff_bid_ask < 0.5;  // XXX: adjust this value
