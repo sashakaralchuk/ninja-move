@@ -61,7 +61,7 @@ void debug_place_fetch_order_gateio_spot();
 void debug_place_fetch_order_mexc_spot();
 void debug_place_fetch_order_bybit_fut();
 void debug_place_fetch_order_bybit_spot();
-void debug_print_balances();
+void debug_print_balances(std::ostream& stream = std::cout);
 void execute_v4();
 void debug_init_obj();
 
@@ -82,7 +82,7 @@ std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_fetch_order_mexc_spot),
     GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_fut),
     GET_FN_NAME_TO_FN(debug_place_fetch_order_bybit_spot),
-    GET_FN_NAME_TO_FN(debug_print_balances),
+    {"debug_print_balances", []() { debug_print_balances(); }},
     GET_FN_NAME_TO_FN(execute_v4),
     GET_FN_NAME_TO_FN(debug_init_obj),
 };
@@ -1166,33 +1166,34 @@ void print_out_on_execute_v4(std::map<std::string, Order>& orders_map,
         (spread_close - spread_open) / 100.0 * usdt_to_use - fee_total;
     std::ostringstream out_ss;
     out_ss << "now:\t" << now_utc_str() << std::endl;
+    out_ss << "obj:\t" << format_as(spreads_req_v2.value()) << std::endl;
     out_ss << "fut-open:\t" << fo_t.p_avg_fill << "\t" << fo_fee << std::endl;
     out_ss << "spot-open:\t" << so_t.p_avg_fill << "\t" << so_fee << std::endl;
     out_ss << "fut-close:\t" << fc_t.p_avg_fill << "\t" << fc_fee << std::endl;
     out_ss << "spot-close:\t" << sc_t.p_avg_fill << "\t" << sc_fee << std::endl;
-    out_ss << "usdt-to-use:\t" << usdt_to_use << "\t" << usdt_to_use
-           << std::endl;
+    out_ss << "usdt-to-use:\t" << usdt_to_use << std::endl;
     out_ss << "spread-open:\t" << spread_open << std::endl;
     out_ss << "spread-close:\t" << spread_close << std::endl;
-    out_ss << "Total fees USDT:\t" << fee_total << std::endl;
-    out_ss << "Profit USDT:\t" << profit << std::endl;
+    out_ss << "total fees USDT:\t" << fee_total << std::endl;
+    out_ss << "profit USDT:\t" << profit << std::endl;
+    debug_print_balances(out_ss);
     std::cout << out_ss.str();
     std::ofstream outfile(".var/out-trade-contango-arbitrage-2024-11-11-v4",
                           std::ios_base::app);
-    outfile << out_ss.str() << std::endl;
+    outfile << out_ss.str();
     outfile << "-----" << std::endl;
     outfile.close();
 }
 
-void debug_print_balances() {
+void debug_print_balances(std::ostream& stream) {
     auto mexc_spot = ClientPrivateMexc("spot").fetch_balances();
     auto gateio_fut = ClientPrivateGateio("fut").fetch_balances();
     auto gateio_spot = ClientPrivateGateio("spot").fetch_balances();
     auto bybit_unified = ClientPrivateBybit("").fetch_balances();
-    std::cout << "mexc-spot:\t" << mexc_spot["USDT"] << std::endl;
-    std::cout << "gateio-fut:\t" << gateio_fut["USDT"] << std::endl;
-    std::cout << "gateio-spot:\t" << gateio_spot["USDT"] << std::endl;
-    std::cout << "bybit-unified:\t" << bybit_unified["USDT"] << std::endl;
+    stream << "mexc-spot:\t" << mexc_spot["USDT"] << std::endl;
+    stream << "gateio-fut:\t" << gateio_fut["USDT"] << std::endl;
+    stream << "gateio-spot:\t" << gateio_spot["USDT"] << std::endl;
+    stream << "bybit-unified:\t" << bybit_unified["USDT"] << std::endl;
 }
 
 enum StateV4 { wait_for_spread, place_open_orders, place_close_orders };
