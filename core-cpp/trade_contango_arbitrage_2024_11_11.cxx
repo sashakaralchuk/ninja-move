@@ -24,6 +24,7 @@
 #include <cstring>
 #include <iomanip>
 
+#include "rdkafkacpp.h"
 #include "trade_contango.grpc.pb.h"
 
 using grpc::Server;
@@ -64,6 +65,7 @@ void debug_place_fetch_order_bybit_spot();
 void debug_print_balances(std::ostream& stream = std::cout);
 void execute_v4();
 void debug_init_obj();
+void write_spreads_to_topic();
 
 std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_listen_mexc_fut_v2),
@@ -85,6 +87,7 @@ std::map<std::string, void (*)()> FNS_MAP{
     {"debug_print_balances", []() { debug_print_balances(); }},
     GET_FN_NAME_TO_FN(execute_v4),
     GET_FN_NAME_TO_FN(debug_init_obj),
+    GET_FN_NAME_TO_FN(write_spreads_to_topic),
 };
 
 int main(int argc, char** argv) {
@@ -759,6 +762,8 @@ static std::optional<SpreadsReq> spreads_req = {};
 static std::optional<SpreadsReqV2> spreads_req_v2 = {};
 
 class TradeContangoServiceImpl final : public TradeContango::Service {
+    std::function<void(const std::vector<SpreadsReqV2> req)> on_fire_trade_v2;
+
     Status FireTrade(ServerContext* context, const FireTradeReq* req,
                      FireTradeRes* reply) override {
         reply->set_run_initiated(trade_obj_raw_f == 0 ? 1 : 0);
@@ -775,13 +780,18 @@ class TradeContangoServiceImpl final : public TradeContango::Service {
         }
         return Status::OK;
     }
+
     Status FireTradeV2(ServerContext* context, const FireTradeReqV2* req,
                        FireTradeRes* reply) override {
         SPDLOG_DEBUG("fire-trade-v2 req->list.size={}", req->list().size());
         reply->set_run_initiated(trade_obj_raw_f == 0 ? 1 : 0);
+        std::vector<SpreadsReqV2> reqs;
+        for (auto& obj : req->list()) {
+            reqs.push_back(obj);
+        }
         if (trade_obj_raw_f == 0) {
-            spreads_req_v2 = req->list()[0];
-            for (auto& obj : req->list()) {
+            spreads_req_v2 = reqs[0];
+            for (auto& obj : reqs) {
                 if (obj.diff_rel() > spreads_req_v2.value().diff_rel()) {
                     spdlog::debug("set spreads_req_v2={}", format_as(obj));
                     spreads_req_v2 = obj;
@@ -789,13 +799,23 @@ class TradeContangoServiceImpl final : public TradeContango::Service {
             }
             trade_obj_raw_f = 1;
         }
+        on_fire_trade_v2(reqs);
         return Status::OK;
+    }
+
+   public:
+    TradeContangoServiceImpl(
+        std::function<void(const std::vector<SpreadsReqV2> req)>
+            on_fire_trade_v2_) {
+        on_fire_trade_v2 = on_fire_trade_v2_;
     }
 };
 
-void run_listening_for_events_sync() {
+void run_listening_for_events_sync(
+    std::function<void(const std::vector<SpreadsReqV2> reqs)>
+        on_fire_trade_v2_ = [](std::vector<SpreadsReqV2> reqs) {}) {
     std::string server_address = absl::StrFormat("0.0.0.0:%d", 50051);
-    TradeContangoServiceImpl service;
+    TradeContangoServiceImpl service(on_fire_trade_v2_);
     grpc::EnableDefaultHealthCheckService(true);
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
     ServerBuilder builder;
@@ -1180,8 +1200,7 @@ void print_out_on_execute_v4(std::map<std::string, Order>& orders_map,
     std::cout << out_ss.str();
     std::ofstream outfile(".var/out-trade-contango-arbitrage-2024-11-11-v4",
                           std::ios_base::app);
-    outfile << out_ss.str();
-    outfile << "-----" << std::endl;
+    outfile << out_ss.str() << std::endl;
     outfile.close();
 }
 
@@ -1200,7 +1219,11 @@ enum StateV4 { wait_for_spread, place_open_orders, place_close_orders };
 
 void execute_v4() {
     // NOTE: it's impossible to fill 2 orders on (fut, spot) with the same
-    // prices because i cant use limit orders
+    //       prices because i cant use limit orders
+    // NOTE: there are 2 ways to catch this spread:
+    //       1. by quicker than others
+    //       2. statistically know that order will be n% => fill it through
+    //       limit orders for fixed price
     ClientsHouse ch = ClientsHouse();
     ch.init_public_clients();
     ch.init_private_clients();
@@ -1390,4 +1413,136 @@ void debug_init_obj() {
         std::cout << std::setprecision(12) << "Sum: " << sum.get_d()
                   << std::endl;
     }
+}
+
+class LibrdKafkaDeliveryReportCb : public RdKafka::DeliveryReportCb {
+   public:
+    void dr_cb(RdKafka::Message& message) {
+        if (message.err()) {
+            std::cerr << "% Message delivery failed: " << message.errstr()
+                      << std::endl;
+        } else {
+            std::cerr << "% Message delivered to topic " << message.topic_name()
+                      << " [" << message.partition() << "] at offset "
+                      << message.offset() << std::endl;
+        }
+    }
+};
+
+class ProducerInt {
+   public:
+    LibrdKafkaDeliveryReportCb ex_dr_cb;
+    std::string bootstrap_servers;
+    std::string topic;
+
+    ProducerInt(LibrdKafkaDeliveryReportCb& ex_dr_cb_,
+                std::string bootstrap_servers_, std::string topic_) {
+        ex_dr_cb = ex_dr_cb_;
+        bootstrap_servers = bootstrap_servers_;
+        topic = topic_;
+    }
+
+    void connect() {
+        RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+        std::string errstr;
+        if (conf->set("bootstrap.servers", bootstrap_servers, errstr) !=
+            RdKafka::Conf::CONF_OK) {
+            std::cerr << "errstr=" << errstr << std::endl;
+            exit(1);
+        }
+        if (conf->set("dr_cb", &ex_dr_cb, errstr) != RdKafka::Conf::CONF_OK) {
+            std::cerr << errstr << std::endl;
+            exit(1);
+        }
+        producer = RdKafka::Producer::create(conf, errstr);
+        if (!producer) {
+            std::cerr << "Failed to create producer: " << errstr << std::endl;
+            exit(1);
+        }
+        delete conf;
+    }
+
+    ~ProducerInt() { delete producer; }
+
+    void produce_messages(std::vector<std::string> messages) {
+        for (auto& message : messages) {
+            RdKafka::ErrorCode err =
+                producer->produce(topic, RdKafka::Topic::PARTITION_UA,
+                                  RdKafka::Producer::RK_MSG_COPY,
+                                  const_cast<char*>(message.c_str()),
+                                  message.size(), NULL, 0, 0, NULL, NULL);
+            if (err != RdKafka::ERR_NO_ERROR) {
+                std::cerr << "% Failed to produce to topic " << topic << ": "
+                          << RdKafka::err2str(err) << std::endl;
+                if (err == RdKafka::ERR__QUEUE_FULL) {
+                    producer->poll(1000);
+                }
+            } else {
+                std::cerr << "% Enqueued message (" << message.size()
+                          << " bytes)"
+                          << "for topic " << topic << std::endl;
+            }
+        }
+        producer->poll(100);
+    }
+
+    void flush() {
+        std::cerr << "% Flushing final messages..." << std::endl;
+        producer->flush(10 * 1000);
+        if (producer->outq_len() > 0)
+            std::cerr << "% " << producer->outq_len()
+                      << " message(s) were not delivered" << std::endl;
+    }
+
+   private:
+    RdKafka::Producer* producer;
+};
+
+nlohmann::json conv_spreads_req_v2_to_json(SpreadsReqV2& obj) {
+    nlohmann::json obj_json = {
+        {"p_ask_spot", obj.p_ask_spot()},
+        {"p_bid_fut", obj.p_bid_fut()},
+        {"diff_rel", obj.diff_rel()},
+        {"t_spot",
+         {
+             {"ex", obj.t_spot().ex()},
+             {"s", obj.t_spot().s()},
+             {"st", obj.t_spot().st()},
+             {"k", obj.t_spot().k()},
+             {"ts", obj.t_spot().ts()},
+             {"p_bid", obj.t_spot().p_bid()},
+             {"p_ask", obj.t_spot().p_ask()},
+             {"v", obj.t_spot().v()},
+         }},
+        {"t_fut",
+         {
+             {"ex", obj.t_fut().ex()},
+             {"s", obj.t_fut().s()},
+             {"st", obj.t_fut().st()},
+             {"k", obj.t_fut().k()},
+             {"ts", obj.t_fut().ts()},
+             {"p_bid", obj.t_fut().p_bid()},
+             {"p_ask", obj.t_fut().p_ask()},
+             {"v", obj.t_fut().v()},
+         }},
+    };
+    return obj_json;
+}
+
+void write_spreads_to_topic() {
+    LibrdKafkaDeliveryReportCb ex_dr_cb;
+    std::string bootstrap_servers = "127.0.0.1:9092";
+    std::string topic = "trade-contango-arbitrage-2024-11-11-spreads";
+    ProducerInt producer_int(ex_dr_cb, bootstrap_servers, topic);
+    producer_int.connect();
+    run_listening_for_events_sync([&](std::vector<SpreadsReqV2> reqs) {
+        std::vector<std::string> messages;
+        for (auto& req : reqs) {
+            auto req_json = conv_spreads_req_v2_to_json(req);
+            messages.push_back(req_json.dump());
+        }
+        producer_int.produce_messages(messages);
+        SPDLOG_INFO("produced {} messages", messages.size());
+    });
+    producer_int.flush();
 }
