@@ -30,6 +30,13 @@ run-trade-contango-arbitrage-2024-11-11-debug-print-balances:
 		TICKERS_VERSION=debug_print_balances \
 		./build/trade_contango_arbitrage_2024_11_11
 
+run-trade-contango-arbitrage-2024-11-11-write-spreads-to-topic:
+	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
+		${env_vars} \
+		SPDLOG_LEVEL=debug \
+		TICKERS_VERSION=write_spreads_to_topic \
+		./build/trade_contango_arbitrage_2024_11_11
+
 print-doc-on-remote-server-execution:
 	# * figure out latency: curl -o /dev/null -s -w 'Total: %{time_total}s\n' 'https://api.gateio.ws/api/v4/futures/usdt/tickers?contract=BTC_USDT'
 	# * figure out ip + country: dig +short 'api.gateio.ws' | grep "^[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*$" | xargs -I{} curl "ipinfo.io/{}/country"

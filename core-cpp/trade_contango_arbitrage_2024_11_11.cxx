@@ -1221,7 +1221,7 @@ void execute_v4() {
     // NOTE: it's impossible to fill 2 orders on (fut, spot) with the same
     //       prices because i cant use limit orders
     // NOTE: there are 2 ways to catch this spread:
-    //       1. by quicker than others
+    //       1. by being quicker than others
     //       2. statistically know that order will be n% => fill it through
     //       limit orders for fixed price
     ClientsHouse ch = ClientsHouse();
@@ -1527,6 +1527,98 @@ nlohmann::json conv_spreads_req_v2_to_json(SpreadsReqV2& obj) {
          }},
     };
     return obj_json;
+}
+
+void _write_spreads_to_topic_queries() {
+    std::string _ = R"(
+    -- redpanda
+    rpk topic create \
+        -c retention.ms=900000 \
+        -c segment.ms=900000 \
+        -c segment.bytes=67108864 \
+        -c retention.bytes=67108864 \
+        trade-contango-arbitrage-2024-11-11-spreads
+    -- clickhouse
+    CREATE TABLE default.trade_contango_arbitrage_2024_11_11_spreads
+    (
+        read_topic String,
+        read_error String,
+        read_raw_message String,
+        write_timestamp DateTime,
+        diff_rel Float64,
+        p_ask_spot Float64,
+        p_bid_fut Float64,
+        t_fut_ex String,
+        t_fut_k String,
+        t_fut_p_ask Float64,
+        t_fut_p_bid Float64,
+        t_fut_s String,
+        t_fut_st String,
+        t_fut_ts DateTime,
+        t_fut_v Float64,
+        t_spot_ex String,
+        t_spot_k String,
+        t_spot_p_ask Float64,
+        t_spot_p_bid Float64,
+        t_spot_s String,
+        t_spot_st String,
+        t_spot_ts DateTime,
+        t_spot_v Float64
+    )
+    ENGINE = ReplacingMergeTree
+    PARTITION BY toYYYYMMDD(t_fut_ts)
+    ORDER BY (t_fut_s, t_fut_ts);
+    CREATE TABLE default.trade_contango_arbitrage_2024_11_11_spreads_queue
+    (data String)
+    ENGINE = Kafka
+    SETTINGS kafka_broker_list = 'redpanda-1:9093',
+            kafka_topic_list = 'trade-contango-arbitrage-2024-11-11-spreads',
+            kafka_group_name = 'clickhouse-consumer',
+            kafka_format = 'JSONAsString',
+            kafka_thread_per_consumer = 0,
+            kafka_num_consumers = 1,
+            kafka_handle_error_mode = 'stream',
+            kafka_max_block_size = 100000;
+    CREATE MATERIALIZED VIEW default.trade_contango_arbitrage_2024_11_11_spreads_mv
+    TO default.trade_contango_arbitrage_2024_11_11_spreads AS
+    SELECT
+        _topic read_topic,
+        _error read_error,
+        _raw_message read_raw_message,
+        _timestamp write_timestamp,
+        JSONExtractFloat(data, 'diff_rel') diff_rel,
+        JSONExtractFloat(data, 'p_ask_spot') p_ask_spot,
+        JSONExtractFloat(data, 'p_bid_fut') p_bid_fut,
+        JSONExtractString(data, 't_fut', 'ex') t_fut_ex,
+        JSONExtractString(data, 't_fut', 'k') t_fut_k,
+        JSONExtractFloat(data, 't_fut', 'p_ask') t_fut_p_ask,
+        JSONExtractFloat(data, 't_fut', 'p_bid') t_fut_p_bid,
+        JSONExtractString(data, 't_fut', 's') t_fut_s,
+        JSONExtractString(data, 't_fut', 'st') t_fut_st,
+        toDateTime(JSONExtractUInt(data, 't_fut', 'ts') / 1000) t_fut_ts,
+        JSONExtractFloat(data, 't_fut', 'v') t_fut_v,
+        JSONExtractString(data, 't_spot', 'ex') t_spot_ex,
+        JSONExtractString(data, 't_spot', 'k') t_spot_k,
+        JSONExtractFloat(data, 't_spot', 'p_ask') t_spot_p_ask,
+        JSONExtractFloat(data, 't_spot', 'p_bid') t_spot_p_bid,
+        JSONExtractString(data, 't_spot', 's') t_spot_s,
+        JSONExtractString(data, 't_spot', 'st') t_spot_st,
+        toDateTime(JSONExtractUInt(data, 't_spot', 'ts') / 1000) t_spot_ts,
+        JSONExtractFloat(data, 't_spot', 'v') t_spot_v
+    FROM default.trade_contango_arbitrage_2024_11_11_spreads_queue;
+    SELECT
+        t_spot_s,
+        floor(min(diff_rel), 2) AS min,
+        floor(max(diff_rel), 2) AS max,
+        floor(avg(diff_rel), 2) AS avg,
+        groupUniqArray(t_fut_ex) AS t_fut_exs,
+        groupUniqArray(t_spot_ex) AS t_spot_exs,
+        count() AS amount
+    FROM default.trade_contango_arbitrage_2024_11_11_spreads
+    GROUP BY t_spot_s
+    ORDER BY amount DESC
+    LIMIT 20
+    )";
 }
 
 void write_spreads_to_topic() {
