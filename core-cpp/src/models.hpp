@@ -28,6 +28,10 @@ struct TradeInt {
 
 struct Depth {
     long u;
+    long ex_ts_millis;
+    std::string ex;
+    std::string k;
+    std::string s;
     std::vector<std::tuple<std::string, double>> asks;
     std::vector<std::tuple<std::string, double>> bids;
 };

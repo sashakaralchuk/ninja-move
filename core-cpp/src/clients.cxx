@@ -498,6 +498,10 @@ void ClientPublicGateio::handle_onmessage(const std::string& msg) {
                 order_book_cache.apply_orders(d2.u, d2.asks, d2.bids);
             }
             Depth d = Depth{.u = (long)msg_obj["result"]["u"] + 1,
+                            .ex_ts_millis = msg_obj["time_ms"],
+                            .ex = "gateio",
+                            .k = kind,
+                            .s = msg_obj["result"]["s"],
                             .asks = asks,
                             .bids = bids};
             if (d.u > order_book_cache.get_last_update_id()) {
@@ -1152,23 +1156,21 @@ void ClientPublicMexc::subscribe_to_trades(std::string& symbol) {
 void ClientPublicMexc::subscribe_to_depth(std::string& symbol) {
     subscribed_to_depth = true;
     if (kind == "fut") {
-        std::string t_template = R"({
+        send(fmt::format(
+            R"({{
                 "method":"sub.depth",
-                "param":{"symbol":"%s"}
-            })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
-        send(t);
+                "param":{"symbol":"{}"}
+            }})",
+            symbol));
     } else if (kind == "spot") {
-        std::string t_template = R"({
+        send(fmt::format(
+            R"({{
                 "method": "SUBSCRIPTION",
-                "params": ["spot@public.increase.depth.v3.api@%s"]
-            })";
-        char t[256];
-        snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
-        send(t);
+                "params": ["spot@public.increase.depth.v3.api@{}"]
+            }})",
+            symbol));
     } else {
-        throw std::runtime_error("unexpected kind=" + kind);
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
 }
 
@@ -1208,6 +1210,7 @@ Ticker ClientPublicMexc::fetch_ticker(std::string& symbol) {
         std::string url_str = fmt::format(
             "https://api.mexc.com/api/v3/ticker/bookTicker?symbol={}", symbol);
         nlohmann::json res_obj = execute_http_get_req(url_str);
+        SPDLOG_DEBUG("{} {} fetch_ticker res_obj={}", ex, kind, res_obj.dump());
         return Ticker{
             .s = res_obj["symbol"],
             .bid = stod((std::string)res_obj["bidPrice"]),
@@ -1268,6 +1271,7 @@ std::vector<Depth> ClientPublicMexc::fetch_depth_snapshot(std::string& symbol) {
 
 void ClientPublicMexc::handle_onmessage(const std::string& msg) {
     nlohmann::json msg_obj = nlohmann::json::parse(msg);
+    SPDLOG_DEBUG("{} {} handle_onmessage msg_obj={}", ex, kind, msg_obj.dump());
     if (kind == "fut") {
         std::string channel = msg_obj["channel"];
         if (channel == "rs.sub.depth" && msg_obj["data"] == "success") {
@@ -1321,7 +1325,8 @@ void ClientPublicMexc::handle_onmessage(const std::string& msg) {
     } else if (kind == "spot") {
         if (msg_obj.contains("id") && msg_obj["id"] == 0 &&
             msg_obj.contains("code") && msg_obj["code"] == 0) {
-            spdlog::info("mexc spot subscribed successfully");
+            SPDLOG_INFO("mexc spot subscribed successfully msg_obj={}",
+                        msg_obj.dump());
             return;
         }
         if (msg_obj.contains("c")) {
@@ -1348,6 +1353,10 @@ void ClientPublicMexc::handle_onmessage(const std::string& msg) {
                 }
                 Depth d = Depth{
                     .u = stol((std::string)msg_obj["d"]["r"]),
+                    .ex_ts_millis = msg_obj["t"],
+                    .ex = "mexc",
+                    .k = kind,
+                    .s = msg_obj["s"],
                     .asks = asks,
                     .bids = bids,
                 };
@@ -1381,10 +1390,10 @@ void ClientPublicMexc::handle_onmessage(const std::string& msg) {
                 }
             }
         } else {
-            throw std::runtime_error("unexpected msg=" + msg);
+            throw std::runtime_error(fmt::format("unexpected msg={}", msg));
         }
     } else {
-        throw std::runtime_error("unexpected kind=" + kind);
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
 }
 

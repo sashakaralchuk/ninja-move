@@ -66,6 +66,8 @@ void debug_print_balances(std::ostream& stream = std::cout);
 void execute_v4();
 void debug_init_obj();
 void write_spreads_to_topic();
+void wait_for_spread_converge_save_order_book();
+void wait_for_spread_converge_show_order_book();
 
 std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_listen_mexc_fut_v2),
@@ -88,6 +90,8 @@ std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(execute_v4),
     GET_FN_NAME_TO_FN(debug_init_obj),
     GET_FN_NAME_TO_FN(write_spreads_to_topic),
+    GET_FN_NAME_TO_FN(wait_for_spread_converge_save_order_book),
+    GET_FN_NAME_TO_FN(wait_for_spread_converge_show_order_book),
 };
 
 int main(int argc, char** argv) {
@@ -114,7 +118,8 @@ std::string format_as(TradeInt const& o) {
 }
 
 std::ostream& operator<<(std::ostream& os, Depth const& d) {
-    os << "u=" << d.u << ", asks=[";
+    os << "u=" << d.u << ", exchange_ts_millis=" << d.ex_ts_millis
+       << ", asks=[";
     for (int i = 0; i < d.asks.size(); i++) {
         os << "(" << std::get<0>(d.asks[i]) << "," << std::get<1>(d.asks[i])
            << ")";
@@ -1530,15 +1535,15 @@ nlohmann::json conv_spreads_req_v2_to_json(SpreadsReqV2& obj) {
 }
 
 void _write_spreads_to_topic_queries() {
-    std::string _ = R"(
-    -- redpanda
+    std::string _redpanda = R"(
     rpk topic create \
         -c retention.ms=900000 \
         -c segment.ms=900000 \
         -c segment.bytes=67108864 \
         -c retention.bytes=67108864 \
         trade-contango-arbitrage-2024-11-11-spreads
-    -- clickhouse
+    )";
+    std::string _clickhouse = R"(
     CREATE TABLE default.trade_contango_arbitrage_2024_11_11_spreads
     (
         read_topic String,
@@ -1637,4 +1642,143 @@ void write_spreads_to_topic() {
         SPDLOG_INFO("produced {} messages", messages.size());
     });
     producer_int.flush();
+}
+
+void _wait_for_spread_converge_save_show_order_book_queries() {
+    std::string _redpanda = R"(
+    rpk topic create \
+        -c retention.ms=900000 \
+        -c segment.ms=900000 \
+        -c segment.bytes=67108864 \
+        -c retention.bytes=67108864 \
+        spread-converge-save-show-order-book-queries-depth
+    )";
+    std::string _clickhouse = R"(
+    CREATE TABLE default.spread_converge_save_show_order_book_queries_depth
+    (
+        read_topic String,
+        read_error String,
+        read_raw_message String,
+        write_timestamp DateTime,
+        u UInt64,
+        ex_ts_millis UInt64,
+        ex String,
+        k String,
+        s String,
+        asks Array(Tuple(String, Float64)),
+        bids Array(Tuple(String, Float64)),
+        ex_ts DateTime DEFAULT toDateTime(ex_ts_millis)
+    )
+    ENGINE = ReplacingMergeTree
+    PARTITION BY toYYYYMMDD(ex_ts)
+    ORDER BY (s, ex, k, ex_ts_millis);
+    CREATE TABLE default.spread_converge_save_show_order_book_queries_depth_queue
+    (data String)
+    ENGINE = Kafka
+    SETTINGS kafka_broker_list = 'redpanda-1:9093',
+            kafka_topic_list = 'spread-converge-save-show-order-book-queries-depth',
+            kafka_group_name = 'clickhouse-consumer',
+            kafka_format = 'JSONAsString',
+            kafka_thread_per_consumer = 0,
+            kafka_num_consumers = 1,
+            kafka_handle_error_mode = 'stream',
+            kafka_max_block_size = 100000;
+    CREATE MATERIALIZED VIEW default.spread_converge_save_show_order_book_queries_depth_mv
+    TO default.spread_converge_save_show_order_book_queries_depth AS
+    SELECT
+        _topic read_topic,
+        _error read_error,
+        _raw_message read_raw_message,
+        _timestamp write_timestamp,
+        JSONExtractUInt(data, 'u') u,
+        JSONExtractUInt(data, 'ex_ts_millis') ex_ts_millis,
+        JSONExtractString(data, 'ex') ex,
+        JSONExtractString(data, 'k') k,
+        JSONExtractString(data, 's') s,
+        JSONExtract(data, 'asks', 'Array(Tuple(String, Float64))') asks,
+        JSONExtract(data, 'asks', 'Array(Tuple(String, Float64))') bids
+    FROM default.spread_converge_save_show_order_book_queries_depth_queue;
+    )";
+}
+
+nlohmann::json conv_depth_to_json(const Depth d) {
+    nlohmann::json depth_json = {
+        {"u", d.u},       {"ex_ts_millis", d.ex_ts_millis},
+        {"asks", d.asks}, {"bids", d.bids},
+        {"ex", d.ex},     {"k", d.k},
+        {"s", d.s},
+    };
+    return depth_json;
+}
+
+void wait_for_spread_converge_save_order_book() {
+    std::string symbol_fut = "BITBOARD_USDT";
+    std::string ex_fut = "gateio";
+    std::string kind_fut = "fut";
+    std::string symbol_spot = "BITBOARDUSDT";
+    std::string ex_spot = "mexc";
+    std::string kind_spot = "spot";
+    std::string bootstrap_servers = "127.0.0.1:9092";
+    std::string topic = "spread-converge-save-show-order-book-queries-depth";
+    LibrdKafkaDeliveryReportCb ex_dr_cb;
+    ProducerInt producer_int(ex_dr_cb, bootstrap_servers, topic);
+    producer_int.connect();
+    ClientsHouse ch;
+    ch.init_idle_public();
+    std::thread _ping_ws_clients([&]() {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            SPDLOG_INFO("ping");
+            ch.ping();
+        }
+    });
+    ClientPublic* client_fut = ch.get_client_public(ex_fut, kind_fut);
+    ClientPublic* client_spot = ch.get_client_public(ex_spot, kind_spot);
+    SPDLOG_INFO("start listening for depth messages and write them info topic");
+    client_fut->onmessage_depth = [&](const Depth d) {
+        producer_int.produce_messages({conv_depth_to_json(d).dump()});
+    };
+    client_fut->subscribe_to_depth(symbol_fut);
+    client_spot->onmessage_depth = [&](const Depth d) {
+        producer_int.produce_messages({conv_depth_to_json(d).dump()});
+    };
+    client_spot->subscribe_to_depth(symbol_spot);
+    auto load_tickers_and_calc_diff = [&]() {
+        auto f = conv_symbol_price_to_atomic_v1;
+        Ticker t_fut = client_fut->fetch_ticker(symbol_fut);
+        auto [_1, t_fut_ask] = f(t_fut.s, t_fut.ask);
+        auto [_2, t_fut_bid] = f(t_fut.s, t_fut.bid);
+        Ticker t_spot = client_spot->fetch_ticker(symbol_spot);
+        auto [_3, t_spot_ask] = f(t_spot.s, t_spot.ask);
+        auto [_4, t_spot_bid] = f(t_spot.s, t_spot.bid);
+        double diff_ask_bid = (t_fut_bid - t_spot_ask) / t_spot_ask * 100;
+        double diff_bid_ask = (t_fut_ask - t_spot_bid) / t_spot_bid * 100;
+        return std::make_tuple(diff_ask_bid, diff_bid_ask);
+    };
+    SPDLOG_INFO("start waiting for spread");
+    if (std::get<0>(load_tickers_and_calc_diff()) > 1.5) {
+        throw std::runtime_error("spread on start must be < 1.5");
+    }
+    while (true) {
+        auto [diff_ask_bid, _] = load_tickers_and_calc_diff();
+        SPDLOG_INFO("diff_ask_bid={:.4f}", diff_ask_bid);
+        if (diff_ask_bid > 1.5) {
+            break;
+        }
+    }
+    SPDLOG_INFO("spread appeared => wait for converge");
+    while (true) {
+        auto [_, diff_bid_ask] = load_tickers_and_calc_diff();
+        SPDLOG_INFO("diff_bid_ask={:.4f}", diff_bid_ask);
+        if (diff_bid_ask < 0.5) {
+            break;
+        }
+    }
+    SPDLOG_INFO("prices covnerged => finish");
+    TelegramBotPort::new_from_envs().notify_pretty(
+        __FILENAME__, "spread-converge-cought-2024-12-29");
+}
+
+void wait_for_spread_converge_show_order_book() {
+    throw std::runtime_error("not-implemented");
 }

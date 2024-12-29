@@ -23,6 +23,11 @@ run-trade-contango-arbitrage-2024-11-11-req:
 	127.0.0.1:50051 \
 	trade_contango.TradeContango/FireTradeV2
 
+print-doc-on-remote-server-execution:
+	# * figure out latency: curl -o /dev/null -s -w 'Total: %{time_total}s\n' 'https://api.gateio.ws/api/v4/futures/usdt/tickers?contract=BTC_USDT'
+	# * figure out ip + country: dig +short 'api.gateio.ws' | grep "^[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*$" | xargs -I{} curl "ipinfo.io/{}/country"
+	# * server: default choice - gcp, hetzner, digitalocean
+
 run-trade-contango-arbitrage-2024-11-11-debug-print-balances:
 	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
 		${env_vars} \
@@ -37,10 +42,19 @@ run-trade-contango-arbitrage-2024-11-11-write-spreads-to-topic:
 		TICKERS_VERSION=write_spreads_to_topic \
 		./build/trade_contango_arbitrage_2024_11_11
 
-print-doc-on-remote-server-execution:
-	# * figure out latency: curl -o /dev/null -s -w 'Total: %{time_total}s\n' 'https://api.gateio.ws/api/v4/futures/usdt/tickers?contract=BTC_USDT'
-	# * figure out ip + country: dig +short 'api.gateio.ws' | grep "^[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*$" | xargs -I{} curl "ipinfo.io/{}/country"
-	# * server: default choice - gcp, hetzner, digitalocean
+run-wait-for-spread-converge-save-order-book:
+	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
+		${env_vars} \
+		SPDLOG_LEVEL=debug \
+		TICKERS_VERSION=wait_for_spread_converge_save_order_book \
+		./build/trade_contango_arbitrage_2024_11_11
+
+run-wait-for-spread-converge-show-order-book:
+	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
+		${env_vars} \
+		SPDLOG_LEVEL=debug \
+		TICKERS_VERSION=wait_for_spread_converge_show_order_book \
+		./build/trade_contango_arbitrage_2024_11_11
 
 clone-libs:
 	git clone git@github.com:curl/curl.git libs/curl && \
