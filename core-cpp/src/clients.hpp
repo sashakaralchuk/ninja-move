@@ -12,7 +12,8 @@ std::string rstrip_zeros(std::string s);
 
 long now_millis();
 
-std::string now_utc_str(std::string format_str = "%F %T %Z");
+std::string time_point_to_str(std::chrono::system_clock::time_point tp,
+                              std::string format_str = "%F %T %Z");
 
 std::tuple<std::string, double> conv_symbol_price_to_atomic_v1(
     std::string symbol, double price);

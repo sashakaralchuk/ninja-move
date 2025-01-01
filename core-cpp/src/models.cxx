@@ -70,17 +70,19 @@ void OrderBookCache::print(int rows_to_print) {
     });
     size_t max_len_price = 0;
     size_t max_len_vol = 0;
-    for (auto i = asks_l.end() - rows_to_print; i != asks_l.end(); i++) {
+    size_t offset_asks = std::min((size_t)rows_to_print, asks_l.size());
+    size_t offset_bids = std::min(rows_to_print, (int)bids_l.size());
+    for (auto i = asks_l.end() - offset_asks; i != asks_l.end(); i++) {
         auto [p, price_str, vol_str] = (*i);
         max_len_price = std::max(max_len_price, price_str.length());
         max_len_vol = std::max(max_len_vol, vol_str.length());
     }
-    for (auto i = bids_l.begin(); i != bids_l.begin() + rows_to_print; i++) {
+    for (auto i = bids_l.begin(); i != bids_l.begin() + offset_bids; i++) {
         auto [p, price_str, vol_str] = (*i);
         max_len_price = std::max(max_len_price, price_str.length());
         max_len_vol = std::max(max_len_vol, vol_str.length());
     }
-    for (auto i = asks_l.end() - rows_to_print; i != asks_l.end(); i++) {
+    for (auto i = asks_l.end() - offset_asks; i != asks_l.end(); i++) {
         auto [p, price_str, vol_str] = (*i);
         for (int i = 0; i < max_len_vol + max_len_price; i++) {
             std::cout << " ";
@@ -94,7 +96,7 @@ void OrderBookCache::print(int rows_to_print) {
         }
         std::cout << vol_str << std::endl;
     }
-    for (auto i = bids_l.begin(); i != bids_l.begin() + rows_to_print; i++) {
+    for (auto i = bids_l.begin(); i != bids_l.begin() + offset_bids; i++) {
         auto [p, price_str, vol_str] = (*i);
         for (int i = 0; i < max_len_vol - vol_str.length(); i++) {
             std::cout << " ";

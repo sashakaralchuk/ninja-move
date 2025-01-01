@@ -229,9 +229,9 @@ long now_millis() {
     return std::chrono::system_clock::now().time_since_epoch().count() / 1000;
 }
 
-std::string now_utc_str(std::string format_str) {
-    std::time_t now_raw =
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+std::string time_point_to_str(std::chrono::system_clock::time_point tp,
+                              std::string format_str) {
+    std::time_t now_raw = std::chrono::system_clock::to_time_t(tp);
     std::ostringstream now_oss;
     now_oss << std::put_time(std::gmtime(&now_raw), format_str.c_str());
     return now_oss.str();
@@ -2615,7 +2615,9 @@ Order ClientPrivateHtx::place_fut_limit_order(std::string symbol,
     std::string qs0 = fmt::format(
         "AccessKeyId={}&SignatureVersion=2&SignatureMethod=HmacSHA256&"
         "Timestamp={}",
-        api_key, url_encode(now_utc_str("%FT%T")));
+        api_key,
+        url_encode(
+            time_point_to_str(std::chrono::system_clock::now(), "%FT%T")));
     // std::string qs0 =
     //     "AccessKeyId=api-key-44&SignatureMethod=HmacSHA256&SignatureVersion=2&"
     //     "Timestamp=2024-12-08T17%3A42%3A27";
@@ -2713,8 +2715,9 @@ TelegramBotPort TelegramBotPort::new_from_envs() {
 }
 
 void TelegramBotPort::notify_pretty(std::string message, std::string action) {
-    std::string m_raw = fmt::format(TELEGRAM_NOTIFY_PRETTY_TEMPLATE, message,
-                                    action, now_utc_str());
+    std::string m_raw =
+        fmt::format(TELEGRAM_NOTIFY_PRETTY_TEMPLATE, message, action,
+                    time_point_to_str(std::chrono::system_clock::now()));
     std::string m_encoded = fmt::format("```%0A{}```", url_encode(m_raw));
     std::string url_str = fmt::format(
         "https://api.telegram.org/bot{}/"

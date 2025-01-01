@@ -1190,7 +1190,8 @@ void print_out_on_execute_v4(std::map<std::string, Order>& orders_map,
     double profit =
         (spread_close - spread_open) / 100.0 * usdt_to_use - fee_total;
     std::ostringstream out_ss;
-    out_ss << "now:\t" << now_utc_str() << std::endl;
+    out_ss << "now:\t" << time_point_to_str(std::chrono::system_clock::now())
+           << std::endl;
     out_ss << "obj:\t" << format_as(spreads_req_v2.value()) << std::endl;
     out_ss << "fut-open:\t" << fo_t.p_avg_fill << "\t" << fo_fee << std::endl;
     out_ss << "spot-open:\t" << so_t.p_avg_fill << "\t" << so_fee << std::endl;
@@ -1667,7 +1668,7 @@ void _wait_for_spread_converge_save_show_order_book_queries() {
         s String,
         asks Array(Tuple(String, Float64)),
         bids Array(Tuple(String, Float64)),
-        ex_ts DateTime DEFAULT toDateTime(ex_ts_millis)
+        ex_ts DateTime DEFAULT toDateTime(ex_ts_millis) -- TODO: divide by 1000
     )
     ENGINE = ReplacingMergeTree
     PARTITION BY toYYYYMMDD(ex_ts)
@@ -1696,7 +1697,7 @@ void _wait_for_spread_converge_save_show_order_book_queries() {
         JSONExtractString(data, 'k') k,
         JSONExtractString(data, 's') s,
         JSONExtract(data, 'asks', 'Array(Tuple(String, Float64))') asks,
-        JSONExtract(data, 'asks', 'Array(Tuple(String, Float64))') bids
+        JSONExtract(data, 'bids', 'Array(Tuple(String, Float64))') bids
     FROM default.spread_converge_save_show_order_book_queries_depth_queue;
     )";
 }
@@ -1712,6 +1713,8 @@ nlohmann::json conv_depth_to_json(const Depth d) {
 }
 
 void wait_for_spread_converge_save_order_book() {
+    // NOTE: fut price also moves => needs to keep this in mind when thinking
+    // about such type of strategy
     std::string symbol_fut = "BITBOARD_USDT";
     std::string ex_fut = "gateio";
     std::string kind_fut = "fut";
@@ -1777,8 +1780,108 @@ void wait_for_spread_converge_save_order_book() {
     SPDLOG_INFO("prices covnerged => finish");
     TelegramBotPort::new_from_envs().notify_pretty(
         __FILENAME__, "spread-converge-cought-2024-12-29");
+    // XXX: unsubscribe and close connection in proper way
 }
 
 void wait_for_spread_converge_show_order_book() {
-    throw std::runtime_error("not-implemented");
+    clickhouse::Client clickhouse_client(
+        clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
+    std::string QUERY_TIMESTAMPS = R"(
+        SELECT
+            toUInt64(ex_ts_millis / 1000) ex_ts_secs,
+            toDateTime(ex_ts_secs) AS ex_ts_2
+        FROM default.spread_converge_save_show_order_book_queries_depth
+        WHERE ex_ts_secs >= 1735501040
+        GROUP BY ex_ts_secs
+        ORDER BY ex_ts_secs ASC
+    )";
+    std::string QUERY_DEPTH = R"(
+        SELECT u, toJSONString(asks) asks_str, toJSONString(bids) bids_str
+        FROM default.spread_converge_save_show_order_book_queries_depth
+        WHERE ex_ts_millis >= 1735501040000
+            AND ex_ts_millis <= %(ex_ts_millis_threshold_top)s
+            AND k = '%(kind)s'
+        ORDER BY ex_ts_millis ASC
+    )";
+    std::vector<long> tss_secs = {};
+    int ts_i = 1;
+    clickhouse_client.Select(QUERY_TIMESTAMPS, [&](const clickhouse::Block& b) {
+        for (size_t i = 0; i < b.GetRowCount(); ++i) {
+            long ex_ts_secs = b[0]->As<clickhouse::ColumnUInt64>()->At(i);
+            tss_secs.push_back(ex_ts_secs);
+        }
+    });
+    SPDLOG_DEBUG("tss_secs={}", tss_secs.size());
+    auto fetch_construct_order_book = [&](long ex_ts_millis_threshold_top,
+                                          std::string kind) {
+        OrderBookCache order_book;
+        std::string q1 =
+            replace_first(QUERY_DEPTH, "%(ex_ts_millis_threshold_top)s",
+                          fmt::format("{}", ex_ts_millis_threshold_top));
+        std::string q2 = replace_first(q1, "%(kind)s", kind);
+        clickhouse_client.Select(q2, [&](const clickhouse::Block& b) {
+            for (size_t i = 0; i < b.GetRowCount(); ++i) {
+                long u = b[0]->As<clickhouse::ColumnUInt64>()->At(i);
+                std::string asks_str =
+                    (std::string)b[1]->As<clickhouse::ColumnString>()->At(i);
+                std::string bids_str =
+                    (std::string)b[2]->As<clickhouse::ColumnString>()->At(i);
+                std::vector<std::tuple<std::string, double>> asks = {};
+                for (auto& obj : nlohmann::json::parse(asks_str)) {
+                    asks.push_back({obj[0], obj[1]});
+                }
+                std::vector<std::tuple<std::string, double>> bids = {};
+                for (auto& obj : nlohmann::json::parse(bids_str)) {
+                    bids.push_back({obj[0], obj[1]});
+                }
+                long order_book_u = order_book.get_last_update_id();
+                if (order_book_u == 0 || order_book_u + 1 == u) {
+                    order_book.apply_orders(u, asks, bids);
+                } else {
+                    SPDLOG_WARN("{} order-book contains non increments depth",
+                                kind);
+                    order_book.apply_orders_force(u, asks, bids);
+                }
+            }
+        });
+        return order_book;
+    };
+    auto fetch_print_order_books = [&]() {
+        OrderBookCache order_book_fut =
+            fetch_construct_order_book(tss_secs[ts_i] * 1000, "fut");
+        OrderBookCache order_book_spot =
+            fetch_construct_order_book(tss_secs[ts_i] * 1000, "spot");
+        std::cout << "\x1B[2J\x1B[H";
+        std::cout << "tss_secs[0]\t" << tss_secs[0] << "\t"
+                  << time_point_to_str(
+                         std::chrono::system_clock::from_time_t(tss_secs[0]))
+                  << std::endl;
+        std::cout << "tss_secs[ts_i]\t" << tss_secs[ts_i] << "\t"
+                  << time_point_to_str(
+                         std::chrono::system_clock::from_time_t(tss_secs[ts_i]))
+                  << std::endl;
+        std::cout << "fut:" << std::endl;
+        order_book_fut.print(5);
+        std::cout << "spot:" << std::endl;
+        order_book_spot.print(5);
+    };
+    while (true) {
+        fetch_print_order_books();
+        system("stty raw");
+        char t = getchar();
+        system("stty cooked");
+        int t_int = (int)t;
+        if (t_int == 3) {
+            SPDLOG_INFO("ctrl+c pressed");
+            break;
+        } else if (t_int == 108) {
+            ts_i = std::min(ts_i + 100, (int)tss_secs.size() - 1);
+        } else if (t_int == 106) {
+            ts_i = std::max(ts_i - 100, 0);
+        } else if (t_int == 46) {
+            ts_i = std::min(ts_i + 1, (int)tss_secs.size() - 1);
+        } else if (t_int == 44) {
+            ts_i = std::max(ts_i - 1, 0);
+        }
+    }
 }
