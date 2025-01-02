@@ -1957,7 +1957,7 @@ void debug_buy_one_side_through_limit_order() {
                 break;
             } else {
                 // TODO: handle situation when order is filled but you are
-                // trying to amend it
+                // trying to amend it (gateio is done, handle for bybit)
                 t_spot = client_pub_spot->fetch_ticker(symbol_spot);
                 auto [sell_price, _] = client_pr_fut->adjust_price_quantity(
                     symbol_fut, t_spot.value().ask * 1.03, .0);
@@ -1966,6 +1966,7 @@ void debug_buy_one_side_through_limit_order() {
                                                sell_price);
             }
         }
+        // TODO: set leverage to 1
         SPDLOG_INFO("fut sell order is filled => place spot order");
         auto [buy_price_spot, buy_quantity_spot] =
             client_pr_spot->adjust_price_quantity(

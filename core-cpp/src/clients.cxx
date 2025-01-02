@@ -798,6 +798,13 @@ Order ClientPrivateGateio::amend_fut_order(Order& order, std::string price) {
     nlohmann::json res_obj =
         execute_http_put_req(url + path, headers, body_str);
     SPDLOG_DEBUG("{} {} amend order res_obj={}", ex, kind, res_obj.dump());
+    if (res_obj["label"] == "ORDER_NOT_FOUND") {
+        SPDLOG_INFO(
+            "{} {} amend order order.id={} not found (possibly order if "
+            "filled)",
+            ex, kind, order.id);
+        return Order{.st = "ORDER_NOT_FOUND"};
+    }
     return Order{
         .ex = ex,
         .k = kind,
