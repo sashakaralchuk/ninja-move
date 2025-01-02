@@ -96,6 +96,7 @@ class ClientPrivate : public hv::WebSocketClient {
     virtual Order place_fut_limit_order(std::string symbol, std::string side,
                                         std::string price,
                                         std::string quantity) = 0;
+    virtual Order amend_fut_order(Order& order, std::string price) = 0;
     virtual void set_leverage_to_1(std::string symbol) = 0;
     virtual Order place_spot_limit_order(std::string symbol, std::string side,
                                          std::string price,
@@ -152,6 +153,7 @@ class ClientPrivateGateio : public ClientPrivate {
                                         std::string price,
                                         std::string quantity);
     virtual void set_leverage_to_1(std::string symbol);
+    virtual Order amend_fut_order(Order& order, std::string price);
     virtual Order place_spot_limit_order(std::string symbol, std::string side,
                                          std::string price,
                                          std::string quantity);
@@ -201,6 +203,7 @@ class ClientPrivateMexc : public ClientPrivate {
                                         std::string price,
                                         std::string quantity);
     virtual void set_leverage_to_1(std::string symbol);
+    virtual Order amend_fut_order(Order& order, std::string price);
     virtual Order place_spot_limit_order(std::string symbol, std::string side,
                                          std::string price,
                                          std::string quantity);
@@ -249,6 +252,7 @@ class ClientPrivateBybit : public ClientPrivate {
                                         std::string price,
                                         std::string quantity);
     virtual void set_leverage_to_1(std::string symbol);
+    virtual Order amend_fut_order(Order& order, std::string price);
     virtual Order place_spot_limit_order(std::string symbol, std::string side,
                                          std::string price,
                                          std::string quantity);
@@ -301,6 +305,7 @@ class ClientPrivateHtx : public ClientPrivate {
                                         std::string price,
                                         std::string quantity);
     virtual void set_leverage_to_1(std::string symbol);
+    virtual Order amend_fut_order(Order& order, std::string price);
     virtual Order place_spot_limit_order(std::string symbol, std::string side,
                                          std::string price,
                                          std::string quantity);

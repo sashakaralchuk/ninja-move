@@ -9,7 +9,6 @@ test:
 	# cmake --build build -j 12 && ctest --test-dir build --output-on-failure -j 12
 
 run-trade-contango-arbitrage-2024-11-11:
-	# make && SPDLOG_LEVEL=debug THRESHOLD_REL=3.0 ./trade_contango_arbitrage_2024_11_11
 	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
@@ -54,6 +53,13 @@ run-wait-for-spread-converge-show-order-book:
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
 		TICKERS_VERSION=wait_for_spread_converge_show_order_book \
+		./build/trade_contango_arbitrage_2024_11_11
+
+run-trade-contango-arbitrage-2024-11-11:
+	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
+		${env_vars} \
+		SPDLOG_LEVEL=debug \
+		TICKERS_VERSION=debug_buy_one_side_through_limit_order \
 		./build/trade_contango_arbitrage_2024_11_11
 
 clone-libs:

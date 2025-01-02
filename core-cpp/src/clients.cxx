@@ -93,6 +93,22 @@ nlohmann::json execute_http_post_req(std::string url, curl_slist* headers,
     return res_obj;
 }
 
+nlohmann::json execute_http_put_req(std::string url, curl_slist* headers,
+                                    std::string body) {
+    std::string res_buf;
+    CURL* curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, execute_http_req_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res_buf);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+    CURLcode res_code = curl_easy_perform(curl);
+    nlohmann::json res_obj = nlohmann::json::parse(res_buf);
+    curl_easy_cleanup(curl);
+    return res_obj;
+}
+
 std::string gen_hmac_sha256(const std::string& secret,
                             const std::string& param_str) {
     unsigned char hmac_result[EVP_MAX_MD_SIZE];
@@ -758,6 +774,41 @@ void ClientPrivateGateio::set_leverage_to_1(std::string symbol) {
     nlohmann::json res_obj =
         execute_http_post_req(url + path + "?" + query_param, headers, "");
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
+}
+
+Order ClientPrivateGateio::amend_fut_order(Order& order, std::string price) {
+    if (kind != "fut") {
+        throw std::runtime_error(fmt::format("{} unexpected kind=", ex, kind));
+    }
+    std::string timestamp_str = std::to_string(
+        std::chrono::system_clock::now().time_since_epoch().count() / 1000000);
+    std::string url = "https://api.gateio.ws";
+    std::string path = fmt::format("/api/v4/futures/usdt/orders/{}", order.id);
+    std::string body_str = fmt::format(R"({{"price":"{}"}})", price);
+    SPDLOG_INFO("{} {} amend order order.id={} body_str={}", ex, kind, order.id,
+                body_str);
+    std::string sign = sign_str("PUT", timestamp_str, path, "", body_str);
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, ("KEY: " + api_key).c_str());
+    headers =
+        curl_slist_append(headers, ("Timestamp: " + timestamp_str).c_str());
+    headers = curl_slist_append(headers, ("SIGN: " + sign).c_str());
+    nlohmann::json res_obj =
+        execute_http_put_req(url + path, headers, body_str);
+    SPDLOG_DEBUG("{} {} amend order res_obj={}", ex, kind, res_obj.dump());
+    return Order{
+        .ex = ex,
+        .k = kind,
+        .id = std::to_string((long)res_obj["id"]),
+        .open_ts = (long)((double)res_obj["create_time"]) * 1000,
+        .s = res_obj["contract"],
+        .p = res_obj["price"],
+        .v = (double)res_obj["size"],
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
 }
 
 Order ClientPrivateGateio::place_spot_limit_order(std::string symbol,
@@ -1482,6 +1533,10 @@ void ClientPrivateMexc::set_leverage_to_1(std::string symbol) {
     throw std::runtime_error("not-implemented");
 }
 
+Order ClientPrivateMexc::amend_fut_order(Order& order, std::string price) {
+    throw std::runtime_error("not-implemented");
+}
+
 Order ClientPrivateMexc::place_spot_limit_order(std::string symbol,
                                                 std::string side,
                                                 std::string price,
@@ -2086,6 +2141,47 @@ void ClientPrivateBybit::set_leverage_to_1(std::string symbol) {
     SPDLOG_DEBUG("res_obj={}", res_obj.dump());
 }
 
+Order ClientPrivateBybit::amend_fut_order(Order& order, std::string price) {
+    if (kind != "fut") {
+        throw std::runtime_error(fmt::format("unexpected kind=", kind));
+    }
+    std::string timestamp_str = std::to_string(
+        (long)(std::chrono::system_clock::now().time_since_epoch().count() /
+               1000));
+    std::string recw_window = "5000";
+    std::string body_str = fmt::format(
+        R"({{"category": "linear", "symbol": "{}", "orderId": "{}", "price": "{}"}})",
+        order.s, order.id, price);
+    SPDLOG_INFO("{} {} amend order body_str={}", ex, kind, body_str);
+    std::string param_str = fmt::format(R"({}{}{}{})", timestamp_str, api_key,
+                                        recw_window, body_str);
+    std::string sign = gen_hmac_sha256(api_secret, param_str);
+    std::string url = "https://api.bybit.com/v5/order/amend";
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers =
+        curl_slist_append(headers, ("X-BAPI-API-KEY: " + api_key).c_str());
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-RECV-WINDOW: " + recw_window).c_str());
+    headers = curl_slist_append(headers, ("X-BAPI-SIGN: " + sign).c_str());
+    headers = curl_slist_append(headers, "X-BAPI-SIGN-TYPE: 2");
+    headers = curl_slist_append(headers,
+                                ("X-BAPI-TIMESTAMP: " + timestamp_str).c_str());
+    nlohmann::json res_obj = execute_http_post_req(url, headers, body_str);
+    SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
+    return Order{
+        .ex = ex,
+        .k = kind,
+        .id = res_obj["result"]["orderId"],
+        .open_ts = res_obj["time"],
+        .s = "",
+        .p = "0.0",
+        .v = .0,
+        .filled_amount = .0,
+        .st = "PLACED_TO_ORDER_BOOK",
+    };
+}
+
 Order ClientPrivateBybit::place_spot_limit_order(std::string symbol,
                                                  std::string side,
                                                  std::string price,
@@ -2652,6 +2748,10 @@ Order ClientPrivateHtx::place_fut_limit_order(std::string symbol,
 }
 
 void ClientPrivateHtx::set_leverage_to_1(std::string symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+Order ClientPrivateHtx::amend_fut_order(Order& order, std::string price) {
     throw std::runtime_error("not-implemented");
 }
 

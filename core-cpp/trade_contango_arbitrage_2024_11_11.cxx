@@ -68,6 +68,9 @@ void debug_init_obj();
 void write_spreads_to_topic();
 void wait_for_spread_converge_save_order_book();
 void wait_for_spread_converge_show_order_book();
+void debug_amend_order_gateio_fut();
+void debug_amend_order_bybit_fut();
+void debug_buy_one_side_through_limit_order();
 
 std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_listen_mexc_fut_v2),
@@ -92,6 +95,9 @@ std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(write_spreads_to_topic),
     GET_FN_NAME_TO_FN(wait_for_spread_converge_save_order_book),
     GET_FN_NAME_TO_FN(wait_for_spread_converge_show_order_book),
+    GET_FN_NAME_TO_FN(debug_amend_order_gateio_fut),
+    GET_FN_NAME_TO_FN(debug_amend_order_bybit_fut),
+    GET_FN_NAME_TO_FN(debug_buy_one_side_through_limit_order),
 };
 
 int main(int argc, char** argv) {
@@ -1223,6 +1229,9 @@ void debug_print_balances(std::ostream& stream) {
 
 enum StateV4 { wait_for_spread, place_open_orders, place_close_orders };
 
+///
+/// Places 2 orders immediately with market (technically limit) buy.
+///
 void execute_v4() {
     // NOTE: it's impossible to fill 2 orders on (fut, spot) with the same
     //       prices because i cant use limit orders
@@ -1884,4 +1893,121 @@ void wait_for_spread_converge_show_order_book() {
             ts_i = std::max(ts_i - 1, 0);
         }
     }
+}
+
+void debug_amend_order_gateio_fut() {
+    ClientPrivateGateio client("fut");
+    Order order =
+        client.place_fut_limit_order("GOLDENCAT_USDT", "buy", "0.0000005", "1");
+    SPDLOG_INFO("order placed");
+    client.amend_fut_order(order, "0.00000049");
+    SPDLOG_INFO("order amended");
+}
+
+void debug_amend_order_bybit_fut() {
+    ClientPrivateBybit client("fut");
+    Order order =
+        client.place_fut_limit_order("DOGEUSDT", "buy", "0.302", "35");
+    SPDLOG_INFO("order placed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    client.amend_fut_order(order, "0.301");
+    SPDLOG_INFO("order amended");
+}
+
+///
+/// On spread appearance place limit order on fut, than constantly amend it with
+/// price spot*103% till it will be filled. When it's filled buy spot market.
+/// Aim is to get into position with better spread.
+///
+void debug_buy_one_side_through_limit_order() {
+    ClientsHouse ch = ClientsHouse();
+    ch.init_public_clients();
+    ch.init_private_clients();
+    double usdt_to_use = 25.0;
+    std::thread _1([&]() {
+        wait_until([&]() { return trade_obj_raw_f != 0; });
+        SpreadsReqV2 obj = spreads_req_v2.value();
+        SPDLOG_INFO("run obj={}", format_as(obj));
+        ClientPrivate* client_pr_fut =
+            ch.get_client_private(obj.t_fut().ex(), "fut");
+        ClientPublic* client_pub_fut =
+            ch.get_client_public(obj.t_fut().ex(), "fut");
+        ClientPrivate* client_pr_spot =
+            ch.get_client_private(obj.t_spot().ex(), "spot");
+        ClientPublic* client_pub_spot =
+            ch.get_client_public(obj.t_spot().ex(), "spot");
+        std::string symbol_fut = obj.t_fut().s();
+        std::string symbol_spot = obj.t_spot().s();
+        std::optional<Order> sell_order_fut = {};
+        std::optional<Ticker> t_spot = {};
+        {
+            SPDLOG_INFO("place fut sell order");
+            t_spot = client_pub_spot->fetch_ticker(symbol_spot);
+            auto [sell_price, sell_quantity] =
+                client_pr_fut->adjust_price_quantity(
+                    symbol_fut, t_spot.value().ask * 1.03,
+                    usdt_to_use / t_spot.value().ask);
+            sell_order_fut = client_pr_fut->place_fut_limit_order(
+                symbol_fut, "sell", sell_price, sell_quantity);
+        }
+        SPDLOG_INFO("wait fot fut fill (overwise and with spot price)");
+        while (true) {
+            sell_order_fut = client_pr_fut->fetch_order(sell_order_fut.value());
+            if (sell_order_fut.value().st == "FILLED") {
+                break;
+            } else {
+                // TODO: handle situation when order is filled but you are
+                // trying to amend it
+                t_spot = client_pub_spot->fetch_ticker(symbol_spot);
+                auto [sell_price, _] = client_pr_fut->adjust_price_quantity(
+                    symbol_fut, t_spot.value().ask * 1.03, .0);
+                // XXX: change quantity too
+                client_pr_fut->amend_fut_order(sell_order_fut.value(),
+                                               sell_price);
+            }
+        }
+        SPDLOG_INFO("fut sell order is filled => place spot order");
+        auto [buy_price_spot, buy_quantity_spot] =
+            client_pr_spot->adjust_price_quantity(
+                symbol_spot, t_spot.value().bid * 1.1,
+                usdt_to_use / t_spot.value().bid);
+        Order buy_order_spot = client_pr_spot->place_spot_limit_order(
+            symbol_spot, "buy", buy_price_spot, buy_quantity_spot);
+        wait_until([&]() {
+            buy_order_spot = client_pr_spot->fetch_order(buy_order_spot);
+            return buy_order_spot.st == "FILLED";
+        });
+        SPDLOG_INFO("spot buy-order is filled => close orders immediately");
+        {
+            SPDLOG_INFO("place fut buy order");
+            auto [buy_price_fut, _] = client_pr_fut->adjust_price_quantity(
+                symbol_fut, t_spot.value().ask * 1.04, 0.0);
+            std::string buy_quantity_fut = client_pr_fut->conv_size_to_str(
+                sell_order_fut.value().filled_amount);
+            Order buy_order_fut = client_pr_fut->place_fut_limit_order(
+                symbol_fut, "buy", buy_price_fut, buy_quantity_fut);
+            SPDLOG_INFO("wait fut for buy order fill");
+            wait_until([&]() {
+                buy_order_fut = client_pr_fut->fetch_order(buy_order_fut);
+                return buy_order_fut.st == "FILLED";
+            });
+        }
+        {
+            SPDLOG_INFO("place spot sell order");
+            auto [sell_price_spot, sell_quantity_spot] =
+                client_pr_spot->adjust_price_quantity(
+                    symbol_spot, t_spot.value().bid * 0.96,
+                    buy_order_spot.filled_amount);
+            Order sell_order_spot = client_pr_spot->place_spot_limit_order(
+                symbol_spot, "sell", sell_price_spot, sell_quantity_spot);
+            SPDLOG_INFO("wait for spot sell order fill");
+            wait_until([&]() {
+                sell_order_spot = client_pr_spot->fetch_order(sell_order_spot);
+                return sell_order_spot.st == "FILLED";
+            });
+        }
+        TelegramBotPort::new_from_envs().notify_pretty(
+            __FILENAME__, "trade-with-one-side-buy-executed-2025-01-01");
+    });
+    run_listening_for_events_sync();
 }
