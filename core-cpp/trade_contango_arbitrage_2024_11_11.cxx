@@ -2011,3 +2011,134 @@ void debug_buy_one_side_through_limit_order() {
     });
     run_listening_for_events_sync();
 }
+
+void _map_exchanges_tokens_queries() {
+    std::string _clickhouse = R"(
+    CREATE TABLE default.t_mexc_2025_01_02 (
+        `symbol_raw` String,
+        `s` String,
+        `k` String,
+        `orderTypes` Array(String),
+        `isSpotTradingAllowed` Boolean,
+        `permissions` Array(String),
+        `filters` Array(String),
+        `fullName` String,
+        `tradeSideType` UInt8
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_mexc_2025_01_02
+    SELECT
+        symbol_raw,
+        JSONExtractString(symbol_raw, 'symbol') s,
+        'spot' k,
+        JSONExtract(symbol_raw, 'orderTypes', 'Array(String)') orderTypes,
+        JSONExtractBool(symbol_raw, 'isSpotTradingAllowed') isSpotTradingAllowed,
+        JSONExtract(symbol_raw, 'permissions', 'Array(String)') permissions,
+        JSONExtract(symbol_raw, 'filters', 'Array(String)') filters,
+        JSONExtractString(symbol_raw, 'fullName') fullName,
+        JSONExtract(symbol_raw, 'tradeSideType', 'UInt8') tradeSideType
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'symbols')) symbol_raw
+        FROM url('https://api.mexc.com/api/v3/exchangeInfo', 'JSONAsString')
+    );
+    CREATE TABLE default.t_gateio_2025_01_02 (
+        `current_pair_raw` String,
+        `currency_raw` String,
+        `contract_raw` String,
+        `s` String,
+        `k` String,
+        `trade_status` String,
+        `sell_start` DateTime,
+        `buy_start` DateTime,
+        `delisted` Boolean,
+        `trade_disabled` Boolean,
+        `in_delisting` Boolean
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_gateio_2025_01_02
+    SELECT
+        '{}' current_pair_raw,
+        '{}' currency_raw,
+        json contract_raw,
+        JSONExtractString(contract_raw, 'name') s,
+        'fut' k,
+        '' trade_status,
+        toDateTime(0) sell_start,
+        toDateTime(0) buy_start,
+        false delisted,
+        false trade_disabled,
+        JSONExtractBool(contract_raw, 'in_delisting') in_delisting
+    FROM url('https://api.gateio.ws/api/v4/futures/usdt/contracts', JSONAsString);
+    INSERT INTO default.t_gateio_2025_01_02
+    SELECT
+        current_pair_raw,
+        currency_raw,
+        '{}' contract_raw,
+        JSONExtractString(current_pair_raw, 'id') s,
+        'spot' k,
+        JSONExtractString(current_pair_raw, 'trade_status') trade_status,
+        toDateTime(JSONExtract(current_pair_raw, 'sell_start', 'UInt64')) sell_start,
+        toDateTime(JSONExtract(current_pair_raw, 'buy_start', 'UInt64')) buy_start,
+        JSONExtractBool(currency_raw, 'delisted') delisted,
+        JSONExtractBool(currency_raw, 'trade_disabled') trade_disabled,
+        false in_delisting
+    FROM (
+        SELECT json current_pair_raw
+        FROM url('https://api.gateio.ws/api/v4/spot/currency_pairs', 'JSONAsString')
+    ) t1
+    LEFT JOIN (
+        SELECT json currency_raw
+        FROM url('https://api.gateio.ws/api/v4/spot/currencies', 'JSONAsString')
+    ) t2
+        ON JSONExtractString(current_pair_raw, 'base') =
+            JSONExtractString(currency_raw, 'currency');
+    CREATE TABLE default.t_bybit_2025_01_02 (
+        `symbol_raw` String,
+        `s` String,
+        `k` String,
+        `baseCoin` String,
+        `quoteCoin` String,
+        `status` String,
+        `fundingInterval` UInt64,
+        `settleCoin` String,
+        `upperFundingRate` Float64,
+        `lowerFundingRate` Float64,
+        `isPreListing` Boolean
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_bybit_2025_01_02
+    SELECT
+        symbol_raw,
+        JSONExtractString(symbol_raw, 'symbol') s,
+        'fut' k,
+        JSONExtractString(symbol_raw, 'baseCoin') baseCoin,
+        JSONExtractString(symbol_raw, 'quoteCoin') quoteCoin,
+        JSONExtractString(symbol_raw, 'status') status,
+        JSONExtract(symbol_raw, 'fundingInterval', 'UInt64') fundingInterval,
+        JSONExtractString(symbol_raw, 'settleCoin') settleCoin,
+        JSONExtract(symbol_raw, 'upperFundingRate', 'Float64') upperFundingRate,
+        JSONExtract(symbol_raw, 'lowerFundingRate', 'Float64') lowerFundingRate,
+        JSONExtractBool(symbol_raw, 'isPreListing') isPreListing
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) symbol_raw
+        FROM url('https://api.bybit.com/v5/market/instruments-info?category=linear', JSONAsString)
+    );
+    INSERT INTO default.t_bybit_2025_01_02
+    SELECT
+        symbol_raw,
+        JSONExtractString(symbol_raw, 'symbol') s,
+        'spot' k,
+        JSONExtractString(symbol_raw, 'baseCoin') baseCoin,
+        JSONExtractString(symbol_raw, 'quoteCoin') quoteCoin,
+        JSONExtractString(symbol_raw, 'status') status,
+        0 fundingInterval,
+        '' settleCoin,
+        .0 upperFundingRate,
+        .0 lowerFundingRate,
+        false isPreListing
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) symbol_raw
+        FROM url('https://api.bybit.com/v5/market/instruments-info?category=spot', JSONAsString)
+    );
+    )";
+}
