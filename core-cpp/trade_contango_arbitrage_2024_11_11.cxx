@@ -1956,8 +1956,6 @@ void debug_buy_one_side_through_limit_order() {
             if (sell_order_fut.value().st == "FILLED") {
                 break;
             } else {
-                // TODO: handle situation when order is filled but you are
-                // trying to amend it (gateio is done, handle for bybit)
                 t_spot = client_pub_spot->fetch_ticker(symbol_spot);
                 auto [sell_price, _] = client_pr_fut->adjust_price_quantity(
                     symbol_fut, t_spot.value().ask * 1.03, .0);
