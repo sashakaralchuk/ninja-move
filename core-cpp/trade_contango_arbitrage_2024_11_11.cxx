@@ -1968,7 +1968,7 @@ void debug_buy_one_side_through_limit_order() {
         SPDLOG_INFO("fut sell order is filled => place spot order");
         auto [buy_price_spot, buy_quantity_spot] =
             client_pr_spot->adjust_price_quantity(
-                symbol_spot, t_spot.value().bid * 1.1,
+                symbol_spot, t_spot.value().bid * 1.04,
                 usdt_to_use / t_spot.value().bid);
         Order buy_order_spot = client_pr_spot->place_spot_limit_order(
             symbol_spot, "buy", buy_price_spot, buy_quantity_spot);
