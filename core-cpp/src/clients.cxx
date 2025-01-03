@@ -2177,7 +2177,7 @@ Order ClientPrivateBybit::amend_fut_order(Order& order, std::string price) {
     nlohmann::json res_obj = execute_http_post_req(url, headers, body_str);
     SPDLOG_DEBUG("{} {} res_obj={}", ex, kind, res_obj.dump());
     if (res_obj["retCode"] == 10001) {
-        return Order { .st = "ORDER_NOT_MODIFIED" }
+        return Order{.st = "ORDER_NOT_MODIFIED"};
     }
     return Order{
         .ex = ex,
