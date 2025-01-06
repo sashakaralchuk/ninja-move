@@ -1,0 +1,46 @@
+[project]
+name = "jupy"
+version = "0.1.0"
+requires-python = "==3.11.*"
+
+[tool.ruff]
+extend-exclude = []
+include = ["*.py"]
+line-length = 89
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["F", "I", "PL", "E", "W"]
+extend-select = ["Q000"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.per-file-ignores]
+
+[tool.pytest.ini_options]
+pythonpath = "."
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.4",
+    "ruff==0.8.1",
+]
+local = [
+    "annotated-types==0.6.0",
+    "certifi==2024.2.2",
+    "charset-normalizer==3.3.2",
+    "greenlet==3.0.3",
+    "idna==3.6",
+    "playwright==1.42.0",
+    "psycopg2-binary==2.9.9",
+    "pydantic-core==2.16.3",
+    "pydantic==2.6.4",
+    "pyee==11.0.1",
+    "python-dotenv==1.0.1",
+    "requests==2.31.0",
+    "sqlalchemy==2.0.29",
+    "typing-extensions==4.10.0",
+    "urllib3==2.2.1",
+]
