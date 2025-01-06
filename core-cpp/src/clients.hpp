@@ -69,6 +69,7 @@ class ClientPublic : public hv::WebSocketClient {
     virtual void unsubscribe_from_depth(std::string& symbol) = 0;
     virtual void ping() = 0;
     virtual Ticker fetch_ticker(std::string& symbol) = 0;
+    virtual std::vector<Ticker> fetch_tickers() = 0;
 
    protected:
     virtual void handle_onmessage(const std::string& msg) = 0;
@@ -108,6 +109,7 @@ class ClientPrivate : public hv::WebSocketClient {
     int get_orders_len();
     void clear_orders();
     std::string conv_size_to_str(double size);
+    nlohmann::json get_exchange_info();
 
    protected:
     std::optional<nlohmann::json> fut_exchange_info;
@@ -133,6 +135,7 @@ class ClientPublicGateio : public ClientPublic {
     void unsubscribe_from_depth(std::string& symbol);
     void ping();
     Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
 
     std::vector<Depth> fetch_depth_snapshot(std::string& symbol);
 
@@ -181,6 +184,7 @@ class ClientPublicMexc : public ClientPublic {
     void unsubscribe_from_depth(std::string& symbol);
     void ping();
     Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
     std::vector<Depth> fetch_depth_snapshot(std::string& symbol);
 
    protected:
@@ -231,6 +235,7 @@ class ClientPublicBybit : public ClientPublic {
     void unsubscribe_from_depth(std::string& symbol);
     void ping();
     Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
 
    protected:
     void handle_onmessage(const std::string& msg);
@@ -279,6 +284,7 @@ class ClientPublicHtx : public ClientPublic {
     void unsubscribe_from_depth(std::string& symbol);
     void ping();
     Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
     static std::string parse_symbol_from_trade_ch(std::string& ch);
     static std::string parse_symbol_from_depth_ch(std::string& ch);
     static int gzDecompress(const char* src, int srcLen, const char* dst,

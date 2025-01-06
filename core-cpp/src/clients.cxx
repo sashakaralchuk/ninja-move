@@ -297,6 +297,16 @@ std::string ClientPrivate::conv_size_to_str(double size) {
     }
 }
 
+nlohmann::json ClientPrivate::get_exchange_info() {
+    if (kind == "fut") {
+        return fut_exchange_info.value();
+    } else if (kind == "spot") {
+        return spot_exchange_info.value();
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind=", kind));
+    }
+}
+
 ClientPublicGateio::ClientPublicGateio(std::string kind)
     : ClientPublic("gateio", kind) {}
 
@@ -435,6 +445,30 @@ Ticker ClientPublicGateio::fetch_ticker(std::string& symbol) {
             .bid = stod((std::string)res_obj[0]["highest_bid"]),
             .ask = stod((std::string)res_obj[0]["lowest_ask"]),
         };
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+}
+
+std::vector<Ticker> ClientPublicGateio::fetch_tickers() {
+    long start_millis = now_millis();
+    if (kind == "fut") {
+        std::string url_str =
+            "https://fx-api.gateio.ws/api/v4/futures/usdt/tickers";
+        nlohmann::json res_obj = execute_http_get_req(url_str);
+        SPDLOG_DEBUG("{} {} fetch_tickers dur={} res_obj.size()={}", ex, kind,
+                     now_millis() - start_millis, res_obj.size());
+        std::vector<Ticker> vec;
+        for (auto& t : res_obj) {
+            vec.push_back(Ticker{
+                .s = t["contract"],
+                .bid = stod((std::string)t["highest_bid"]),
+                .ask = stod((std::string)t["lowest_ask"]),
+            });
+        }
+        return vec;
+    } else if (kind == "spot") {
+        throw std::runtime_error("not-implemented");
     } else {
         throw std::runtime_error(fmt::format("unexpected kind={}", kind));
     }
@@ -1279,6 +1313,10 @@ Ticker ClientPublicMexc::fetch_ticker(std::string& symbol) {
     }
 }
 
+std::vector<Ticker> ClientPublicMexc::fetch_tickers() {
+    throw std::runtime_error("not-implemented");
+}
+
 std::vector<Depth> ClientPublicMexc::fetch_depth_snapshot(std::string& symbol) {
     if (kind == "fut") {
         std::string url =
@@ -1879,6 +1917,31 @@ Ticker ClientPublicBybit::fetch_ticker(std::string& symbol) {
     };
 }
 
+std::vector<Ticker> ClientPublicBybit::fetch_tickers() {
+    std::string url_str = "";
+    if (kind == "fut") {
+        url_str = "https://api.bybit.com/v5/market/tickers?category=linear";
+    } else if (kind == "spot") {
+        throw std::runtime_error("not-implemented");
+    } else {
+        throw std::runtime_error(fmt::format("unexpected kind={}", kind));
+    }
+    nlohmann::json res_obj = execute_http_get_req(url_str);
+    if (res_obj["retCode"] != 0 || res_obj["retMsg"] != "OK") {
+        throw std::runtime_error(
+            fmt::format("{} {} res is not success", ex, kind));
+    }
+    std::vector<Ticker> vec;
+    for (auto& t_raw : res_obj["result"]["list"]) {
+        vec.push_back(Ticker{
+            .s = t_raw["symbol"],
+            .ask = stod((std::string)t_raw["ask1Price"]),
+            .bid = stod((std::string)t_raw["bid1Price"]),
+        });
+    }
+    return vec;
+}
+
 void ClientPublicBybit::handle_onmessage(const std::string& msg) {
     nlohmann::json msg_obj = nlohmann::json::parse(msg);
     if (msg_obj.contains("op")) {
@@ -1981,9 +2044,11 @@ void ClientPrivateBybit::init_idle() {
 
 void ClientPrivateBybit::init_exchange_info() {
     std::string fut_ex_info_url_str =
-        "https://api.bybit.com/v5/market/instruments-info?category=linear";
+        "https://api.bybit.com/v5/market/"
+        "instruments-info?category=linear&limit=1000";
     std::string spot_ex_info_url_str =
-        "https://api.bybit.com/v5/market/instruments-info?category=spot";
+        "https://api.bybit.com/v5/market/"
+        "instruments-info?category=spot&limit=1000";
     if (kind == "fut") {
         fut_exchange_info = execute_http_get_req(fut_ex_info_url_str);
     } else if (kind == "spot") {
@@ -2484,6 +2549,10 @@ void ClientPublicHtx::unsubscribe_from_depth(std::string& symbol) {
 void ClientPublicHtx::ping() {}
 
 Ticker ClientPublicHtx::fetch_ticker(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+std::vector<Ticker> ClientPublicHtx::fetch_tickers() {
     throw std::runtime_error("not-implemented");
 }
 
