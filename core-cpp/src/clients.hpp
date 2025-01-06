@@ -1,4 +1,5 @@
 #include <WebSocketClient.h>
+#include <curl/curl.h>
 
 #include <iostream>
 
@@ -17,6 +18,10 @@ std::string time_point_to_str(std::chrono::system_clock::time_point tp,
 
 std::tuple<std::string, double> conv_symbol_price_to_atomic_v1(
     std::string symbol, double price);
+
+nlohmann::json exec_http_get_req(std::string& url,
+                                 curl_slist* headers = nullptr,
+                                 bool log_res = false);
 
 struct Order {
     std::string ex;
