@@ -145,8 +145,8 @@ bool str_ends_with(std::string s1, std::string s2) {
     return s1.substr(s1.length() - s2.length(), s2.length()).compare(s2) == 0;
 }
 
-void throw_unexp_kind(std::string& ex, std::string kind) {
-    throw std::runtime_error(fmt::format("{} unexpected kind={}", ex, kind));
+std::runtime_error gen_unexp_kind_err(std::string& ex, std::string kind) {
+    return std::runtime_error(fmt::format("{} unexpected kind={}", ex, kind));
 }
 
 ClientPublic::ClientPublic(std::string ex_, std::string kind_,
@@ -299,7 +299,7 @@ nlohmann::json ClientPrivate::get_exchange_info() {
     } else if (kind == "spot") {
         return spot_exchange_info.value();
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -314,7 +314,7 @@ void ClientPublicGateio::init_idle() {
         std::string url = "wss://api.gateio.ws/ws/v4/";
         init_idle_(url);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -346,7 +346,7 @@ void ClientPublicGateio::subscribe_to_trades(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -372,7 +372,7 @@ void ClientPublicGateio::subscribe_to_depth(std::string& symbol) {
             }})",
             ts_secs, symbol));
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -401,7 +401,7 @@ void ClientPublicGateio::unsubscribe_from_depth(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), ts_secs, symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -442,7 +442,7 @@ Ticker ClientPublicGateio::fetch_ticker(std::string& symbol) {
             .ask = stod((std::string)res_obj[0]["lowest_ask"]),
         };
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -466,7 +466,7 @@ std::vector<Ticker> ClientPublicGateio::fetch_tickers() {
     } else if (kind == "spot") {
         throw std::runtime_error("not-implemented");
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -505,7 +505,7 @@ std::vector<Depth> ClientPublicGateio::fetch_depth_snapshot(
         return std::vector<Depth>{
             Depth{.u = obj["id"], .asks = asks, .bids = bids}};
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -612,7 +612,7 @@ void ClientPublicGateio::handle_onmessage(const std::string& msg) {
             onmessage_trade(trade);
         }
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -630,7 +630,7 @@ void ClientPrivateGateio::init_idle() {
         std::string url_str = "wss://api.gateio.ws/ws/v4/";
         init_idle_(url_str);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     init_exchange_info();
 }
@@ -645,7 +645,7 @@ void ClientPrivateGateio::init_exchange_info() {
             "https://api.gateio.ws/api/v4/spot/currency_pairs";
         spot_exchange_info = exec_http_get_req(url_str);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -656,7 +656,7 @@ void ClientPrivateGateio::subscribe_to_private_events() {
     } else if (kind == "spot") {
         channel = "spot.orders";
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     int timestamp = int(
         std::chrono::system_clock::now().time_since_epoch().count() / 1000000);
@@ -727,7 +727,7 @@ std::tuple<std::string, std::string> ClientPrivateGateio::adjust_price_quantity(
         return {conv_to_dec_str_v2(price, price_prec),
                 conv_to_dec_str_v2(quantity, quantity_prec)};
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -736,7 +736,7 @@ Order ClientPrivateGateio::place_fut_limit_order(std::string symbol,
                                                  std::string price,
                                                  std::string quantity) {
     if (kind != "fut") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     double timestamp =
         std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
@@ -783,7 +783,7 @@ Order ClientPrivateGateio::place_fut_limit_order(std::string symbol,
 
 void ClientPrivateGateio::set_leverage_to_1(std::string symbol) {
     if (kind != "fut") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     double timestamp =
         std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
@@ -808,7 +808,7 @@ void ClientPrivateGateio::set_leverage_to_1(std::string symbol) {
 
 Order ClientPrivateGateio::amend_fut_order(Order& order, std::string price) {
     if (kind != "fut") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     std::string timestamp_str = std::to_string(
         std::chrono::system_clock::now().time_since_epoch().count() / 1000000);
@@ -853,7 +853,7 @@ Order ClientPrivateGateio::place_spot_limit_order(std::string symbol,
                                                   std::string price,
                                                   std::string quantity) {
     if (kind != "spot") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     if (side != "buy" && side != "sell") {
         throw std::runtime_error("unexpected side=" + side);
@@ -967,7 +967,7 @@ Order ClientPrivateGateio::fetch_order(Order& order) {
         }
         return order;
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1002,7 +1002,7 @@ double ClientPrivateGateio::fetch_order_fee_usdt(Order& order) {
         SPDLOG_INFO("{} fee_usdt is already fetched in fetch_order", ex);
         return order.fee_usdt;
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1046,7 +1046,7 @@ std::map<std::string, double> ClientPrivateGateio::fetch_balances() {
         }
         return balances;
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1175,7 +1175,7 @@ void ClientPrivateGateio::handle_onmessage(const std::string& msg) {
             return;
         }
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     spdlog::warn("missing {} {} message msg_obj={}", ex, kind, msg_obj.dump());
 }
@@ -1214,7 +1214,7 @@ void ClientPublicMexc::init_idle() {
         std::string url = "wss://wbs.mexc.com/ws";
         init_idle_(url);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1236,7 +1236,7 @@ void ClientPublicMexc::subscribe_to_trades(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1257,7 +1257,7 @@ void ClientPublicMexc::subscribe_to_depth(std::string& symbol) {
             }})",
             symbol));
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1282,7 +1282,7 @@ void ClientPublicMexc::unsubscribe_from_depth(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1304,7 +1304,7 @@ Ticker ClientPublicMexc::fetch_ticker(std::string& symbol) {
             .ask = stod((std::string)res_obj["askPrice"]),
         };
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1356,7 +1356,7 @@ std::vector<Depth> ClientPublicMexc::fetch_depth_snapshot(std::string& symbol) {
         return std::vector<Depth>{
             Depth{.u = obj["lastUpdateId"], .asks = asks, .bids = bids}};
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1484,7 +1484,7 @@ void ClientPublicMexc::handle_onmessage(const std::string& msg) {
             throw std::runtime_error(fmt::format("unexpected msg={}", msg));
         }
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1504,7 +1504,7 @@ void ClientPrivateMexc::init_idle() {
                                           create_listen_key());
         init_idle_(url_str);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     init_exchange_info();
 }
@@ -1514,7 +1514,7 @@ void ClientPrivateMexc::init_exchange_info() {
         std::string url_str = "https://api.mexc.com/api/v3/exchangeInfo";
         spot_exchange_info = exec_http_get_req(url_str);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1526,14 +1526,14 @@ void ClientPrivateMexc::subscribe_to_private_events() {
         })";
         send(s);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
 std::tuple<std::string, std::string> ClientPrivateMexc::adjust_price_quantity(
     std::string symbol, double price, double quantity) {
     if (kind != "spot") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     if (!spot_exchange_info.has_value()) {
         throw std::runtime_error("spot_exchange_info is not set");
@@ -1652,7 +1652,7 @@ Order ClientPrivateMexc::fetch_order(Order& order) {
         }
         return order;
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1678,7 +1678,7 @@ double ClientPrivateMexc::fetch_order_fee_usdt(Order& order) {
         }
         return fee_out;
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1703,7 +1703,7 @@ std::map<std::string, double> ClientPrivateMexc::fetch_balances() {
         }
         return balances;
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1824,7 +1824,7 @@ void ClientPublicBybit::init_idle() {
         std::string url = "wss://stream.bybit.com/v5/public/spot";
         init_idle_(url);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1848,7 +1848,7 @@ void ClientPublicBybit::subscribe_to_trades(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1862,7 +1862,7 @@ void ClientPublicBybit::subscribe_to_depth(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1876,7 +1876,7 @@ void ClientPublicBybit::unsubscribe_from_depth(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -1893,7 +1893,7 @@ Ticker ClientPublicBybit::fetch_ticker(std::string& symbol) {
             "https://api.bybit.com/v5/market/tickers?category=spot&symbol={}",
             symbol);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     nlohmann::json res_obj = exec_http_get_req(url_str);
     if (res_obj["retCode"] != 0 || res_obj["retMsg"] != "OK" ||
@@ -1916,7 +1916,7 @@ std::vector<Ticker> ClientPublicBybit::fetch_tickers() {
     } else if (kind == "spot") {
         throw std::runtime_error("not-implemented");
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     nlohmann::json res_obj = exec_http_get_req(url_str);
     if (res_obj["retCode"] != 0 || res_obj["retMsg"] != "OK") {
@@ -2006,7 +2006,7 @@ void ClientPublicBybit::handle_onmessage(const std::string& msg) {
             }
         }
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2046,7 +2046,7 @@ void ClientPrivateBybit::init_exchange_info() {
     } else if (kind == "spot") {
         spot_exchange_info = exec_http_get_req(spot_ex_info_url_str);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2114,7 +2114,7 @@ std::tuple<std::string, std::string> ClientPrivateBybit::adjust_price_quantity(
         std::string quantity2 = conv_to_dec_str_v2(quantity, basePrecision);
         return std::make_tuple(price2, quantity2);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2123,7 +2123,7 @@ Order ClientPrivateBybit::place_fut_limit_order(std::string symbol,
                                                 std::string price,
                                                 std::string quantity) {
     if (kind != "fut") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     std::string side_int = "";
     if (side == "buy") {
@@ -2177,7 +2177,7 @@ Order ClientPrivateBybit::place_fut_limit_order(std::string symbol,
 
 void ClientPrivateBybit::set_leverage_to_1(std::string symbol) {
     if (kind != "fut") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     std::string timestamp_str = std::to_string(
         (long)(std::chrono::system_clock::now().time_since_epoch().count() /
@@ -2207,7 +2207,7 @@ void ClientPrivateBybit::set_leverage_to_1(std::string symbol) {
 
 Order ClientPrivateBybit::amend_fut_order(Order& order, std::string price) {
     if (kind != "fut") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     std::string timestamp_str = std::to_string(
         (long)(std::chrono::system_clock::now().time_since_epoch().count() /
@@ -2254,7 +2254,7 @@ Order ClientPrivateBybit::place_spot_limit_order(std::string symbol,
                                                  std::string price,
                                                  std::string quantity) {
     if (kind != "spot") {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     std::string side_int = "";
     if (side == "buy") {
@@ -2310,7 +2310,7 @@ Order ClientPrivateBybit::fetch_order(Order& order) {
     } else if (kind == "spot") {
         query_params = fmt::format("category=spot&orderId={}", order.id);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
     std::string timestamp_str = std::to_string((long)(now_millis()));
     std::string recw_window = "5000";
@@ -2359,7 +2359,7 @@ Order ClientPrivateBybit::fetch_order(Order& order) {
             order_out.filled_amount = stod((std::string)t["cumExecQty"]) -
                                       stod((std::string)t["cumExecFee"]);
         } else {
-            throw_unexp_kind(ex, kind);
+            throw gen_unexp_kind_err(ex, kind);
         }
     }
     return order_out;
@@ -2439,7 +2439,7 @@ void ClientPrivateBybit::handle_onmessage(const std::string& msg) {
                     stod((std::string)order_obj["cumExecQty"]) -
                     stod((std::string)order_obj["cumExecFee"]);
             } else {
-                throw_unexp_kind(ex, kind);
+                throw gen_unexp_kind_err(ex, kind);
             }
         } else {
             throw std::runtime_error(
@@ -2467,7 +2467,7 @@ void ClientPublicHtx::init_idle() {
         std::string url = "wss://api.huobi.pro/ws";
         init_idle_(url);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2489,7 +2489,7 @@ void ClientPublicHtx::subscribe_to_trades(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2511,7 +2511,7 @@ void ClientPublicHtx::subscribe_to_depth(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2533,7 +2533,7 @@ void ClientPublicHtx::unsubscribe_from_depth(std::string& symbol) {
         snprintf(t, sizeof(t), t_template.c_str(), symbol.c_str());
         send(t);
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2603,7 +2603,7 @@ std::vector<Depth> ClientPublicHtx::fetch_depth_snapshot(std::string& symbol) {
             "&depth=20&type=step0";
         return parse_depth_from_res(exec_http_get_req(url));
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
@@ -2696,7 +2696,7 @@ void ClientPublicHtx::handle_onmessage(const std::string& msg) {
             throw std::runtime_error("unexpected msg=" + msg);
         }
     } else {
-        throw_unexp_kind(ex, kind);
+        throw gen_unexp_kind_err(ex, kind);
     }
 }
 
