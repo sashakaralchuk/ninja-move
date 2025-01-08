@@ -464,7 +464,19 @@ std::vector<Ticker> ClientPublicGateio::fetch_tickers() {
         }
         return vec;
     } else if (kind == "spot") {
-        throw std::runtime_error("not-implemented");
+        std::string url_str = "https://api.gateio.ws/api/v4/spot/tickers";
+        nlohmann::json res_obj = exec_http_get_req(url_str);
+        SPDLOG_DEBUG("{} {} fetch_tickers dur={} res_obj.size()={}", ex, kind,
+                     now_millis() - start_millis, res_obj.size());
+        std::vector<Ticker> vec;
+        for (auto& t : res_obj) {
+            vec.push_back(Ticker{
+                .s = t["currency_pair"],
+                .bid = stod((std::string)t["highest_bid"]),
+                .ask = stod((std::string)t["lowest_ask"]),
+            });
+        }
+        return vec;
     } else {
         throw gen_unexp_kind_err(ex, kind);
     }
@@ -636,6 +648,7 @@ void ClientPrivateGateio::init_idle() {
 }
 
 void ClientPrivateGateio::init_exchange_info() {
+    SPDLOG_DEBUG("{} {} init_exchange_info", ex, kind);
     if (kind == "fut") {
         std::string url_str =
             "https://api.gateio.ws/api/v4/futures/usdt/contracts";
@@ -1309,7 +1322,21 @@ Ticker ClientPublicMexc::fetch_ticker(std::string& symbol) {
 }
 
 std::vector<Ticker> ClientPublicMexc::fetch_tickers() {
-    throw std::runtime_error("not-implemented");
+    if (kind == "spot") {
+        std::string url = "https://api.mexc.com/api/v3/ticker/24hr";
+        nlohmann::json obj = exec_http_get_req(url);
+        std::vector<Ticker> vec;
+        for (auto& t : obj) {
+            vec.push_back(Ticker{
+                .s = t["symbol"],
+                .bid = stod((std::string)t["bidPrice"]),
+                .ask = stod((std::string)t["askPrice"]),
+            });
+        }
+        return vec;
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
 }
 
 std::vector<Depth> ClientPublicMexc::fetch_depth_snapshot(std::string& symbol) {
@@ -1914,7 +1941,7 @@ std::vector<Ticker> ClientPublicBybit::fetch_tickers() {
     if (kind == "fut") {
         url_str = "https://api.bybit.com/v5/market/tickers?category=linear";
     } else if (kind == "spot") {
-        throw std::runtime_error("not-implemented");
+        url_str = "https://api.bybit.com/v5/market/tickers?category=spot";
     } else {
         throw gen_unexp_kind_err(ex, kind);
     }

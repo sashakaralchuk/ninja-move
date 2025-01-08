@@ -23,37 +23,6 @@ nlohmann::json exec_http_get_req(std::string& url,
                                  curl_slist* headers = nullptr,
                                  bool log_res = false);
 
-struct Order {
-    std::string ex;
-    std::string k;
-    std::string id;
-    long open_ts;
-    std::string s;
-    std::string p;
-    double p_avg_fill;
-    double v;
-    double filled_amount;
-    std::string st;
-    double fee_usdt;
-    std::string toString() const {
-        return fmt::format(
-            "{{ex={},k={},id={},open_ts={},s={},p={},p_avg_fill={},v={},st={},"
-            "filled_amount={},fee_usdt={}}}",
-            ex, k, id, open_ts, s, p, p_avg_fill, v, st, filled_amount,
-            fee_usdt);
-    }
-    bool isFilled() { return st == "FILLED"; }
-};
-
-struct Ticker {
-    std::string s;
-    double ask;
-    double bid;
-    std::string toString() const {
-        return fmt::format("Ticker{{s={},ask={},bid={}}}", s, ask, bid);
-    }
-};
-
 class ClientPublic : public hv::WebSocketClient {
    public:
     bool ws_onopen_received;

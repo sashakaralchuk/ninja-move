@@ -1,3 +1,6 @@
+#ifndef SRC_MODELS_
+#define SRC_MODELS_
+
 #include <gmpxx.h>
 #include <spdlog/spdlog.h>
 
@@ -65,3 +68,36 @@ class OrderBookCache {
     std::map<std::string, double> asks;
     std::map<std::string, double> bids;
 };
+
+struct Order {
+    std::string ex;
+    std::string k;
+    std::string id;
+    long open_ts;
+    std::string s;
+    std::string p;
+    double p_avg_fill;
+    double v;
+    double filled_amount;
+    std::string st;
+    double fee_usdt;
+    std::string toString() const {
+        return fmt::format(
+            "{{ex={},k={},id={},open_ts={},s={},p={},p_avg_fill={},v={},st={},"
+            "filled_amount={},fee_usdt={}}}",
+            ex, k, id, open_ts, s, p, p_avg_fill, v, st, filled_amount,
+            fee_usdt);
+    }
+    bool isFilled() { return st == "FILLED"; }
+};
+
+struct Ticker {
+    std::string s;
+    double ask;
+    double bid;
+    std::string toString() const {
+        return fmt::format("Ticker{{s={},ask={},bid={}}}", s, ask, bid);
+    }
+};
+
+#endif  // SRC_MODELS_

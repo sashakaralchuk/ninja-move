@@ -34,6 +34,7 @@ add_subdirectory(tt/SqrtLibrary)
 add_subdirectory(libs/json)
 add_subdirectory(libs/clickhouse-cpp)
 add_subdirectory(libs/googletest)
+add_subdirectory(libs/cpp-channel)
 
 get_filename_component(hw_proto "../protos/trade_contango.proto" ABSOLUTE)
 get_filename_component(hw_proto_path "${hw_proto}" PATH)
@@ -83,6 +84,7 @@ add_executable(trade_contango_arbitrage_2024_11_11
     trade_contango_arbitrage_2024_11_11.cxx
     src/models.cxx
     src/clients.cxx
+    src/spreads_map.cxx
 )
 target_include_directories(trade_contango_arbitrage_2024_11_11 PRIVATE
     libs/libhv/build/include/hv
@@ -93,6 +95,7 @@ target_include_directories(trade_contango_arbitrage_2024_11_11 PRIVATE
     libs/gmp-6.3.0/build/include
     libs/backward-cpp
     libs/librdkafka/src-cpp
+    libs/cpp-channel/include
 )
 target_link_libraries(trade_contango_arbitrage_2024_11_11 PRIVATE
     nlohmann_json::nlohmann_json
@@ -161,6 +164,10 @@ target_link_libraries(clients_test
     gRPC::grpc++_reflection
     gRPC::grpc++
     protobuf::libprotobuf
+)
+add_executable(spreads_map_test
+    src/spreads_map_test.cxx
+    src/spreads_map.cxx
 )
 gtest_discover_tests(clients_test)
 

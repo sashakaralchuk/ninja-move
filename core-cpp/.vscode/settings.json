@@ -94,6 +94,8 @@
         "string_span": "cpp",
         "multi_span": "cpp",
         "shared_mutex": "cpp",
-        "cassert": "cpp"
+        "cassert": "cpp",
+        "print": "cpp",
+        "sim_vector": "cpp"
     }
 }

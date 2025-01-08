@@ -2,12 +2,15 @@
 #include <gmpxx.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/health_check_service_interface.h>
+#include <openssl/hmac.h>
 #include <spdlog/cfg/env.h>
 #include <spdlog/spdlog.h>
 
 #include <backward.hpp>
 #include <cmath>
+#include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -16,15 +19,12 @@
 #include "absl/flags/parse.h"
 #include "absl/strings/str_format.h"
 #include "grpcpp/grpcpp.h"
+#include "msd/channel.hpp"
+#include "rdkafkacpp.h"
 #include "spdlog/sinks/daily_file_sink.h"
 #include "src/clients.hpp"
-// #include "src/models.hpp" // TODO: how to do such imports types together
-#include <openssl/hmac.h>
-
-#include <cstring>
-#include <iomanip>
-
-#include "rdkafkacpp.h"
+#include "src/models.hpp"
+#include "src/spreads_map.hxx"
 #include "trade_contango.grpc.pb.h"
 
 using grpc::Server;
@@ -71,6 +71,8 @@ void wait_for_spread_converge_show_order_book();
 void debug_amend_order_gateio_fut();
 void debug_amend_order_bybit_fut();
 void debug_buy_one_side_through_limit_order();
+void execute_v5();
+void fetch_process_tickers();
 
 std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_place_listen_mexc_fut_v2),
@@ -98,6 +100,8 @@ std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(debug_amend_order_gateio_fut),
     GET_FN_NAME_TO_FN(debug_amend_order_bybit_fut),
     GET_FN_NAME_TO_FN(debug_buy_one_side_through_limit_order),
+    GET_FN_NAME_TO_FN(execute_v5),
+    GET_FN_NAME_TO_FN(fetch_process_tickers),
 };
 
 int main(int argc, char** argv) {
@@ -441,12 +445,13 @@ class ClientsHouse {
     }
 
     void init_private_clients() {
+        SPDLOG_INFO("init ws_clients_private");
         ws_clients_private["mexc-spot"] = new ClientPrivateMexc("spot");
         ws_clients_private["gateio-fut"] = new ClientPrivateGateio("fut");
         ws_clients_private["gateio-spot"] = new ClientPrivateGateio("spot");
         ws_clients_private["bybit-fut"] = new ClientPrivateBybit("fut");
         ws_clients_private["bybit-spot"] = new ClientPrivateBybit("spot");
-        SPDLOG_INFO("ws_clients_private been created => init exchanges infos");
+        SPDLOG_INFO("run init_exchange_info");
         for (auto o = ws_clients_private.cbegin();
              o != ws_clients_private.cend(); ++o) {
             o->second->init_exchange_info();
@@ -2011,6 +2016,123 @@ void debug_buy_one_side_through_limit_order() {
     run_listening_for_events_sync();
 }
 
+///
+/// 1. On spread appearance place limit order on fut, than constantly amend it
+/// with price spot*103% till it will be filled.
+/// 2. When it's filled buy spot market.
+/// 3. Wait for converge
+/// 4. Close immediately fut and spot
+///
+void execute_v5() {
+    ClientsHouse ch = ClientsHouse();
+    ch.init_public_clients();
+    ch.init_private_clients();
+    double usdt_to_use = 25.0;
+    std::thread _1([&]() {
+        wait_until([&]() { return trade_obj_raw_f != 0; });
+        SpreadsReqV2 obj = spreads_req_v2.value();
+        SPDLOG_INFO("run obj={}", format_as(obj));
+        ClientPrivate* client_pr_fut =
+            ch.get_client_private(obj.t_fut().ex(), "fut");
+        ClientPublic* client_pub_fut =
+            ch.get_client_public(obj.t_fut().ex(), "fut");
+        ClientPrivate* client_pr_spot =
+            ch.get_client_private(obj.t_spot().ex(), "spot");
+        ClientPublic* client_pub_spot =
+            ch.get_client_public(obj.t_spot().ex(), "spot");
+        std::string symbol_fut = obj.t_fut().s();
+        std::string symbol_spot = obj.t_spot().s();
+        std::optional<Order> sell_order_fut = {};
+        std::optional<Ticker> t_spot = {};
+        {
+            SPDLOG_INFO("place fut sell order");
+            t_spot = client_pub_spot->fetch_ticker(symbol_spot);
+            auto [sell_price, sell_quantity] =
+                client_pr_fut->adjust_price_quantity(
+                    symbol_fut, t_spot.value().ask * 1.03,
+                    usdt_to_use / t_spot.value().ask);
+            sell_order_fut = client_pr_fut->place_fut_limit_order(
+                symbol_fut, "sell", sell_price, sell_quantity);
+        }
+        SPDLOG_INFO("wait fot fut fill (overwise and with spot price)");
+        while (true) {
+            sell_order_fut = client_pr_fut->fetch_order(sell_order_fut.value());
+            if (sell_order_fut.value().st == "FILLED") {
+                break;
+            } else {
+                t_spot = client_pub_spot->fetch_ticker(symbol_spot);
+                auto [sell_price, _] = client_pr_fut->adjust_price_quantity(
+                    symbol_fut, t_spot.value().ask * 1.03, .0);
+                // XXX: change quantity too
+                client_pr_fut->amend_fut_order(sell_order_fut.value(),
+                                               sell_price);
+            }
+        }
+        // TODO: set leverage to 1
+        SPDLOG_INFO("fut sell order is filled => place spot order");
+        auto [buy_price_spot, buy_quantity_spot] =
+            client_pr_spot->adjust_price_quantity(
+                symbol_spot, t_spot.value().bid * 1.04,
+                usdt_to_use / t_spot.value().bid);
+        Order buy_order_spot = client_pr_spot->place_spot_limit_order(
+            symbol_spot, "buy", buy_price_spot, buy_quantity_spot);
+        wait_until([&]() {
+            buy_order_spot = client_pr_spot->fetch_order(buy_order_spot);
+            return buy_order_spot.st == "FILLED";
+        });
+        SPDLOG_INFO("spot buy-order is filled => wait for converge");
+        wait_until([&]() {
+            long t1 = now_millis();
+            // XXX: fetch them in parallel
+            auto f = conv_symbol_price_to_atomic_v1;
+            Ticker t_fut = client_pub_fut->fetch_ticker(symbol_fut);
+            auto [_1, t_fut_ask] = f(t_fut.s, t_fut.ask);
+            auto [_2, t_fut_bid] = f(t_fut.s, t_fut.bid);
+            t_spot = client_pub_spot->fetch_ticker(symbol_spot);
+            auto [_3, t_spot_ask] = f(t_spot.value().s, t_spot.value().ask);
+            auto [_4, t_spot_bid] = f(t_spot.value().s, t_spot.value().bid);
+            double diff_ask_bid = (t_fut_bid - t_spot_ask) / t_spot_ask * 100;
+            double diff_bid_ask = (t_fut_ask - t_spot_bid) / t_spot_bid * 100;
+            SPDLOG_INFO("diff_ask_bid={:.4f} diff_ask_bid={:.4f} dur={}",
+                        diff_ask_bid, diff_bid_ask, now_millis() - t1);
+            return diff_bid_ask < 0.5;  // XXX: adjust this value
+        });
+        // XXX: implement in parallel
+        SPDLOG_INFO("price converged => close orders");
+        {
+            SPDLOG_INFO("place fut buy order");
+            auto [buy_price_fut, _] = client_pr_fut->adjust_price_quantity(
+                symbol_fut, t_spot.value().ask * 1.04, 0.0);
+            std::string buy_quantity_fut = client_pr_fut->conv_size_to_str(
+                sell_order_fut.value().filled_amount);
+            Order buy_order_fut = client_pr_fut->place_fut_limit_order(
+                symbol_fut, "buy", buy_price_fut, buy_quantity_fut);
+            SPDLOG_INFO("wait fut for buy order fill");
+            wait_until([&]() {
+                buy_order_fut = client_pr_fut->fetch_order(buy_order_fut);
+                return buy_order_fut.st == "FILLED";
+            });
+        }
+        {
+            SPDLOG_INFO("place spot sell order");
+            auto [sell_price_spot, sell_quantity_spot] =
+                client_pr_spot->adjust_price_quantity(
+                    symbol_spot, t_spot.value().bid * 0.96,
+                    buy_order_spot.filled_amount);
+            Order sell_order_spot = client_pr_spot->place_spot_limit_order(
+                symbol_spot, "sell", sell_price_spot, sell_quantity_spot);
+            SPDLOG_INFO("wait for spot sell order fill");
+            wait_until([&]() {
+                sell_order_spot = client_pr_spot->fetch_order(sell_order_spot);
+                return sell_order_spot.st == "FILLED";
+            });
+        }
+        TelegramBotPort::new_from_envs().notify_pretty(__FILENAME__,
+                                                       "execute-v5-2025-01-04");
+    });
+    run_listening_for_events_sync();
+}
+
 void _map_exchanges_tokens_queries() {
     std::string _clickhouse = R"(
     CREATE TABLE default.t_mexc_2025_01_02 (
@@ -2139,5 +2261,1084 @@ void _map_exchanges_tokens_queries() {
         SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) symbol_raw
         FROM url('https://api.bybit.com/v5/market/instruments-info?category=spot', JSONAsString)
     );
+    ---
+    CREATE TABLE default.t_cmc_exchange_market_pairs_2025_01_05 (
+        `pair_raw` String,
+        `exchangeId` UInt64,
+        `exchangeSlug` String,
+        `marketPair` String,
+        `category` String,
+        `marketUrl` String,
+        `baseSymbol` String,
+        `baseCurrencyId` UInt64,
+        `quoteSymbol` String,
+        `quoteCurrencyId` UInt64
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_cmc_exchange_market_pairs_2025_01_05
+    SELECT
+        pair_raw,
+        JSONExtract(pair_raw, 'exchangeId', 'UInt64') exchangeId,
+        JSONExtractString(pair_raw, 'exchangeSlug') exchangeSlug,
+        JSONExtractString(pair_raw, 'marketPair') marketPair,
+        JSONExtractString(pair_raw, 'category') category,
+        JSONExtractString(pair_raw, 'marketUrl') marketUrl,
+        JSONExtractString(pair_raw, 'baseSymbol') baseSymbol,
+        JSONExtract(pair_raw, 'baseCurrencyId', 'UInt64') baseCurrencyId,
+        JSONExtractString(pair_raw, 'quoteSymbol') quoteSymbol,
+        JSONExtract(pair_raw, 'quoteCurrencyId', 'UInt64') quoteCurrencyId
+    FROM (
+        WITH 1 AS start_val, 1000 AS limit_val
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=mexc&category=spot&start=1&limit=1000', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=mexc&category=spot&start=1001&limit=1000', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=mexc&category=spot&start=2001&limit=1000', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=gate-io&category=perpetual&start=1&limit=200', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=gate-io&category=perpetual&start=201&limit=200', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=gate-io&category=perpetual&start=401&limit=200', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=gate-io&category=spot&start=1&limit=1000', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=gate-io&category=spot&start=1001&limit=1000', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=gate-io&category=spot&start=2001&limit=1000', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=gate-io&category=spot&start=3001&limit=1000', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=bybit&category=perpetual&start=1&limit=200', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=bybit&category=perpetual&start=201&limit=200', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=bybit&category=perpetual&start=401&limit=200', JSONAsString)
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
+        FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=bybit&category=spot&start=1&limit=1000', JSONAsString)
+    );
+    ---
+    CREATE TABLE default.t_cmc_cryptocurrency_map_2025_01_05 (
+        `cryptocurrency_raw` String,
+        `id` UInt64,
+        `symbol` String
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_cmc_cryptocurrency_map_2025_01_05
+    SELECT
+        cryptocurrency_raw,
+        JSONExtract(cryptocurrency_raw, 'id', 'UInt64') id,
+        JSONExtractString(cryptocurrency_raw, 'symbol') symbol
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) cryptocurrency_raw
+        FROM url('https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?start=1&limit=5000', JSONAsString, headers('X-CMC_PRO_API_KEY'='be43125a-574a-46bb-8f5e-db2e8d204adf'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) cryptocurrency_raw
+        FROM url('https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?start=5001&limit=5000', JSONAsString, headers('X-CMC_PRO_API_KEY'='be43125a-574a-46bb-8f5e-db2e8d204adf'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) cryptocurrency_raw
+        FROM url('https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?start=10001&limit=5000', JSONAsString, headers('X-CMC_PRO_API_KEY'='be43125a-574a-46bb-8f5e-db2e8d204adf'))
+    );
+    ---
+    CREATE TABLE default.t_cmc_exchange_map_2025_01_05 (
+        `exchange_raw` String,
+        `id` UInt64,
+        `slug` String
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_cmc_exchange_map_2025_01_05
+    SELECT
+        exchange_raw,
+        JSONExtract(exchange_raw, 'id', 'UInt64') id,
+        JSONExtractString(exchange_raw, 'slug') slug
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) exchange_raw
+        FROM url('https://pro-api.coinmarketcap.com/v1/exchange/map?start=1&limit=5000', JSONAsString, headers('X-CMC_PRO_API_KEY'='be43125a-574a-46bb-8f5e-db2e8d204adf'))
+    );
+    ---
+    CREATE TABLE default.t_coingecko_coins_list_2025_01_05 (
+        `coin_raw` String,
+        `id` String,
+        `symbol` String,
+        `name` String
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_coingecko_coins_list_2025_01_05
+    SELECT
+        coin_raw,
+        JSONExtractString(coin_raw, 'id') id,
+        JSONExtractString(coin_raw, 'symbol') symbol,
+        JSONExtractString(coin_raw, 'name') name
+    FROM (
+        SELECT json coin_raw
+        FROM url('https://api.coingecko.com/api/v3/coins/list', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    );
+    ---
+    CREATE TABLE default.t_coingecko_exchanges_list_2025_01_05 (
+        `ex_raw` String,
+        `id` String,
+        `name` String
+    )
+    ENGINE = TinyLog;
+    INSERT INTO default.t_coingecko_exchanges_list_2025_01_05
+    SELECT
+        ex_raw,
+        JSONExtractString(ex_raw, 'id') id,
+        JSONExtractString(ex_raw, 'name') name
+    FROM (
+        SELECT json ex_raw
+        FROM url('https://api.coingecko.com/api/v3/exchanges/list', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    );
+    ---
+    CREATE TABLE default.t_coingecko_exchanges_tickers_2025_01_05 (
+        `ticker_raw` String,
+        `base` String,
+        `target` String,
+        `trade_url` String,
+        `k` String,
+        `market_identifier` String
+    )
+    ENGINE = TinyLog;
+    -- for i in $(seq 0 36); do echo "SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=$i', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))\nUNION ALL"; done
+    INSERT INTO default.t_coingecko_exchanges_tickers_2025_01_05
+    SELECT
+        ticker_raw,
+        JSONExtractString(ticker_raw, 'base') base,
+        JSONExtractString(ticker_raw, 'target') target,
+        JSONExtractString(ticker_raw, 'trade_url') trade_url,
+        'spot' k,
+        JSONExtractString(JSONExtractRaw(ticker_raw, 'market'), 'identifier') market_identifier
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=0', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=1', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=2', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=3', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=4', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=5', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=6', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=7', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=8', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=9', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=10', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=11', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=12', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=13', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=14', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=15', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=16', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=17', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=18', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=19', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=20', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=21', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=22', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=23', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=24', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=25', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=26', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=27', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=28', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=29', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=30', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=31', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=32', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=33', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=34', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=35', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/gate/tickers?page=36', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    );
+    INSERT INTO default.t_coingecko_exchanges_tickers_2025_01_05
+    SELECT
+        ticker_raw,
+        JSONExtractString(ticker_raw, 'base') base,
+        JSONExtractString(ticker_raw, 'target') target,
+        JSONExtractString(ticker_raw, 'trade_url') trade_url,
+        'fut' k,
+        'gate_futures' market_identifier
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw
+        FROM url(
+            'https://api.coingecko.com/api/v3/derivatives/exchanges/gate_futures?include_tickers=all',
+            JSONAsString,
+            headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme')
+        )
+    );
+    -- for i in $(seq 0 7); do echo "SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=$i', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))\nUNION ALL"; done
+    INSERT INTO default.t_coingecko_exchanges_tickers_2025_01_05
+    SELECT
+        ticker_raw,
+        JSONExtractString(ticker_raw, 'base') base,
+        JSONExtractString(ticker_raw, 'target') target,
+        JSONExtractString(ticker_raw, 'trade_url') trade_url,
+        'spot' k,
+        JSONExtractString(JSONExtractRaw(ticker_raw, 'market'), 'identifier') market_identifier
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=0', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=1', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=2', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=3', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=4', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=5', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=6', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=7', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    );
+    INSERT INTO default.t_coingecko_exchanges_tickers_2025_01_05
+    SELECT
+        ticker_raw,
+        JSONExtractString(ticker_raw, 'base') base,
+        JSONExtractString(ticker_raw, 'target') target,
+        JSONExtractString(ticker_raw, 'trade_url') trade_url,
+        'fut' k,
+        'bybit' market_identifier
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw
+        FROM url(
+            'https://api.coingecko.com/api/v3/derivatives/exchanges/bybit?include_tickers=all',
+            JSONAsString,
+            headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme')
+        )
+    );
+    -- for i in $(seq 0 29); do echo "SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=$i', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))\nUNION ALL"; done
+    INSERT INTO default.t_coingecko_exchanges_tickers_2025_01_05
+    SELECT
+        ticker_raw,
+        JSONExtractString(ticker_raw, 'base') base,
+        JSONExtractString(ticker_raw, 'target') target,
+        JSONExtractString(ticker_raw, 'trade_url') trade_url,
+        'spot' k,
+        JSONExtractString(JSONExtractRaw(ticker_raw, 'market'), 'identifier') market_identifier
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=0', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=1', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=2', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=3', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=4', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=5', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=6', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=7', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=8', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=9', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=10', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=11', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=12', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=13', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=14', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=15', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=16', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=17', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=18', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=19', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=20', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=21', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=22', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=23', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=24', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=25', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=26', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=27', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=28', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+        UNION ALL
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=29', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    );
+    --- select tokens for workout
+    WITH spot AS (
+        SELECT baseSymbol, groupArray(exchangeSlug) exchanges
+        FROM default.t_cmc_exchange_market_pairs_2025_01_05
+        WHERE category = 'spot'
+        GROUP BY baseSymbol
+    ), fut AS (
+        SELECT baseSymbol, groupArray(exchangeSlug) exchanges
+        FROM default.t_cmc_exchange_market_pairs_2025_01_05
+        WHERE category = 'perpetual'
+        GROUP BY baseSymbol
+    )
+    SELECT
+        baseSymbol,
+        arrayCompact(arraySort(arrayConcat(spot.exchanges, fut.exchanges))) AS exchanges
+    FROM spot
+    INNER JOIN fut
+        ON spot.baseSymbol = fut.baseSymbol;
+    --- select spot map to coingecko_coin_id
+    SELECT
+        *,
+        JSONExtractString(ticker_raw, 'coin_id') coingecko_coin_id,
+        concat('https://www.coingecko.com/en/coins/', coingecko_coin_id) coingecko_url
+    FROM default.t_coingecko_exchanges_tickers_2025_01_05
+    WHERE k = 'fut' AND market_identifier = 'bybit'
+    LIMIT 1
+    \G;
+    ---
+    CREATE TABLE default.t_fut_to_coingecko_coin_id (
+        `ex` String,
+        `base` String,
+        `target` String,
+        `coingecko_coin_id` String,
+        `how_appeared` String
+    )
+    ENGINE = TinyLog;
+    ---
+    INSERT INTO default.t_fut_to_coingecko_coin_id
+    -- join bybit fut+spot and figure out diff-rel
+    WITH fut_prices AS (
+        SELECT
+            base,
+            target,
+            JSONExtract(ticker_raw, 'last', 'Float64') last_price
+        FROM default.t_coingecko_exchanges_tickers_2025_01_05
+        WHERE (k = 'fut') AND (market_identifier = 'bybit') AND (target = 'USDT')
+            AND startsWith(base, '10') = 0
+    ), spot_prices AS (
+        SELECT
+            base,
+            target,
+            last_price,
+            coingecko_coin_id
+        FROM (
+            SELECT
+                *,
+                JSONExtract(ticker_raw, 'last', 'Float64') last_price,
+                JSONExtractString(ticker_raw, 'coin_id') coingecko_coin_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY base, target
+                    ORDER BY toDateTime(replace(JSONExtractString(ticker_raw, 'timestamp'), '+00:00', '')) DESC
+                ) AS rank
+            FROM default.t_coingecko_exchanges_tickers_2025_01_05
+            WHERE (k = 'spot') AND (market_identifier = 'bybit_spot') AND (target = 'USDT')
+        )
+        WHERE rank = 1
+    )
+    SELECT 'bybit' ex, base, target, coingecko_coin_id, 'matched-with-spot-on-spread-2025-01-06' how_appeared
+    FROM (
+    SELECT
+        tf.base, tf.target, ts.base, ts.target, tf.last_price AS fut_last_price, ts.last_price AS spot_last_price,
+        truncate(abs((tf.last_price - ts.last_price) / ts.last_price * 100.0), 2) diff_rel_abs,
+        ts.coingecko_coin_id
+    FROM fut_prices tf
+    FULL OUTER JOIN spot_prices ts
+        ON tf.base = ts.base AND tf.target = ts.target
+    -- WHERE ts.base = '' OR ts.target = '' -- only fut
+    -- WHERE tf.base = '' OR tf.target = '' -- only spot
+    WHERE tf.base != '' AND ts.target != '' AND diff_rel_abs < 2
+    ORDER BY diff_rel_abs
+    );
+    ---
+    INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+    ('bybit', 'TOMI', 'USDT', '', 'by-hands-on-2024-01-06'),
+    ('bybit', 'FITFI', 'USDT', '', 'by-hands-on-2024-01-06'),
+    ('bybit', 'PIXFI', 'USDT', '', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ZKF', 'USDT', '', 'by-hands-on-2024-01-06'),
+    ('bybit', 'LFT', 'USDT', '', 'by-hands-on-2024-01-06'),
+    ('bybit', 'FB', 'USDT', 'fractal-bitcoin', 'by-hands-on-2024-01-06'),
+    ('bybit', 'LIT', 'USDT', 'litentry', 'by-hands-on-2024-01-06'),
+    ('bybit', 'REEF', 'USDT', 'reef', 'by-hands-on-2024-01-06'),
+    ('bybit', 'CVC', 'USDT', 'civic', 'by-hands-on-2024-01-06'),
+    ('bybit', 'CVX', 'USDT', 'convex-finance', 'by-hands-on-2024-01-06'),
+    ('bybit', 'AERGO', 'USDT', 'aergo', 'by-hands-on-2024-01-06'),
+    ('bybit', 'AI', 'USDT', 'sleepless-ai', 'by-hands-on-2024-01-06'),
+    ('bybit', 'AI16Z', 'USDT', 'ai16z', 'by-hands-on-2024-01-06'),
+    ('bybit', 'AIXBT', 'USDT', 'aixbt-by-virtuals', 'by-hands-on-2024-01-06'),
+    ('bybit', 'AKRO', 'USDT', '', 'by-hands-on-2024-01-06'),
+    ('bybit', 'AKT', 'USDT', 'akash-network', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ALEO', 'USDT', 'aleo', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ALICE', 'USDT', 'my-neighbor-alice', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ALPACA', 'USDT', 'alpaca-finance', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ALPHA', 'USDT', 'stella', 'by-hands-on-2024-01-06'),
+    ('bybit', 'AMB', 'USDT', 'airdao', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ANT', 'USDT', '', 'by-hands-on-2024-01-06'),
+    ('bybit', 'API3', 'USDT', 'api3', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ARK', 'USDT', 'ark', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ARPA', 'USDT', 'arpa', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ASTR', 'USDT', 'astar', 'by-hands-on-2024-01-06'),
+    ('bybit', 'ATA', 'USDT', 'automata', 'by-hands-on-2025-01-06'),
+    ('bybit', 'AUCTION', 'USDT', 'bounce', 'by-hands-on-2025-01-06'),
+    ('bybit', 'AUDIO', 'USDT', 'audius', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BADGER', 'USDT', 'badger', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BAKE', 'USDT', 'bakeryswap', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BAL', 'USDT', 'balancer', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BANANA', 'USDT', 'banana-gun', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BAND', 'USDT', 'band-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BENDOG', 'USDT', 'ben-the-dog', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BIGTIME', 'USDT', 'big-time', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BILLY', 'USDT', 'billy', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BIO', 'USDT', 'bio-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BLUE', 'USDT', 'bluefin', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BLZ', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BNX', 'USDT', 'binaryx', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BOND', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BSV', 'USDT', 'bitcoin-sv', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BSW', 'USDT', 'biswap', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CANTO', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CEEK', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CELR', 'USDT', 'celer-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CETUS', 'USDT', 'cetus-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CFX', 'USDT', 'conflux', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CHESS', 'USDT', 'tranchess', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CHR', 'USDT', 'chromia', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CKB', 'USDT', 'nervos-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'COMBO', 'USDT', 'combo', 'by-hands-on-2025-01-06'),
+    ('bybit', 'COS', 'USDT', 'contentos', 'by-hands-on-2025-01-06'),
+    ('bybit', 'COTI', 'USDT', 'coti', 'by-hands-on-2025-01-06'),
+    ('bybit', 'COVAL', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'COW', 'USDT', 'cow-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CRO', 'USDT', 'cronos', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CTK', 'USDT', 'shentu', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ACE', 'USDT', 'fusionist', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ACT', 'USDT', 'act-i-the-ai-prophecy', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ACX', 'USDT', 'across-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DAO', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DAR', 'USDT', 'mines-of-dalarnia', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DASH', 'USDT', 'dash', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DATA', 'USDT', 'streamr', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DENT', 'USDT', 'dent', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DEXE', 'USDT', 'dexe', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DODO', 'USDT', 'dodo', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DOG', 'USDT', 'dog-go-to-the-moon-runes-2', 'by-hands-on-2025-01-06'),
+    ('bybit', 'DUSK', 'USDT', 'dusk', 'by-hands-on-2025-01-06'),
+    ('bybit', 'EDU', 'USDT', 'open-campus', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FARTCOIN', 'USDT', 'fartcoin', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FDUSD', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FIO', 'USDT', 'fio-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FLM', 'USDT', 'flamingo-finance', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FLUX', 'USDT', 'flux-zelcash', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FORTH', 'USDT', 'ampleforth-governance-token', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FRONT', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FTN', 'USDT', 'fasttoken', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FUN', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'FWOG', 'USDT', 'fwog', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GAL', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GAS', 'USDT', 'gas', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GEMS', 'USDT', 'gems-vip', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GFT', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GIGA', 'USDT', 'gigachad-2', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GLM', 'USDT', 'golem', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GME', 'USDT', 'gme', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GNO', 'USDT', 'gnosis', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GOMINING', 'USDT', 'gomining-token', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GRIFFAIN', 'USDT', 'griffain', 'by-hands-on-2025-01-06'),
+    ('bybit', 'GTC', 'USDT', 'gitcoin', 'by-hands-on-2025-01-06'),
+    ('bybit', 'HIFI', 'USDT', 'hifi-finance', 'by-hands-on-2025-01-06'),
+    ('bybit', 'HIGH', 'USDT', 'highstreet', 'by-hands-on-2025-01-06'),
+    ('bybit', 'HIPPO', 'USDT', 'sudeng', 'by-hands-on-2025-01-06'),
+    ('bybit', 'HIVE', 'USDT', 'hive', 'by-hands-on-2025-01-06'),
+    ('bybit', 'HYPE', 'USDT', 'hyperliquid', 'by-hands-on-2025-01-06'),
+    ('bybit', 'IDEX', 'USDT', 'idex', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ILV', 'USDT', 'illuvium', 'by-hands-on-2025-01-06'),
+    ('bybit', 'IOST', 'USDT', 'iost', 'by-hands-on-2025-01-06'),
+    ('bybit', 'IOTA', 'USDT', 'iota', 'by-hands-on-2025-01-06'),
+    ('bybit', 'IOTX', 'USDT', 'iotex', 'by-hands-on-2025-01-06'),
+    ('bybit', 'JOE', 'USDT', 'joe', 'by-hands-on-2025-01-06'),
+    ('bybit', 'KEY', 'USDT', 'selfkey', 'by-hands-on-2025-01-06'),
+    ('bybit', 'KLAY', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'KNC', 'USDT', 'kyber-network-crystal', 'by-hands-on-2025-01-06'),
+    ('bybit', 'KOMA', 'USDT', 'koma-inu', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LINA', 'USDT', 'linear', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LISTA', 'USDT', 'lista-dao', 'by-hands-on-2025-01-06'),
+    ('bybit', '1CAT', 'USDT', 'bitcoin-cats', 'by-hands-on-2025-01-06'),
+    ('bybit', 'CTSI', 'USDT', 'cartesi', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LPT', 'USDT', 'livepeer', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LQTY', 'USDT', 'liquity', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LSK', 'USDT', 'lisk', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LTO', 'USDT', 'lto-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LUMIA', 'USDT', 'lumia', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LUNA2', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MANEKI', 'USDT', 'maneki', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MAPO', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MATIC', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MAV', 'USDT', 'maverick-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MAX', 'USDT', 'matr1x', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MBL', 'USDT', 'moviebloc', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MDT', 'USDT', 'measurable-data-token', 'by-hands-on-2025-01-06'),
+    ('bybit', 'METIS', 'USDT', 'metis-token', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MOBILE', 'USDT', 'helium-mobile', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MOODENG', 'USDT', 'moo-deng', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MOTHER', 'USDT', 'mother-iggy', 'by-hands-on-2025-01-06'),
+    ('bybit', 'MTL', 'USDT', 'metal-dao', 'by-hands-on-2025-01-06'),
+    ('bybit', 'NEIROETH', 'USDT', 'neiro-on-eth', 'by-hands-on-2025-01-06'),
+    ('bybit', 'NEO', 'USDT', 'neo', 'by-hands-on-2025-01-06'),
+    ('bybit', 'NFP', 'USDT', 'nfprompt', 'by-hands-on-2025-01-06'),
+    ('bybit', 'NKN', 'USDT', 'nkn', 'by-hands-on-2025-01-06'),
+    ('bybit', 'NMR', 'USDT', 'numeraire', 'by-hands-on-2025-01-06'),
+    ('bybit', 'NTRN', 'USDT', 'neutron', 'by-hands-on-2025-01-06'),
+    ('bybit', 'NULS', 'USDT', 'nuls', 'by-hands-on-2025-01-06'),
+    ('bybit', 'OG', 'USDT', 'og-fan-token', 'by-hands-on-2025-01-06'),
+    ('bybit', 'OGN', 'USDT', 'origin-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'OM', 'USDT', 'mantra', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ONG', 'USDT', 'ontology-gas', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ONT', 'USDT', 'ontology', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ORBS', 'USDT', 'orbs', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ORCA', 'USDT', 'orca', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ORN', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'OSMO', 'USDT', 'osmosis', 'by-hands-on-2025-01-06'),
+    ('bybit', 'OXT', 'USDT', 'orchid-protocol', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PEAQ', 'USDT', 'peaq', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PENG', 'USDT', 'peng', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PHA', 'USDT', 'phala-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PHB', 'USDT', 'phoenix', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PIXEL', 'USDT', 'pixels', 'by-hands-on-2025-01-06'),
+    ('bybit', 'POLYX', 'USDT', 'polymesh', 'by-hands-on-2025-01-06'),
+    ('bybit', 'POWR', 'USDT', 'power-ledger', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PROM', 'USDT', 'prom', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PROS', 'USDT', 'prosper', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PUNDU', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'PYR', 'USDT', 'vulcan-forged', 'by-hands-on-2025-01-06'),
+    ('bybit', 'QI', 'USDT', 'benqi', 'by-hands-on-2025-01-06'),
+    ('bybit', 'QUICK', 'USDT', 'quickswap', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RAD', 'USDT', 'radworks', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ZCX', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ZEC', 'USDT', 'zcash', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ZEUS', 'USDT', 'zeus-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'REQ', 'USDT', 'request-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'REZ', 'USDT', 'renzo', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RIF', 'USDT', 'rsk-infrastructure-framework', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RIFSOL', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RLC', 'USDT', 'iexec-rlc', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RNDR', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RON', 'USDT', 'ronin', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RSR', 'USDT', 'reserve-rights', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SAGA', 'USDT', 'saga', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SFP', 'USDT', 'safepal', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SHIB1000', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SILLY', 'USDT', 'silly-dragon', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SKL', 'USDT', 'skale', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SLERF', 'USDT', 'slerf', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SLF', 'USDT', 'self-chain', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SNT', 'USDT', 'status', 'by-hands-on-2025-01-06'),
+    ('bybit', 'STEEM', 'USDT', 'steem', 'by-hands-on-2025-01-06'),
+    ('bybit', 'STMX', 'USDT', 'stormx', 'by-hands-on-2025-01-06'),
+    ('bybit', 'STORJ', 'USDT', 'storj', 'by-hands-on-2025-01-06'),
+    ('bybit', 'STPT', 'USDT', 'stp-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SUPER', 'USDT', 'superverse', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SXP', 'USDT', 'solar-2', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SYN', 'USDT', 'synapse', 'by-hands-on-2025-01-06'),
+    ('bybit', 'SYS', 'USDT', 'syscoin', 'by-hands-on-2025-01-06'),
+    ('bybit', 'TAO', 'USDT', 'bittensor', 'by-hands-on-2025-01-06'),
+    ('bybit', 'THE', 'USDT', 'thena', 'by-hands-on-2025-01-06'),
+    ('bybit', 'TLM', 'USDT', 'alien-worlds', 'by-hands-on-2025-01-06'),
+    ('bybit', 'TRB', 'USDT', 'tellor-tributes', 'by-hands-on-2025-01-06'),
+    ('bybit', 'TROY', 'USDT', 'troy', 'by-hands-on-2025-01-06'),
+    ('bybit', 'TRU', 'USDT', 'truefi', 'by-hands-on-2025-01-06'),
+    ('bybit', 'UNFI', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'URO', 'USDT', 'urolithin-a', 'by-hands-on-2025-01-06'),
+    ('bybit', 'USUAL', 'USDT', 'usual', 'by-hands-on-2025-01-06'),
+    ('bybit', 'VELODROME', 'USDT', 'velodrome-finance', 'by-hands-on-2025-01-06'),
+    ('bybit', 'VET', 'USDT', 'vechain', 'by-hands-on-2025-01-06'),
+    ('bybit', 'VGX', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'VIDT', 'USDT', 'vidt-dao', 'by-hands-on-2025-01-06'),
+    ('bybit', 'VOXEL', 'USDT', 'voxies', 'by-hands-on-2025-01-06'),
+    ('bybit', 'VTHO', 'USDT', 'vethor-token', 'by-hands-on-2025-01-06'),
+    ('bybit', 'XCH', 'USDT', 'chia', 'by-hands-on-2025-01-06'),
+    ('bybit', 'XCN', 'USDT', 'onyxcoin', 'by-hands-on-2025-01-06'),
+    ('bybit', 'XMR', 'USDT', 'monero', 'by-hands-on-2025-01-06'),
+    ('bybit', 'XNO', 'USDT', 'nano', 'by-hands-on-2025-01-06'),
+    ('bybit', 'XRD', 'USDT', 'radix', 'by-hands-on-2025-01-06'),
+    ('bybit', 'XVG', 'USDT', 'verge', 'by-hands-on-2025-01-06'),
+    ('bybit', 'XVS', 'USDT', 'venus', 'by-hands-on-2025-01-06'),
+    ('bybit', 'YGG', 'USDT', 'yield-guild-games', 'by-hands-on-2025-01-06'),
+    ('bybit', 'ZBCN', 'USDT', 'zebec-network', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RARE', 'USDT', 'superrare', 'by-hands-on-2025-01-06'),
+    ('bybit', 'RAYDIUM', 'USDT', 'raydium', 'by-hands-on-2025-01-06'),
+    ('bybit', 'LOOM', 'USDT', '', 'by-hands-on-2025-01-06'),
+    ('bybit', 'BLAST', 'USDT', 'blast', 'by-hands-on-2025-01-01'),
+    ('bybit', 'DGB', 'USDT', 'digibyte', 'by-hands-on-2025-01-01'),
+    ('bybit', 'DOGS', 'USDT', 'dogs', 'by-hands-on-2025-01-01'),
+    ('bybit', 'DOP1', 'USDT', '', 'by-hands-on-2025-01-01'),
+    ('bybit', 'HMSTR', 'USDT', 'hamster-kombat', 'by-hands-on-2025-01-01'),
+    ('bybit', 'HOT', 'USDT', 'holo', 'by-hands-on-2025-01-01'),
+    ('bybit', 'LEVER', 'USDT', 'leverfi', 'by-hands-on-2025-01-01'),
+    ('bybit', 'MEME', 'USDT', 'meme', 'by-hands-on-2025-01-01'),
+    ('bybit', 'MEMEFI', 'USDT', 'memefi', 'by-hands-on-2025-01-01'),
+    ('bybit', 'MEW', 'USDT', 'mew', 'by-hands-on-2025-01-01'),
+    ('bybit', 'MVL', 'USDT', 'mass-vehicle-ledger', 'by-hands-on-2025-01-01'),
+    ('bybit', 'MYRIA', 'USDT', 'myria', 'by-hands-on-2025-01-01'),
+    ('bybit', 'NOT', 'USDT', 'notcoin', 'by-hands-on-2025-01-01'),
+    ('bybit', 'SC', 'USDT', 'siacoin', 'by-hands-on-2025-01-01'),
+    ('bybit', 'SLP', 'USDT', 'smooth-love-potion', 'by-hands-on-2025-01-01'),
+    ('bybit', 'SPELL', 'USDT', 'spell-token', 'by-hands-on-2025-01-01'),
+    ('bybit', 'SWEAT', 'USDT', 'sweat-economy', 'by-hands-on-2025-01-01'),
+    ('bybit', 'VRA', 'USDT', 'verasity', 'by-hands-on-2025-01-01'),
+    ('bybit', 'XRP', 'USDT', 'xrp', 'by-hands-on-2025-01-01'),
+    ('bybit', 'XTZ', 'USDT', 'tezos', 'by-hands-on-2025-01-01'),
+    ('bybit', 'YFI', 'USDT', 'yearn-finance', 'by-hands-on-2025-01-01'),
+    ('bybit', 'ZEN', 'USDT', 'horizen', 'by-hands-on-2025-01-01'),
+    ('bybit', 'ZETA', 'USDT', 'zetachain', 'by-hands-on-2025-01-01'),
+    ('bybit', 'ZIL', 'USDT', 'zilliqa', 'by-hands-on-2025-01-01'),
+    ('bybit', 'ZK', 'USDT', 'zksync', 'by-hands-on-2025-01-01'),
+    ('bybit', 'ZRC', 'USDT', 'zircuit', 'by-hands-on-2025-01-01'),
+    ('bybit', 'ZRO', 'USDT', 'layerzero', 'by-hands-on-2025-01-01'),
+    ('bybit', 'ZRX', 'USDT', '0x', 'by-hands-on-2025-01-01');
+    ---
+    INSERT INTO default.t_fut_to_coingecko_coin_id
+    WITH fut_prices AS (
+        SELECT
+            base,
+            target,
+            JSONExtract(ticker_raw, 'last', 'Float64') last_price
+        FROM default.t_coingecko_exchanges_tickers_2025_01_05
+        WHERE (k = 'fut') AND (market_identifier = 'gate_futures') AND (target = 'USDT')
+            AND startsWith(base, '10') = 0
+    ), spot_prices AS (
+        SELECT
+            base,
+            target,
+            last_price,
+            coingecko_coin_id
+        FROM (
+            SELECT
+                *,
+                JSONExtract(ticker_raw, 'last', 'Float64') last_price,
+                JSONExtractString(ticker_raw, 'coin_id') coingecko_coin_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY base, target
+                    ORDER BY toDateTime(replace(JSONExtractString(ticker_raw, 'timestamp'), '+00:00', '')) DESC
+                ) AS rank
+            FROM default.t_coingecko_exchanges_tickers_2025_01_05
+            WHERE (k = 'spot') AND (market_identifier = 'gate') AND (target = 'USDT')
+        )
+        WHERE rank = 1
+    )
+    SELECT 'gateio' ex, base, target, coingecko_coin_id, 'matched-with-spot-on-spread-2025-01-07' how_appeared
+    FROM (
+    SELECT
+        tf.base, tf.target, ts.base, ts.target, tf.last_price AS fut_last_price, ts.last_price AS spot_last_price,
+        truncate(abs((tf.last_price - ts.last_price) / ts.last_price * 100.0), 2) diff_rel_abs,
+        ts.coingecko_coin_id
+    FROM fut_prices tf
+    FULL OUTER JOIN spot_prices ts
+        ON tf.base = ts.base AND tf.target = ts.target
+    -- WHERE ts.base = '' OR ts.target = '' -- only fut
+    -- WHERE tf.base = '' OR tf.target = '' -- only spot
+    -- WHERE tf.base != '' AND ts.target != '' AND diff_rel_abs >= 2
+    WHERE tf.base != '' AND ts.target != '' AND diff_rel_abs < 2
+    ORDER BY diff_rel_abs
+    );
+    ---
+    INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+    ('gateio', 'DOGEGOV', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'AIOZ', 'USDT', 'aioz-network', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DEAI', 'USDT', 'zero1-labs', 'by-hands-on-2025-01-07'),
+    ('gateio', 'L3', 'USDT', 'layer3', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BOME', 'USDT', 'book-of-meme', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FLIP', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FET', 'USDT', 'artificial-superintelligence-alliance', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ALCX', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'NFP', 'USDT', 'nfprompt', 'by-hands-on-2025-01-07'),
+    ('gateio', 'HIPPO', 'USDT', 'sudeng', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MOVE', 'USDT', 'movement', 'by-hands-on-2025-01-07'),
+    ('gateio', 'KEY', 'USDT', 'selfkey', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CPOOL', 'USDT', 'clearpool', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DEGEN', 'USDT', 'degen-base', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DGB', 'USDT', 'digibyte', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BENDOG', 'USDT', 'ben-the-dog', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SPA', 'USDT', 'sperax', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MBOX', 'USDT', 'mobox', 'by-hands-on-2025-01-07'),
+    ('gateio', 'OAX', 'USDT', 'oax', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MANEKI', 'USDT', 'maneki', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MGT', 'USDT', 'moongate', 'by-hands-on-2025-01-07'),
+    ('gateio', 'GEAR', 'USDT', 'gearbox', 'by-hands-on-2025-01-07'),
+    ('gateio', 'COOKIE', 'USDT', 'cookie', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MOBILE', 'USDT', 'helium-mobile', 'by-hands-on-2025-01-07'),
+    ('gateio', 'AMB', 'USDT', 'airdao', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MEME', 'USDT', 'meme', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FWOG', 'USDT', 'fwog', 'by-hands-on-2025-01-07'),
+    ('gateio', 'TLM', 'USDT', 'alien-worlds', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ULTI', 'USDT', 'ultiverse', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MOTHER', 'USDT', 'mother-iggy', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BENQI', 'USDT', 'benqi', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DOG', 'USDT', 'dog-go-to-the-moon-runes-2', 'by-hands-on-2025-01-07'),
+    ('gateio', 'IOST', 'USDT', 'iost', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FTM', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MEW', 'USDT', 'mew', 'by-hands-on-2025-01-07'),
+    ('gateio', 'AIFUN', 'USDT', 'ai-agent-layer', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DHX', 'USDT', 'datahighway', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MOZ', 'USDT', 'lumoz', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MPLX', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BARSIK', 'USDT', 'hasbulla-s-cat', 'by-hands-on-2025-01-07'),
+    ('gateio', 'STMX', 'USDT', 'stormx', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CKB', 'USDT', 'nervos-network', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SC', 'USDT', 'siacoin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'GNS', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BGSC', 'USDT', 'bugscoin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SWARMS', 'USDT', 'swarms', 'by-hands-on-2025-01-07'),
+    ('gateio', 'GROK', 'USDT', 'grok-2', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FUN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'OKB', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'NOT', 'USDT', 'notcoin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BLAST', 'USDT', 'blast', 'by-hands-on-2025-01-07'),
+    ('gateio', 'LEVER', 'USDT', 'leverfi', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ORDER', 'USDT', 'orderly-network', 'by-hands-on-2025-01-07'),
+    ('gateio', 'RWA', 'USDT', 'rwa-inc', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SCIHUB', 'USDT', 'sci-hub', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SLP', 'USDT', 'smooth-love-potion', 'by-hands-on-2025-01-07'),
+    ('gateio', 'U2U', 'USDT', 'u2u-network', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FIS', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ZBCN', 'USDT', 'zebec-network', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SWEAT', 'USDT', 'sweat-economy', 'by-hands-on-2025-01-07'),
+    ('gateio', 'IQ', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'VTHO', 'USDT', 'vethor-token', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FARM', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FITFI', 'USDT', 'step-app', 'by-hands-on-2025-01-07'),
+    ('gateio', 'TROY', 'USDT', 'troy', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BBL', 'USDT', 'beoble', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FLT', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'NEIROCTO', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MEMEFI', 'USDT', 'memefi', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FORT', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'PIXFI', 'USDT', 'pixelverse-xyz', 'by-hands-on-2025-01-07'),
+    ('gateio', 'XCN', 'USDT', 'onyxcoin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MYRIA', 'USDT', 'myria', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ACA', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'HMSTR', 'USDT', 'hamster-kombat', 'by-hands-on-2025-01-07'),
+    ('gateio', 'VENOM', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'IRIS', 'USDT', 'irisnet', 'by-hands-on-2025-01-07'),
+    ('gateio', 'VRA', 'USDT', 'verasity', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MBL', 'USDT', 'moviebloc', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MPC', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'REEF', 'USDT', 'reef', 'by-hands-on-2025-01-07'),
+    ('gateio', 'HOT', 'USDT', 'holo', 'by-hands-on-2025-01-07'),
+    ('gateio', 'POND', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MSN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'PATEX', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BLOCK', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'NIBI', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CLV', 'USDT', 'clover-finance', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SPELL', 'USDT', 'spell-token', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ZEN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'GOATS', 'USDT', 'goats', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SLN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'APU', 'USDT', 'apu-apustaja', 'by-hands-on-2025-01-07'),
+    ('gateio', 'PBUX', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DOP', 'USDT', 'data-ownership-protocol', 'by-hands-on-2025-01-07'),
+    ('gateio', '1CAT', 'USDT', 'bitcoin-cats', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DENT', 'USDT', 'dent', 'by-hands-on-2025-01-07'),
+    ('gateio', 'KARRAT', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DAR', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DUKO', 'USDT', 'duko', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ZKF', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DOGS', 'USDT', 'dogs', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MAGA', 'USDT', 'maga-hat', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ZEROLEND', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MAD', 'USDT', 'mad-2', 'by-hands-on-2025-01-07'),
+    ('gateio', 'LUNC', 'USDT', 'terra-luna-classic', 'by-hands-on-2025-01-07'),
+    ('gateio', 'QUBIC', 'USDT', 'qubic', 'by-hands-on-2025-01-07'),
+    ('gateio', 'RACA', 'USDT', 'radio-caca', 'by-hands-on-2025-01-07'),
+    ('gateio', 'RATS', 'USDT', 'rats', 'by-hands-on-2025-01-07'),
+    ('gateio', 'LADYS', 'USDT', 'milady-meme-coin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'REKTCOIN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'RIZZMAS', 'USDT', 'rizzmas', 'by-hands-on-2025-01-07'),
+    ('gateio', 'PEIPEI', 'USDT', 'peipeicoin-vip', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SATS', 'USDT', 'sats-ordinals', 'by-hands-on-2025-01-07'),
+    ('gateio', 'PEPE2', 'USDT', 'pepe-2-0', 'by-hands-on-2025-01-07'),
+    ('gateio', 'GOLDENCAT', 'USDT', 'goldencat', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SHIB', 'USDT', 'shiba-inu', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MOODENGETH', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FLOKI', 'USDT', 'floki', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SOON', 'USDT', 'soon', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ELON', 'USDT', 'dogelon-mars', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MEMETOON', 'USDT', 'memetoon', 'by-hands-on-2025-01-07'),
+    ('gateio', 'STARDOGE', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'STARL', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'PEPE', 'USDT', 'pepe', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MOG', 'USDT', 'mog-coin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MONKY', 'USDT', 'wise-monkey', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CWIF', 'USDT', 'catwifhat-2', 'by-hands-on-2025-01-07'),
+    ('gateio', 'TOSHI', 'USDT', 'toshi', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CHEEMS', 'USDT', 'cheems-token', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CATS', 'USDT', 'cats-2', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CATDOG', 'USDT', 'cat-dog', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CAT', 'USDT', 'simons-cat', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BTT', 'USDT', 'bittorrent', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BONK', 'USDT', 'bonk', 'by-hands-on-2025-01-07'),
+    ('gateio', 'WEN', 'USDT', 'wen-solana', 'by-hands-on-2025-01-07'),
+    ('gateio', 'WHY', 'USDT', 'why', 'by-hands-on-2025-01-07'),
+    ('gateio', 'WIN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'WOLF', 'USDT', 'landwolf-0x67', 'by-hands-on-2025-01-07'),
+    ('gateio', 'X', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BITBOARD', 'USDT', 'bitboard', 'by-hands-on-2025-01-07'),
+    ('gateio', 'XEC', 'USDT', 'ecash', 'by-hands-on-2025-01-07'),
+    ('gateio', 'XEN', 'USDT', 'xen-crypto', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BEER', 'USDT', 'beercoin-2', 'by-hands-on-2025-01-07'),
+    ('gateio', 'APEPE', 'USDT', 'ape-and-pepe', 'by-hands-on-2025-01-07'),
+    ('gateio', 'IQ50', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'GFT', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'AGIX', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'XVG', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ANT', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'BAIDOGE', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'CEL', 'USDT', 'celsius-network-token', 'by-hands-on-2025-01-07'),
+    ('gateio', 'DASH', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ESE', 'USDT', 'eesee', 'by-hands-on-2025-01-07'),
+    ('gateio', 'FRONT', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'AKRO', 'USDT', 'kaon', 'by-hands-on-2025-01-07'),
+    ('gateio', 'HOLD', 'USDT', 'holdcoin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'HYPE', 'USDT', 'hyperliquid', 'by-hands-on-2025-01-07'),
+    ('gateio', 'KLAY', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'LINA', 'USDT', 'linear', 'by-hands-on-2025-01-07'),
+    ('gateio', 'LL', 'USDT', 'lightlink', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MATIC', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MBABYDOGE', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'RVN', 'USDT', 'ravencoin', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MPL', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MUBI', 'USDT', 'multibit', 'by-hands-on-2025-01-07'),
+    ('gateio', 'OCEAN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ORN', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'RNDR', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'ZEC', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'SNEK', 'USDT', 'snek', 'by-hands-on-2025-01-07'),
+    ('gateio', 'TAOCAT', 'USDT', 'taocat-by-virtuals', 'by-hands-on-2025-01-07'),
+    ('gateio', 'XMR', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'XNO', 'USDT', 'nano', 'by-hands-on-2025-01-07'),
+    ('gateio', 'GAL', 'USDT', '', 'by-hands-on-2025-01-07'),
+    ('gateio', 'MBABYNEIRO', 'USDT', '', 'by-hands-on-2025-01-07');
     )";
+}
+
+void fetch_process_tickers() {
+    // NOTE: on 2024-01-05 cmc for GOLDENCAT contains unproper mapping for
+    // gateio sut+spot NOTE: on 2024-01-05 coingecko api for FBUSDT on bybit
+    // didn't contain coin_id for fut(perpetual) p.s. on UI ids matched properly
+    // NOTE: implementing scrapper is not ok because of inconsistencies
+    ClientsHouse ch;
+    ch.init_public_clients();
+    ch.init_private_clients();
+    msd::channel<std::vector<TickerSpread>> chan;
+    std::thread _fetch_bybit_fut([&]() {
+        SPDLOG_INFO("start _fetch_bybit_fut");
+        ClientPublic* client_pub_fut = ch.get_client_public("bybit", "fut");
+        ClientPrivate* client_pr_fut = ch.get_client_private("bybit", "fut");
+        nlohmann::json exchange_info = client_pr_fut->get_exchange_info();
+        std::map<std::string, std::tuple<std::string, std::string>>
+            symbol_to_tokens;
+        for (auto& ex_info : exchange_info["result"]["list"]) {
+            symbol_to_tokens[ex_info["symbol"]] = {ex_info["baseCoin"],
+                                                   ex_info["quoteCoin"]};
+        }
+        SPDLOG_INFO("bybit fut exchange info fetched");
+        while (true) {
+            std::vector<Ticker> tickers = client_pub_fut->fetch_tickers();
+            std::vector<TickerSpread> vec;
+            for (auto& ticker : tickers) {
+                auto [base, quote] = symbol_to_tokens[ticker.s];
+                vec.push_back(TickerSpread{
+                    .t_raw = ticker,
+                    .ex = "bybit",
+                    .k = "fut",
+                    .base = base,
+                    .quote = quote,
+                });
+            }
+            SPDLOG_INFO("bybit fut tickers fetched and inserted vec={}",
+                        vec.size());
+            chan << vec;
+        }
+    });
+    std::thread _fetch_bybit_spot([&]() {
+        SPDLOG_INFO("start _fetch_bybit_spot");
+        std::string ex = "bybit";
+        std::string k = "spot";
+        ClientPublic* client_pub_fut = ch.get_client_public(ex, k);
+        ClientPrivate* client_pr_fut = ch.get_client_private(ex, k);
+        nlohmann::json exchange_info = client_pr_fut->get_exchange_info();
+        std::map<std::string, std::tuple<std::string, std::string>>
+            symbol_to_tokens;
+        for (auto& ex_info : exchange_info["result"]["list"]) {
+            symbol_to_tokens[ex_info["symbol"]] = {ex_info["baseCoin"],
+                                                   ex_info["quoteCoin"]};
+        }
+        SPDLOG_INFO("bybit {} exchange info fetched", k);
+        while (true) {
+            std::vector<Ticker> tickers = client_pub_fut->fetch_tickers();
+            std::vector<TickerSpread> vec;
+            for (auto& ticker : tickers) {
+                auto [base, quote] = symbol_to_tokens[ticker.s];
+                vec.push_back(TickerSpread{
+                    .t_raw = ticker,
+                    .ex = ex,
+                    .k = k,
+                    .base = base,
+                    .quote = quote,
+                });
+            }
+            SPDLOG_INFO("bybit {} tickers fetched and inserted vec={}", k,
+                        vec.size());
+            chan << vec;
+        }
+    });
+    std::thread _fetch_gateio_fut([&]() {
+        ClientPublic* client_pub_fut = ch.get_client_public("gateio", "fut");
+        while (true) {
+            std::vector<Ticker> tickers = client_pub_fut->fetch_tickers();
+            std::string ex = "gateio";
+            std::string k = "fut";
+            std::vector<TickerSpread> vec;
+            for (auto& ticker : tickers) {
+                int i = ticker.s.find("_");
+                std::string base = ticker.s.substr(0, i);
+                std::string quote = ticker.s.substr(i + 1, ticker.s.size());
+                vec.push_back(TickerSpread{
+                    .t_raw = ticker,
+                    .ex = ex,
+                    .k = k,
+                    .base = base,
+                    .quote = quote,
+                });
+            }
+            chan << vec;
+        }
+    });
+    std::thread _fetch_gateio_spot([&]() {
+        std::string ex = "gateio";
+        std::string k = "fut";
+        ClientPublic* client_pub_fut = ch.get_client_public(ex, k);
+        while (true) {
+            std::vector<Ticker> tickers = client_pub_fut->fetch_tickers();
+            std::vector<TickerSpread> vec;
+            for (auto& ticker : tickers) {
+                int i = ticker.s.find("_");
+                std::string base = ticker.s.substr(0, i);
+                std::string quote = ticker.s.substr(i + 1, ticker.s.size());
+                vec.push_back(TickerSpread{
+                    .t_raw = ticker,
+                    .ex = ex,
+                    .k = k,
+                    .base = base,
+                    .quote = quote,
+                });
+            }
+            SPDLOG_INFO("{} {} tickers fetched and inserted vec={}", ex, k,
+                        vec.size());
+            chan << vec;
+        }
+    });
+    std::thread _fetch_mexc_spot([&]() {
+        SPDLOG_INFO("start _fetch_mexc_spot");
+        std::string ex = "mexc";
+        std::string k = "spot";
+        ClientPublic* client_pub_spot = ch.get_client_public(ex, k);
+        ClientPrivate* client_pr_fut = ch.get_client_private(ex, k);
+        nlohmann::json exchange_info = client_pr_fut->get_exchange_info();
+        std::map<std::string, std::tuple<std::string, std::string>>
+            symbol_to_tokens;
+        SPDLOG_INFO("construct symbols to (base, quote) map");
+        for (auto& ex_info : exchange_info["symbols"]) {
+            symbol_to_tokens[ex_info["symbol"]] = {ex_info["baseAsset"],
+                                                   ex_info["quoteAsset"]};
+        }
+        SPDLOG_INFO("{} {} start fetching tickers", ex, k);
+        while (true) {
+            std::vector<Ticker> tickers = client_pub_spot->fetch_tickers();
+            std::vector<TickerSpread> vec;
+            for (auto& ticker : tickers) {
+                auto [base, quote] = symbol_to_tokens[ticker.s];
+                vec.push_back(TickerSpread{
+                    .t_raw = ticker,
+                    .ex = ex,
+                    .k = k,
+                    .base = base,
+                    .quote = quote,
+                });
+            }
+            SPDLOG_INFO("{} {} tickers fetched and inserted vec={}", ex, k,
+                        vec.size());
+            chan << vec;
+        }
+    });
+    std::thread _consume_and_react([&]() {
+        SPDLOG_INFO("start _consume_and_react");
+        SpreadsMap sm;
+        sm.init_ccid_map_from_clickhouse();
+        for (auto vec : chan) {
+            SPDLOG_INFO("sm update vec.size()={}", vec.size());
+            for (auto& t : vec) {
+                sm.insert(t);
+            }
+            auto spreads_vec = sm.find_spreads_all();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    });
+    wait_until([&]() { return false; });
 }
