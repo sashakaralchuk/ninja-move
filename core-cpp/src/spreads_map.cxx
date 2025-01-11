@@ -71,6 +71,10 @@ void SpreadsMap::insert(TickerSpread& t) {
     ccid_ex_k_t[t.ccid][t.ex][t.k] = t;
 }
 
+///
+/// Finds the lowest ask on spot from al exchanges.
+/// Finds the highest bid on fut from all exs.
+///
 std::optional<std::tuple<TickerSpread, TickerSpread>> SpreadsMap::find_spreads(
     std::string ccid) {
     std::optional<TickerSpread> max_fut = {};
@@ -116,21 +120,4 @@ SpreadsMap::find_spreads_all() {
         }
     }
     return vec;
-}
-
-void SpreadsMap::print() {
-    std::cout << "ccid_ex_k_t.size()=" << ccid_ex_k_t.size() << std::endl;
-    for (auto o = ccid_ex_k_t.cbegin(); o != ccid_ex_k_t.cend(); ++o) {
-        std::string ccid = o->first;
-        for (auto o = ccid_ex_k_t[ccid].cbegin(); o != ccid_ex_k_t[ccid].cend();
-             ++o) {
-            std::string ex = o->first;
-            for (auto o = ccid_ex_k_t[ccid][ex].cbegin();
-                 o != ccid_ex_k_t[ccid][ex].cend(); ++o) {
-                std::string k = o->first;
-                std::cout << "ccid=" << ccid << "\tex=" << ex << "\tk=" << k
-                          << std::endl;
-            }
-        }
-    }
 }

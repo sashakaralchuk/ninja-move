@@ -165,10 +165,23 @@ target_link_libraries(clients_test
     gRPC::grpc++
     protobuf::libprotobuf
 )
+gtest_discover_tests(clients_test)
 add_executable(spreads_map_test
     src/spreads_map_test.cxx
     src/spreads_map.cxx
 )
-gtest_discover_tests(clients_test)
+target_include_directories(spreads_map_test PRIVATE
+    libs/spdlog/include
+    libs/gmp-6.3.0/build/include
+    libs/clickhouse-cpp
+)
+target_link_libraries(spreads_map_test
+    GTest::gtest_main
+    GTest::gmock_main
+    ${GMP}
+    ${SPDLOG}
+    clickhouse-cpp-lib
+)
+gtest_discover_tests(spreads_map_test)
 
 configure_file(t.cxx t_temp_source.cxx)

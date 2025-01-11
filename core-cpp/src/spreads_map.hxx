@@ -19,9 +19,8 @@ class SpreadsMap {
     std::optional<std::tuple<TickerSpread, TickerSpread>> find_spreads(
         std::string ccid);
     std::vector<std::tuple<TickerSpread, TickerSpread>> find_spreads_all();
-    void print();
 
-   private:
+   protected:
     std::map<std::tuple<std::string, std::string, std::string, std::string>,
              std::string>
         ex_k_b_t_ccid;
