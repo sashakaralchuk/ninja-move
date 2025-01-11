@@ -1,4 +1,4 @@
-#include "models.hpp"
+#include "models.hxx"
 
 #include <gmpxx.h>
 #include <gtest/gtest.h>

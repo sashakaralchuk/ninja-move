@@ -169,6 +169,7 @@ gtest_discover_tests(clients_test)
 add_executable(spreads_map_test
     src/spreads_map_test.cxx
     src/spreads_map.cxx
+    src/models.cxx
 )
 target_include_directories(spreads_map_test PRIVATE
     libs/spdlog/include
@@ -181,6 +182,7 @@ target_link_libraries(spreads_map_test
     ${GMP}
     ${SPDLOG}
     clickhouse-cpp-lib
+    nlohmann_json::nlohmann_json
 )
 gtest_discover_tests(spreads_map_test)
 

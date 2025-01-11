@@ -1,6 +1,6 @@
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 
-#include "clients.hpp"
+#include "clients.hxx"
 
 #include <curl/curl.h>
 #include <openssl/bio.h>
@@ -237,18 +237,6 @@ std::string rstrip_zeros(std::string s) {
     return s.substr(0, j + 1);
 }
 
-long now_millis() {
-    return std::chrono::system_clock::now().time_since_epoch().count() / 1000;
-}
-
-std::string time_point_to_str(std::chrono::system_clock::time_point tp,
-                              std::string format_str) {
-    std::time_t now_raw = std::chrono::system_clock::to_time_t(tp);
-    std::ostringstream now_oss;
-    now_oss << std::put_time(std::gmtime(&now_raw), format_str.c_str());
-    return now_oss.str();
-}
-
 std::string replace_all(std::string s, std::string from, std::string to) {
     size_t start_pos = 0;
     while ((start_pos = s.find(from, start_pos)) != std::string::npos) {
@@ -454,12 +442,14 @@ std::vector<Ticker> ClientPublicGateio::fetch_tickers() {
         nlohmann::json res_obj = exec_http_get_req(url_str);
         SPDLOG_DEBUG("{} {} fetch_tickers dur={} res_obj.size()={}", ex, kind,
                      now_millis() - start_millis, res_obj.size());
+        long ts = now_millis();
         std::vector<Ticker> vec;
         for (auto& t : res_obj) {
             vec.push_back(Ticker{
                 .s = t["contract"],
                 .bid = stod((std::string)t["highest_bid"]),
                 .ask = stod((std::string)t["lowest_ask"]),
+                .ts = ts,
             });
         }
         return vec;
@@ -468,12 +458,14 @@ std::vector<Ticker> ClientPublicGateio::fetch_tickers() {
         nlohmann::json res_obj = exec_http_get_req(url_str);
         SPDLOG_DEBUG("{} {} fetch_tickers dur={} res_obj.size()={}", ex, kind,
                      now_millis() - start_millis, res_obj.size());
+        long ts = now_millis();
         std::vector<Ticker> vec;
         for (auto& t : res_obj) {
             vec.push_back(Ticker{
                 .s = t["currency_pair"],
                 .bid = stod((std::string)t["highest_bid"]),
                 .ask = stod((std::string)t["lowest_ask"]),
+                .ts = ts,
             });
         }
         return vec;
@@ -1325,12 +1317,14 @@ std::vector<Ticker> ClientPublicMexc::fetch_tickers() {
     if (kind == "spot") {
         std::string url = "https://api.mexc.com/api/v3/ticker/24hr";
         nlohmann::json obj = exec_http_get_req(url);
+        long ts = now_millis();
         std::vector<Ticker> vec;
         for (auto& t : obj) {
             vec.push_back(Ticker{
                 .s = t["symbol"],
                 .bid = stod((std::string)t["bidPrice"]),
                 .ask = stod((std::string)t["askPrice"]),
+                .ts = ts,
             });
         }
         return vec;
@@ -1956,6 +1950,7 @@ std::vector<Ticker> ClientPublicBybit::fetch_tickers() {
             .s = t_raw["symbol"],
             .ask = stod((std::string)t_raw["ask1Price"]),
             .bid = stod((std::string)t_raw["bid1Price"]),
+            .ts = res_obj["time"],
         });
     }
     return vec;

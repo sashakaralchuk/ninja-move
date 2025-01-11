@@ -79,14 +79,18 @@ std::optional<std::tuple<TickerSpread, TickerSpread>> SpreadsMap::find_spreads(
     std::string ccid) {
     std::optional<TickerSpread> max_fut = {};
     std::optional<TickerSpread> min_spot = {};
+    long m1_millis = now_millis() - 60000;
     for (auto o = ccid_ex_k_t[ccid].cbegin(); o != ccid_ex_k_t[ccid].cend();
          ++o) {
         std::string ex = o->first;
         for (auto o = ccid_ex_k_t[ccid][ex].cbegin();
              o != ccid_ex_k_t[ccid][ex].cend(); ++o) {
             std::string k = o->first;
+            TickerSpread t = ccid_ex_k_t[ccid][ex][k];
+            if (t.t_raw.ts < m1_millis) {
+                continue;
+            }
             if (k == "fut") {
-                TickerSpread t = ccid_ex_k_t[ccid][ex][k];
                 if (!max_fut.has_value()) {
                     max_fut = t;
                 }
@@ -120,4 +124,21 @@ SpreadsMap::find_spreads_all() {
         }
     }
     return vec;
+}
+
+void SpreadsMap::print() {
+    for (auto o = ccid_ex_k_t.cbegin(); o != ccid_ex_k_t.cend(); ++o) {
+        std::string ccid = o->first;
+        for (auto o = ccid_ex_k_t[ccid].cbegin(); o != ccid_ex_k_t[ccid].cend();
+             ++o) {
+            std::string ex = o->first;
+            for (auto o = ccid_ex_k_t[ccid][ex].cbegin();
+                 o != ccid_ex_k_t[ccid][ex].cend(); ++o) {
+                std::string k = o->first;
+                TickerSpread t = ccid_ex_k_t[ccid][ex][k];
+                std::cout << "ccid=" << ccid << "\tex=" << ex << " k=" << k
+                          << " t=" << t.t_raw.toString() << std::endl;
+            }
+        }
+    }
 }

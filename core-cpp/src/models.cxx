@@ -1,4 +1,4 @@
-#include "models.hpp"
+#include "models.hxx"
 
 #include <gmpxx.h>
 #include <spdlog/spdlog.h>
@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <sstream>
 
 // NOTE: to implement without hashmap: store 2 lists with prices/amounts
 OrderBookCache::OrderBookCache() {}
@@ -131,4 +132,16 @@ void OrderBookCache::clear() {
     last_update_id = 0;
     asks.clear();
     bids.clear();
+}
+
+long now_millis() {
+    return std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+}
+
+std::string time_point_to_str(std::chrono::system_clock::time_point tp,
+                              std::string format_str) {
+    std::time_t now_raw = std::chrono::system_clock::to_time_t(tp);
+    std::ostringstream now_oss;
+    now_oss << std::put_time(std::gmtime(&now_raw), format_str.c_str());
+    return now_oss.str();
 }

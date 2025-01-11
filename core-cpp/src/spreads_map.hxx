@@ -1,7 +1,7 @@
 #include <map>
 #include <string>
 
-#include "models.hpp"
+#include "models.hxx"
 
 struct TickerSpread {
     Ticker t_raw;
@@ -19,6 +19,7 @@ class SpreadsMap {
     std::optional<std::tuple<TickerSpread, TickerSpread>> find_spreads(
         std::string ccid);
     std::vector<std::tuple<TickerSpread, TickerSpread>> find_spreads_all();
+    void print();
 
    protected:
     std::map<std::tuple<std::string, std::string, std::string, std::string>,

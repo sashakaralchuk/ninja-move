@@ -95,9 +95,16 @@ struct Ticker {
     std::string s;
     double ask;
     double bid;
+    long ts;
     std::string toString() const {
-        return fmt::format("Ticker{{s={},ask={},bid={}}}", s, ask, bid);
+        return fmt::format("Ticker{{s={},ask={},bid={},ts={}}}", s, ask, bid,
+                           ts);
     }
 };
+
+long now_millis();
+
+std::string time_point_to_str(std::chrono::system_clock::time_point tp,
+                              std::string format_str = "%F %T %Z");
 
 #endif  // SRC_MODELS_

@@ -3,18 +3,13 @@
 
 #include <iostream>
 
-#include "models.hpp"
+#include "models.hxx"
 
 std::string conv_to_dec_str_v2(double price, std::string tick_size);
 
 std::string gen_precision_str(int precision);
 
 std::string rstrip_zeros(std::string s);
-
-long now_millis();
-
-std::string time_point_to_str(std::chrono::system_clock::time_point tp,
-                              std::string format_str = "%F %T %Z");
 
 std::tuple<std::string, double> conv_symbol_price_to_atomic_v1(
     std::string symbol, double price);

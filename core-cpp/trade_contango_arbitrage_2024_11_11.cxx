@@ -22,8 +22,8 @@
 #include "msd/channel.hpp"
 #include "rdkafkacpp.h"
 #include "spdlog/sinks/daily_file_sink.h"
-#include "src/clients.hpp"
-#include "src/models.hpp"
+#include "src/clients.hxx"
+#include "src/models.hxx"
 #include "src/spreads_map.hxx"
 #include "trade_contango.grpc.pb.h"
 
@@ -3332,11 +3332,12 @@ void fetch_process_tickers() {
         SpreadsMap sm;
         sm.init_ccid_map_from_clickhouse();
         for (auto vec : chan) {
-            SPDLOG_INFO("sm update vec.size()={}", vec.size());
             for (auto& t : vec) {
                 sm.insert(t);
             }
             auto spreads_vec = sm.find_spreads_all();
+            SPDLOG_INFO("sm update vec.size()={} spreads_vec.size()={}",
+                        vec.size(), spreads_vec.size());
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     });

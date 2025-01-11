@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+
 class SpreadsMapMock : public SpreadsMap {
    public:
     SpreadsMapMock() {
@@ -14,13 +16,10 @@ class SpreadsMapMock : public SpreadsMap {
 
 TickerSpread create_ticker(std::string ex, std::string k, double bid,
                            double ask) {
+    long ts =
+        std::chrono::system_clock::now().time_since_epoch().count() / 1000;
     return TickerSpread{
-        .t_raw =
-            Ticker{
-                .s = "",
-                .ask = ask,
-                .bid = bid,
-            },
+        .t_raw = Ticker{.s = "", .ask = ask, .bid = bid, .ts = ts},
         .ex = ex,
         .k = k,
         .base = "ETH",
@@ -29,47 +28,56 @@ TickerSpread create_ticker(std::string ex, std::string k, double bid,
     };
 }
 
-TEST(SpreadsMap, find_spreads) {
-    {
-        SpreadsMapMock sm;
-        TickerSpread t1 = create_ticker("bybit", "spot", 3000.0, 3001.0);
-        TickerSpread t2 = create_ticker("bybit", "fut", 3010.0, 3011.0);
-        sm.insert(t1);
-        sm.insert(t2);
-        auto [t_fut, t_spot] = sm.find_spreads("t1").value();
-        EXPECT_EQ(t_fut.t_raw.bid, 3010.0);
-        EXPECT_EQ(t_spot.t_raw.ask, 3001.0);
-    }
-    {
-        SpreadsMapMock sm;
-        TickerSpread t_spot_1 = create_ticker("bybit", "spot", 3000.0, 3001.0);
-        TickerSpread t_spot_2 = create_ticker("gateio", "spot", 2996.0, 2997.0);
-        TickerSpread t_fut_1 = create_ticker("bybit", "fut", 3010.0, 3011.0);
-        TickerSpread t_fut_2 = create_ticker("gateio", "fut", 3030.0, 3031.0);
-        sm.insert(t_spot_1);
-        sm.insert(t_spot_2);
-        sm.insert(t_fut_1);
-        sm.insert(t_fut_2);
-        auto [t_fut, t_spot] = sm.find_spreads("t1").value();
-        EXPECT_EQ(t_fut.t_raw.bid, 3030.0);
-        EXPECT_EQ(t_spot.t_raw.ask, 2997.0);
-    }
-    {
-        SpreadsMapMock sm;
-        TickerSpread t_spot_1 =
-            create_ticker("bybit", "spot", 60000.0, 60000.0);
-        TickerSpread t_spot_2 =
-            create_ticker("bybit", "spot", 61000.0, 61000.0);
-        TickerSpread t_fut_1 = create_ticker("bybit", "fut", 65000.0, 65000.0);
-        TickerSpread t_fut_2 = create_ticker("bybit", "fut", 62000.0, 62000.0);
-        TickerSpread t_fut_3 = create_ticker("bybit", "fut", 63000.0, 63000.0);
-        sm.insert(t_spot_1);
-        sm.insert(t_spot_2);
-        sm.insert(t_fut_1);
-        sm.insert(t_fut_2);
-        sm.insert(t_fut_3);
-        auto [t_fut, t_spot] = sm.find_spreads("t1").value();
-        EXPECT_EQ(t_fut.t_raw.bid, 63000.0);
-        EXPECT_EQ(t_spot.t_raw.ask, 61000.0);
-    }
+TEST(SpreadsMap, find_spreads_positive_1) {
+    SpreadsMapMock sm;
+    TickerSpread t1 = create_ticker("bybit", "spot", 3000.0, 3001.0);
+    TickerSpread t2 = create_ticker("bybit", "fut", 3010.0, 3011.0);
+    sm.insert(t1);
+    sm.insert(t2);
+    auto [t_fut, t_spot] = sm.find_spreads("t1").value();
+    EXPECT_EQ(t_fut.t_raw.bid, 3010.0);
+    EXPECT_EQ(t_spot.t_raw.ask, 3001.0);
+}
+
+TEST(SpreadsMap, find_spreads_positive_2) {
+    SpreadsMapMock sm;
+    TickerSpread t_spot_1 = create_ticker("bybit", "spot", 3000.0, 3001.0);
+    TickerSpread t_spot_2 = create_ticker("gateio", "spot", 2996.0, 2997.0);
+    TickerSpread t_fut_1 = create_ticker("bybit", "fut", 3010.0, 3011.0);
+    TickerSpread t_fut_2 = create_ticker("gateio", "fut", 3030.0, 3031.0);
+    sm.insert(t_spot_1);
+    sm.insert(t_spot_2);
+    sm.insert(t_fut_1);
+    sm.insert(t_fut_2);
+    auto [t_fut, t_spot] = sm.find_spreads("t1").value();
+    EXPECT_EQ(t_fut.t_raw.bid, 3030.0);
+    EXPECT_EQ(t_spot.t_raw.ask, 2997.0);
+}
+
+TEST(SpreadsMap, find_spreads_positive_3) {
+    SpreadsMapMock sm;
+    TickerSpread t_spot_1 = create_ticker("bybit", "spot", 60000.0, 60000.0);
+    TickerSpread t_spot_2 = create_ticker("bybit", "spot", 61000.0, 61000.0);
+    TickerSpread t_fut_1 = create_ticker("bybit", "fut", 65000.0, 65000.0);
+    TickerSpread t_fut_2 = create_ticker("bybit", "fut", 62000.0, 62000.0);
+    TickerSpread t_fut_3 = create_ticker("bybit", "fut", 63000.0, 63000.0);
+    sm.insert(t_spot_1);
+    sm.insert(t_spot_2);
+    sm.insert(t_fut_1);
+    sm.insert(t_fut_2);
+    sm.insert(t_fut_3);
+    auto [t_fut, t_spot] = sm.find_spreads("t1").value();
+    EXPECT_EQ(t_fut.t_raw.bid, 63000.0);
+    EXPECT_EQ(t_spot.t_raw.ask, 61000.0);
+}
+
+TEST(SpreadsMap, find_spreads_ignorestale_1m) {
+    SpreadsMapMock sm;
+    TickerSpread t_spot_1 = create_ticker("bybit", "spot", 60000.0, 60000.0);
+    t_spot_1.t_raw.ts -= 60001;
+    TickerSpread t_fut_1 = create_ticker("bybit", "fut", 65000.0, 65000.0);
+    sm.insert(t_spot_1);
+    sm.insert(t_fut_1);
+    auto out = sm.find_spreads("t1");
+    EXPECT_FALSE(out.has_value());
 }
