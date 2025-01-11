@@ -1,3 +1,5 @@
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
+
 #include <clickhouse/client.h>
 #include <gmpxx.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -184,6 +186,29 @@ std::ostream& operator<<(std::ostream& os, SpreadsReqV2 const& o) {
 }
 
 std::string format_as(SpreadsReqV2 const& o) {
+    std::ostringstream ss;
+    ss << o;
+    return std::move(ss).str();
+}
+
+std::ostream& operator<<(std::ostream& os,
+                         trade_contango::SpreadsReqV3 const& o) {
+    os << "SpreadsReqV3{"
+       << ",diff_ask_bid_rel=" << o.diff_ask_bid_rel()
+       << ",diff_bid_ask_rel=" << o.diff_bid_ask_rel()
+       << ",t_fut_ex=" << o.t_fut_ex() << ",t_fut_s=" << o.t_fut_s()
+       << ",t_fut_st=" << o.t_fut_st() << ",t_fut_k=" << o.t_fut_k()
+       << ",t_fut_ts=" << o.t_fut_ts() << ",t_fut_p_bid=" << o.t_fut_p_bid()
+       << ",t_fut_p_ask=" << o.t_fut_p_ask() << ",t_fut_v=" << o.t_fut_v()
+       << ",t_spot_ex=" << o.t_spot_ex() << ",t_spot_s=" << o.t_spot_s()
+       << ",t_spot_st=" << o.t_spot_st() << ",t_spot_k=" << o.t_spot_k()
+       << ",t_spot_ts=" << o.t_spot_ts() << ",t_spot_p_bid=" << o.t_spot_p_bid()
+       << ",t_spot_p_ask=" << o.t_spot_p_ask() << ",t_spot_v=" << o.t_spot_v()
+       << "}";
+    return os;
+}
+
+std::string format_as(trade_contango::SpreadsReqV3 const& o) {
     std::ostringstream ss;
     ss << o;
     return std::move(ss).str();
@@ -776,6 +801,7 @@ void execute_v1() {
 static int trade_obj_raw_f = 0;
 static std::optional<SpreadsReq> spreads_req = {};
 static std::optional<SpreadsReqV2> spreads_req_v2 = {};
+static std::optional<trade_contango::SpreadsReqV3> spreads_req_v3 = {};
 
 class TradeContangoServiceImpl final : public TradeContango::Service {
     std::function<void(const std::vector<SpreadsReqV2> req)> on_fire_trade_v2;
@@ -816,6 +842,25 @@ class TradeContangoServiceImpl final : public TradeContango::Service {
             trade_obj_raw_f = 1;
         }
         on_fire_trade_v2(reqs);
+        return Status::OK;
+    }
+
+    Status FireTradeV3(ServerContext* context,
+                       const trade_contango::FireTradeReqV3* req,
+                       FireTradeRes* reply) override {
+        SPDLOG_DEBUG("fire-trade-v3 req->list.size={}", req->list().size());
+        reply->set_run_initiated(trade_obj_raw_f == 0 ? 1 : 0);
+        if (trade_obj_raw_f == 0) {
+            spreads_req_v3 = req->list()[0];
+            for (auto& obj : req->list()) {
+                if (obj.diff_ask_bid_rel() >
+                    spreads_req_v3.value().diff_ask_bid_rel()) {
+                    SPDLOG_DEBUG("set spreads_req={}", format_as(obj));
+                    spreads_req_v3 = obj;
+                }
+            }
+            trade_obj_raw_f = 1;
+        }
         return Status::OK;
     }
 
@@ -2030,6 +2075,7 @@ void execute_v5() {
     double usdt_to_use = 25.0;
     std::thread _1([&]() {
         wait_until([&]() { return trade_obj_raw_f != 0; });
+        // TODO: use SpreadsReqV3 here
         SpreadsReqV2 obj = spreads_req_v2.value();
         SPDLOG_INFO("run obj={}", format_as(obj));
         ClientPrivate* client_pr_fut =
@@ -3182,6 +3228,11 @@ void fetch_process_tickers() {
     // gateio sut+spot NOTE: on 2024-01-05 coingecko api for FBUSDT on bybit
     // didn't contain coin_id for fut(perpetual) p.s. on UI ids matched properly
     // NOTE: implementing scrapper is not ok because of inconsistencies
+    std::shared_ptr<grpc::Channel> channel_tc = grpc::CreateChannel(
+        "0.0.0.0:50051", grpc::InsecureChannelCredentials());
+    std::unique_ptr<trade_contango::TradeContango::Stub> stub_tc =
+        trade_contango::TradeContango::NewStub(channel_tc);
+    trade_contango::FireTradeRes res_tc;
     ClientsHouse ch;
     ch.init_public_clients();
     ch.init_private_clients();
@@ -3335,9 +3386,17 @@ void fetch_process_tickers() {
             for (auto& t : vec) {
                 sm.insert(t);
             }
-            auto spreads_vec = sm.find_spreads_all();
-            SPDLOG_INFO("sm update vec.size()={} spreads_vec.size()={}",
-                        vec.size(), spreads_vec.size());
+            auto req_v3 = sm.find_spreads_all_req_v3();
+            if (req_v3.list_size() > 0) {
+                grpc::ClientContext context_tc;
+                grpc::Status status_tc =
+                    stub_tc->FireTradeV3(&context_tc, req_v3, &res_tc);
+                if (!status_tc.ok()) {
+                    throw std::runtime_error("grpc status error");
+                }
+                SPDLOG_INFO("sm update vec.size()={} req_v3.list_size()={}",
+                            vec.size(), req_v3.list_size());
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     });
