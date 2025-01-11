@@ -4,6 +4,7 @@ package trade_contango;
 service TradeContango {
     rpc FireTrade (FireTradeReq) returns (FireTradeRes);
     rpc FireTradeV2 (FireTradeReqV2) returns (FireTradeRes);
+    rpc FireTradeV3 (FireTradeReqV3) returns (FireTradeRes);
 }
 
 message FireTradeReq {
@@ -26,6 +27,10 @@ message QTickerReq {
     int64 ts = 5;
     double p = 6;
     double v = 7;
+}
+
+message FireTradeRes {
+    int32 run_initiated = 1;
 }
 
 message FireTradeReqV2 {
@@ -51,6 +56,27 @@ message QTickerReqV2 {
     double v = 8;
 }
 
-message FireTradeRes {
-    int32 run_initiated = 1;
+message FireTradeReqV3 {
+    repeated SpreadsReqV3 list = 1;
+}
+
+message SpreadsReqV3 {
+    double diff_ask_bid_rel = 1;
+    double diff_bid_ask_rel = 2;
+    string t_fut_ex = 3;
+    string t_fut_s = 4;
+    string t_fut_st = 5;
+    string t_fut_k = 6;
+    int64 t_fut_ts = 7;
+    double t_fut_p_bid = 8;
+    double t_fut_p_ask = 9;
+    double t_fut_v = 10;
+    string t_spot_ex = 11;
+    string t_spot_s = 12;
+    string t_spot_st = 13;
+    string t_spot_k = 14;
+    int64 t_spot_ts = 15;
+    double t_spot_p_bid = 16;
+    double t_spot_p_ask = 17;
+    double t_spot_v = 18;
 }

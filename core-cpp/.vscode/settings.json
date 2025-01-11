@@ -96,6 +96,7 @@
         "shared_mutex": "cpp",
         "cassert": "cpp",
         "print": "cpp",
-        "sim_vector": "cpp"
+        "sim_vector": "cpp",
+        "condition_variable": "cpp"
     }
 }

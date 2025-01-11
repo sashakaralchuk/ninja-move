@@ -5,6 +5,8 @@
 #include <iostream>
 #include <string>
 
+#include "trade_contango.grpc.pb.h"
+
 void SpreadsMap::init_ccid_map_from_clickhouse() {
     std::string QUERY_EX_K_B_R_CCID = R"(
         SELECT
@@ -98,7 +100,6 @@ std::optional<std::tuple<TickerSpread, TickerSpread>> SpreadsMap::find_spreads(
                     max_fut = t;
                 }
             } else if (k == "spot") {
-                TickerSpread t = ccid_ex_k_t[ccid][ex][k];
                 if (!min_spot.has_value()) {
                     min_spot = t;
                 }
@@ -124,6 +125,41 @@ SpreadsMap::find_spreads_all() {
         }
     }
     return vec;
+}
+
+trade_contango::FireTradeReqV3 SpreadsMap::find_spreads_all_req_v3() {
+    trade_contango::FireTradeReqV3 o_out;
+    std::vector<std::tuple<TickerSpread, TickerSpread>> vec =
+        find_spreads_all();
+    for (auto& [t_fut, t_spot] : vec) {
+        double diff_ask_bid =
+            (t_fut.t_raw.bid - t_spot.t_raw.ask) / t_spot.t_raw.ask * 100;
+        if (diff_ask_bid < .5) {
+            continue;
+        }
+        double diff_bid_ask =
+            (t_fut.t_raw.ask - t_spot.t_raw.bid) / t_spot.t_raw.bid * 100;
+        trade_contango::SpreadsReqV3* o = o_out.add_list();
+        o->set_diff_ask_bid_rel(diff_ask_bid);
+        o->set_diff_bid_ask_rel(diff_bid_ask);
+        o->set_t_fut_ex(t_fut.ex);
+        o->set_t_fut_s("");
+        o->set_t_fut_st("");
+        o->set_t_fut_k(t_fut.k);
+        o->set_t_fut_ts(t_fut.t_raw.ts);
+        o->set_t_fut_p_bid(t_fut.t_raw.bid);
+        o->set_t_fut_p_ask(t_fut.t_raw.ask);
+        o->set_t_fut_v(.0);
+        o->set_t_spot_ex(t_spot.ex);
+        o->set_t_spot_s("");
+        o->set_t_spot_st("");
+        o->set_t_spot_k(t_spot.k);
+        o->set_t_spot_ts(t_spot.t_raw.ts);
+        o->set_t_spot_p_bid(t_spot.t_raw.bid);
+        o->set_t_spot_p_ask(t_spot.t_raw.ask);
+        o->set_t_spot_v(.0);
+    }
+    return o_out;
 }
 
 void SpreadsMap::print() {

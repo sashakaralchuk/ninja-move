@@ -2,6 +2,7 @@
 #include <string>
 
 #include "models.hxx"
+#include "trade_contango.grpc.pb.h"
 
 struct TickerSpread {
     Ticker t_raw;
@@ -19,6 +20,7 @@ class SpreadsMap {
     std::optional<std::tuple<TickerSpread, TickerSpread>> find_spreads(
         std::string ccid);
     std::vector<std::tuple<TickerSpread, TickerSpread>> find_spreads_all();
+    trade_contango::FireTradeReqV3 find_spreads_all_req_v3();
     void print();
 
    protected:
