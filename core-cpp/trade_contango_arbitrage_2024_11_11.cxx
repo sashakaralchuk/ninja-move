@@ -193,8 +193,7 @@ std::string format_as(SpreadsReqV2 const& o) {
 
 std::ostream& operator<<(std::ostream& os,
                          trade_contango::SpreadsReqV3 const& o) {
-    os << "SpreadsReqV3{"
-       << ",diff_ask_bid_rel=" << o.diff_ask_bid_rel()
+    os << "SpreadsReqV3{diff_ask_bid_rel=" << o.diff_ask_bid_rel()
        << ",diff_bid_ask_rel=" << o.diff_bid_ask_rel()
        << ",t_fut_ex=" << o.t_fut_ex() << ",t_fut_s=" << o.t_fut_s()
        << ",t_fut_st=" << o.t_fut_st() << ",t_fut_k=" << o.t_fut_k()
@@ -2075,19 +2074,18 @@ void execute_v5() {
     double usdt_to_use = 25.0;
     std::thread _1([&]() {
         wait_until([&]() { return trade_obj_raw_f != 0; });
-        // TODO: use SpreadsReqV3 here
-        SpreadsReqV2 obj = spreads_req_v2.value();
+        trade_contango::SpreadsReqV3 obj = spreads_req_v3.value();
         SPDLOG_INFO("run obj={}", format_as(obj));
         ClientPrivate* client_pr_fut =
-            ch.get_client_private(obj.t_fut().ex(), "fut");
+            ch.get_client_private(obj.t_fut_ex(), "fut");
         ClientPublic* client_pub_fut =
-            ch.get_client_public(obj.t_fut().ex(), "fut");
+            ch.get_client_public(obj.t_fut_ex(), "fut");
         ClientPrivate* client_pr_spot =
-            ch.get_client_private(obj.t_spot().ex(), "spot");
+            ch.get_client_private(obj.t_spot_ex(), "spot");
         ClientPublic* client_pub_spot =
-            ch.get_client_public(obj.t_spot().ex(), "spot");
-        std::string symbol_fut = obj.t_fut().s();
-        std::string symbol_spot = obj.t_spot().s();
+            ch.get_client_public(obj.t_spot_ex(), "spot");
+        std::string symbol_fut = obj.t_fut_s();
+        std::string symbol_spot = obj.t_spot_s();
         std::optional<Order> sell_order_fut = {};
         std::optional<Ticker> t_spot = {};
         {
