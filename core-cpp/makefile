@@ -58,7 +58,7 @@ run-wait-for-spread-converge-show-order-book:
 run-trade-contango-arbitrage-2024-11-11-fetch-process-tickers:
 	cmake --build build -j 12 --target trade_contango_arbitrage_2024_11_11 && \
 		${env_vars} \
-		SPDLOG_LEVEL=debug \
+		SPDLOG_LEVEL=info \
 		TICKERS_VERSION=fetch_process_tickers \
 		DIFF_REL_BOTTOM_THRESHOLD=1.5 \
 		./build/trade_contango_arbitrage_2024_11_11

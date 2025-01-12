@@ -166,7 +166,7 @@ trade_contango::FireTradeReqV3 SpreadsMap::find_spreads_all_req_v3() {
         o->set_t_spot_p_ask(t_spot.t_raw.ask);
         o->set_t_spot_v(.0);
     }
-    SPDLOG_DEBUG(
+    SPDLOG_INFO(
         "vec.size()={} o_out.list_size()={} skipped_amount={} "
         "threshold_diff={} max_diff_ask_bid={}",
         vec.size(), o_out.list_size(), skipped_amount, threshold_diff,
