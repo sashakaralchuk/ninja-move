@@ -60,6 +60,7 @@ run-trade-contango-arbitrage-2024-11-11-fetch-process-tickers:
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
 		TICKERS_VERSION=fetch_process_tickers \
+		DIFF_REL_BOTTOM_THRESHOLD=1.5 \
 		./build/trade_contango_arbitrage_2024_11_11
 
 clone-libs:

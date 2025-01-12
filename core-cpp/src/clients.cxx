@@ -1301,6 +1301,7 @@ Ticker ClientPublicMexc::fetch_ticker(std::string& symbol) {
     if (kind == "spot") {
         std::string url_str = fmt::format(
             "https://api.mexc.com/api/v3/ticker/bookTicker?symbol={}", symbol);
+        SPDLOG_DEBUG("{} {} fetch_ticker url_str={}", ex, kind, url_str);
         nlohmann::json res_obj = exec_http_get_req(url_str, nullptr, true);
         SPDLOG_DEBUG("{} {} fetch_ticker res_obj={}", ex, kind, res_obj.dump());
         return Ticker{

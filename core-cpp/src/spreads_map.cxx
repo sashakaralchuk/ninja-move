@@ -1,3 +1,5 @@
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
+
 #include "spreads_map.hxx"
 
 #include <clickhouse/client.h>
@@ -128,13 +130,18 @@ SpreadsMap::find_spreads_all() {
 }
 
 trade_contango::FireTradeReqV3 SpreadsMap::find_spreads_all_req_v3() {
+    double threshold_diff = std::stod(std::getenv("DIFF_REL_BOTTOM_THRESHOLD"));
     trade_contango::FireTradeReqV3 o_out;
     std::vector<std::tuple<TickerSpread, TickerSpread>> vec =
         find_spreads_all();
+    int skipped_amount = 0;
+    double max_diff_ask_bid = .0;
     for (auto& [t_fut, t_spot] : vec) {
         double diff_ask_bid =
             (t_fut.t_raw.bid - t_spot.t_raw.ask) / t_spot.t_raw.ask * 100;
-        if (diff_ask_bid < .5) {
+        if (diff_ask_bid < threshold_diff) {
+            skipped_amount++;
+            max_diff_ask_bid = std::max(max_diff_ask_bid, diff_ask_bid);
             continue;
         }
         double diff_bid_ask =
@@ -143,7 +150,7 @@ trade_contango::FireTradeReqV3 SpreadsMap::find_spreads_all_req_v3() {
         o->set_diff_ask_bid_rel(diff_ask_bid);
         o->set_diff_bid_ask_rel(diff_bid_ask);
         o->set_t_fut_ex(t_fut.ex);
-        o->set_t_fut_s("");
+        o->set_t_fut_s(t_fut.t_raw.s);
         o->set_t_fut_st("");
         o->set_t_fut_k(t_fut.k);
         o->set_t_fut_ts(t_fut.t_raw.ts);
@@ -151,7 +158,7 @@ trade_contango::FireTradeReqV3 SpreadsMap::find_spreads_all_req_v3() {
         o->set_t_fut_p_ask(t_fut.t_raw.ask);
         o->set_t_fut_v(.0);
         o->set_t_spot_ex(t_spot.ex);
-        o->set_t_spot_s("");
+        o->set_t_spot_s(t_spot.t_raw.s);
         o->set_t_spot_st("");
         o->set_t_spot_k(t_spot.k);
         o->set_t_spot_ts(t_spot.t_raw.ts);
@@ -159,6 +166,11 @@ trade_contango::FireTradeReqV3 SpreadsMap::find_spreads_all_req_v3() {
         o->set_t_spot_p_ask(t_spot.t_raw.ask);
         o->set_t_spot_v(.0);
     }
+    SPDLOG_DEBUG(
+        "vec.size()={} o_out.list_size()={} skipped_amount={} "
+        "threshold_diff={} max_diff_ask_bid={}",
+        vec.size(), o_out.list_size(), skipped_amount, threshold_diff,
+        max_diff_ask_bid);
     return o_out;
 }
 
