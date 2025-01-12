@@ -43,4 +43,6 @@ local = [
     "sqlalchemy==2.0.29",
     "typing-extensions==4.10.0",
     "urllib3==2.2.1",
+    "asynch>=0.2.5",
+    "clickhouse-connect>=0.8.13",
 ]
