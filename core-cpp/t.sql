@@ -210,12 +210,17 @@ WITH fundings_bybit AS (
 ), fundings_hyperliquid AS (
     SELECT *, 1 funding_hours
     FROM default.fundings_curr_2025_01_12
+    WHERE ex = 'hyperliquid'
+), fundings_arkm AS (
+    SELECT *, 1 funding_hours
+    FROM default.fundings_curr_2025_01_12
+    WHERE ex = 'arkm'
 ), fundings AS (
     SELECT *
     FROM (
         SELECT
             t1.ex,
-            replaceRegexpOne(replaceRegexpOne(replaceRegexpOne(symbol, '_USDT$', ''), '_USDC$', ''), 'USDT$', '') token_1,
+            replaceRegexpOne(replaceRegexpOne(replaceRegexpOne(replaceRegexpOne(symbol, '_PERP$', ''), '_USDT$', ''), '_USDC$', ''), 'USDT$', '') token_1,
             t1.fundingRate / t1.funding_hours funding_rate_1h,
             row_number() OVER (PARTITION BY ex, symbol ORDER BY ts DESC) AS rank,
             t2.coingecko_coin_id
@@ -225,6 +230,8 @@ WITH fundings_bybit AS (
             SELECT * FROM fundings_gateio
             UNION ALL
             SELECT * FROM fundings_hyperliquid
+            UNION ALL
+            SELECT * FROM fundings_arkm
         ) t1
         INNER JOIN default.t_fut_to_coingecko_coin_id t2
             ON t1.ex = t2.ex AND token_1 = t2.base
@@ -1302,3 +1309,20 @@ INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('gateio', 'XNO', 'USDT', 'nano', 'by-hands-on-2025-01-07'),
 ('gateio', 'GAL', 'USDT', '', 'by-hands-on-2025-01-07'),
 ('gateio', 'MBABYNEIRO', 'USDT', '', 'by-hands-on-2025-01-07');
+---
+INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+('arkm', 'BONK', 'USD', 'bonk', 'by-hands-on-2025-01-19'),
+('arkm', 'RENDER', 'USD', 'render', 'by-hands-on-2025-01-19'),
+('arkm', 'BTC', 'USD', 'bitcoin', 'by-hands-on-2025-01-19'),
+('arkm', 'ETH', 'USD', 'ethereum', 'by-hands-on-2025-01-19'),
+('arkm', 'TON', 'USD', 'toncoin', 'by-hands-on-2025-01-19'),
+('arkm', 'SUI', 'USD', 'sui', 'by-hands-on-2025-01-19'),
+('arkm', 'AVAX', 'USD', 'avalanche', 'by-hands-on-2025-01-19'),
+('arkm', 'PEPE', 'USD', 'pepe', 'by-hands-on-2025-01-19'),
+('arkm', 'ARKM', 'USD', 'arkham', 'by-hands-on-2025-01-19'),
+('arkm', 'XRP', 'USD', 'xrp', 'by-hands-on-2025-01-19'),
+('arkm', 'FLOKI', 'USD', 'floki', 'by-hands-on-2025-01-19'),
+('arkm', 'DOGE', 'USD', 'dogecoin', 'by-hands-on-2025-01-19'),
+('arkm', 'WIF', 'USD', 'dogwifhat', 'by-hands-on-2025-01-19'),
+('arkm', 'FET', 'USD', 'artificial-superintelligence-alliance', 'by-hands-on-2025-01-19'),
+('arkm', 'SOL', 'USD', 'solana', 'by-hands-on-2025-01-19');
