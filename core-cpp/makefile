@@ -63,6 +63,12 @@ run-trade-contango-arbitrage-2024-11-11-fetch-process-tickers:
 		DIFF_REL_BOTTOM_THRESHOLD=1.5 \
 		./build/trade_contango_arbitrage_2024_11_11
 
+run-trade-fundings-2025-01-12:
+	cmake --build build -j 12 --target trade_fundings_2025_01_12 && \
+		SPDLOG_LEVEL=debug \
+		MODE=upload_fundings_curr \
+		./build/trade_fundings_2025_01_12
+
 clone-libs:
 	git clone git@github.com:curl/curl.git libs/curl && \
 	git clone git@github.com:nlohmann/json.git libs/json && \

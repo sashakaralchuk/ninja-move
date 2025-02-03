@@ -5,6 +5,16 @@
 
 #include "models.hxx"
 
+struct FundingRes {
+    nlohmann::json ticker_raw;
+    std::string symbol;
+    double funding_rate;
+    long next_funding_time;
+    long ts;
+    std::string ex;
+    std::string k;
+};
+
 std::string conv_to_dec_str_v2(double price, std::string tick_size);
 
 std::string gen_precision_str(int precision);
@@ -39,10 +49,13 @@ class ClientPublic : public hv::WebSocketClient {
     virtual void ping() = 0;
     virtual Ticker fetch_ticker(std::string& symbol) = 0;
     virtual std::vector<Ticker> fetch_tickers() = 0;
+    std::string gen_fundings_insert_sql(
+        std::string table_name = "default.fundings_curr_2025_01_12");
 
    protected:
     virtual void handle_onmessage(const std::string& msg) = 0;
     void init_idle_(std::string& url);
+    std::string template_fundings_insert_sql;
 };
 
 class ClientPrivate : public hv::WebSocketClient {
@@ -295,6 +308,94 @@ class ClientPrivateHtx : public ClientPrivate {
     std::string api_key;
     std::string api_secret;
     std::string sign_str(std::string qs0, std::string payload0);
+};
+
+class ClientPublicHyperliquid {
+   public:
+    std::string ex;
+    std::string kind;
+
+    ClientPublicHyperliquid(std::string kind_);
+
+    std::vector<FundingRes> fetch_fundings_sync();
+};
+
+class ClientPublicArkm : public ClientPublic {
+   public:
+    ClientPublicArkm(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
+class ClientPublicParadex : public ClientPublic {
+   public:
+    ClientPublicParadex(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
+class ClientPublicPolynomialFi : public ClientPublic {
+   public:
+    ClientPublicPolynomialFi(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
+class ClientPublicApexPro {
+   public:
+    std::string ex;
+    std::string k;
+
+    ClientPublicApexPro(std::string k);
+
+    std::vector<FundingRes> fetch_fundings_sync();
+};
+
+class ClientPublicApexOmni {
+   public:
+    std::string ex;
+    std::string k;
+
+    ClientPublicApexOmni(std::string k);
+
+    std::vector<FundingRes> fetch_fundings_sync();
+};
+
+class ClientPublicAevo {
+   public:
+    std::string ex;
+    std::string k;
+
+    ClientPublicAevo(std::string kind);
+
+    std::vector<FundingRes> fetch_fundings_sync();
 };
 
 class TelegramBotPort {

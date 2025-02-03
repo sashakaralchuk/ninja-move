@@ -188,7 +188,7 @@ INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
     ('hyperliquid', 'MYRO', 'USD', 'myro', 'by-hands-on-2024-01-19');
 -- figure out fundings differences
 WITH fundings_bybit AS (
-    SELECT t1.*, t2.fundingInterval / 60 funding_hours
+    SELECT t1.*, toUInt64(t2.fundingInterval / 60) funding_hours
     FROM default.fundings_curr_2025_01_12 t1
     INNER JOIN (
         SELECT *
@@ -201,7 +201,7 @@ WITH fundings_bybit AS (
     SELECT t1.*, funding_hours
     FROM default.fundings_curr_2025_01_12 t1
     INNER JOIN (
-        SELECT s, JSONExtract(contract_raw, 'funding_interval', 'Int64') / 60 / 60 funding_hours
+        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours
         FROM default.t_gateio_2025_01_02
         WHERE k = 'fut'
     ) t2
@@ -215,23 +215,73 @@ WITH fundings_bybit AS (
     SELECT *, 1 funding_hours
     FROM default.fundings_curr_2025_01_12
     WHERE ex = 'arkm'
+), fundings_paradex AS (
+    SELECT t1.*, fundingInterval funding_hours
+    FROM default.fundings_curr_2025_01_12 t1
+    INNER JOIN (
+        SELECT s, fundingInterval
+        FROM default.t_paradex_2025_01_21
+        WHERE k = 'fut'
+    ) t2
+        ON t1.symbol = t2.s
+    WHERE ex = 'paradex'
+), fundings_polynomial_fi AS (
+    SELECT *, 1 funding_hours
+    FROM default.fundings_curr_2025_01_12
+    WHERE ex = 'polynomial-fi'
+), fundings_apex_pro AS (
+    SELECT *, 1 funding_hours
+    FROM default.fundings_curr_2025_01_12
+    WHERE ex = 'apex-pro'
+), fundings_apex_omni AS (
+    SELECT *, 1 funding_hours
+    FROM default.fundings_curr_2025_01_12
+    WHERE ex = 'apex-omni'
+), fundings_aevo AS (
+    SELECT *, 1 funding_hours
+    FROM default.fundings_curr_2025_01_12
+    WHERE ex = 'aevo'
 ), fundings AS (
     SELECT *
     FROM (
         SELECT
             t1.ex,
-            replaceRegexpOne(replaceRegexpOne(replaceRegexpOne(replaceRegexpOne(symbol, '_PERP$', ''), '_USDT$', ''), '_USDC$', ''), 'USDT$', '') token_1,
+            replaceRegexpOne(
+                replaceRegexpOne(
+                    replaceRegexpOne(
+                        replaceRegexpOne(
+                            replaceRegexpOne(
+                                replaceRegexpOne(
+                                    replaceRegexpOne(symbol, '-USD', '')
+                                    , 'USDC', ''),
+                                '-USD-PERP', ''),
+                            '_PERP$', ''
+                        ),
+                    '_USDT$', ''),
+                '_USDC$', ''),
+                'USDT$', ''
+            ) token_1,
             t1.fundingRate / t1.funding_hours funding_rate_1h,
             row_number() OVER (PARTITION BY ex, symbol ORDER BY ts DESC) AS rank,
             t2.coingecko_coin_id
         FROM (
-            SELECT * FROM fundings_bybit
+            -- SELECT * FROM fundings_bybit
+            -- UNION ALL
+            -- SELECT * FROM fundings_gateio
+            -- UNION ALL
+            -- SELECT * FROM fundings_hyperliquid
+            -- UNION ALL
+            -- SELECT * FROM fundings_arkm
+            -- UNION ALL
+            -- SELECT * FROM fundings_paradex
+            -- UNION ALL
+            -- SELECT * FROM fundings_polynomial_fi
+            -- UNION ALL
+            SELECT * FROM fundings_apex_pro
             UNION ALL
-            SELECT * FROM fundings_gateio
+            SELECT * FROM fundings_apex_omni
             UNION ALL
-            SELECT * FROM fundings_hyperliquid
-            UNION ALL
-            SELECT * FROM fundings_arkm
+            SELECT * FROM fundings_aevo
         ) t1
         INNER JOIN default.t_fut_to_coingecko_coin_id t2
             ON t1.ex = t2.ex AND token_1 = t2.base
@@ -396,7 +446,7 @@ FROM (
     SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) symbol_raw
     FROM url('https://api.bybit.com/v5/market/instruments-info?category=spot', JSONAsString)
 );
----
+--
 CREATE TABLE default.t_cmc_exchange_market_pairs_2025_01_05 (
     `pair_raw` String,
     `exchangeId` UInt64,
@@ -466,7 +516,7 @@ FROM (
     SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'marketPairs')) pair_raw
     FROM url('https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest?slug=bybit&category=spot&start=1&limit=1000', JSONAsString)
 );
----
+--
 CREATE TABLE default.t_cmc_cryptocurrency_map_2025_01_05 (
     `cryptocurrency_raw` String,
     `id` UInt64,
@@ -488,7 +538,7 @@ FROM (
     SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) cryptocurrency_raw
     FROM url('https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?start=10001&limit=5000', JSONAsString, headers('X-CMC_PRO_API_KEY'='be43125a-574a-46bb-8f5e-db2e8d204adf'))
 );
----
+--
 CREATE TABLE default.t_cmc_exchange_map_2025_01_05 (
     `exchange_raw` String,
     `id` UInt64,
@@ -504,7 +554,7 @@ FROM (
     SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) exchange_raw
     FROM url('https://pro-api.coinmarketcap.com/v1/exchange/map?start=1&limit=5000', JSONAsString, headers('X-CMC_PRO_API_KEY'='be43125a-574a-46bb-8f5e-db2e8d204adf'))
 );
----
+--
 CREATE TABLE default.t_coingecko_coins_list_2025_01_05 (
     `coin_raw` String,
     `id` String,
@@ -522,7 +572,7 @@ FROM (
     SELECT json coin_raw
     FROM url('https://api.coingecko.com/api/v3/coins/list', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
 );
----
+--
 CREATE TABLE default.t_coingecko_exchanges_list_2025_01_05 (
     `ex_raw` String,
     `id` String,
@@ -538,7 +588,7 @@ FROM (
     SELECT json ex_raw
     FROM url('https://api.coingecko.com/api/v3/exchanges/list', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
 );
----
+--
 CREATE TABLE default.t_coingecko_exchanges_tickers_2025_01_05 (
     `ticker_raw` String,
     `base` String,
@@ -760,7 +810,7 @@ FROM (
     UNION ALL
     SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/mxc/tickers?page=29', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
 );
---- select tokens for workout
+-- select tokens for workout
 WITH spot AS (
     SELECT baseSymbol, groupArray(exchangeSlug) exchanges
     FROM default.t_cmc_exchange_market_pairs_2025_01_05
@@ -778,7 +828,7 @@ SELECT
 FROM spot
 INNER JOIN fut
     ON spot.baseSymbol = fut.baseSymbol;
---- select spot map to coingecko_coin_id
+-- select spot map to coingecko_coin_id
 SELECT
     *,
     JSONExtractString(ticker_raw, 'coin_id') coingecko_coin_id,
@@ -787,7 +837,7 @@ FROM default.t_coingecko_exchanges_tickers_2025_01_05
 WHERE k = 'fut' AND market_identifier = 'bybit'
 LIMIT 1
 \G;
----
+--
 CREATE TABLE default.t_fut_to_coingecko_coin_id (
     `ex` String,
     `base` String,
@@ -796,7 +846,7 @@ CREATE TABLE default.t_fut_to_coingecko_coin_id (
     `how_appeared` String
 )
 ENGINE = TinyLog;
----
+--
 INSERT INTO default.t_fut_to_coingecko_coin_id
 -- join bybit fut+spot and figure out diff-rel
 WITH fut_prices AS (
@@ -841,7 +891,7 @@ FULL OUTER JOIN spot_prices ts
 WHERE tf.base != '' AND ts.target != '' AND diff_rel_abs < 2
 ORDER BY diff_rel_abs
 );
----
+--
 INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('bybit', 'TOMI', 'USDT', '', 'by-hands-on-2024-01-06'),
 ('bybit', 'FITFI', 'USDT', '', 'by-hands-on-2024-01-06'),
@@ -1086,7 +1136,7 @@ INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('bybit', 'ZRC', 'USDT', 'zircuit', 'by-hands-on-2025-01-01'),
 ('bybit', 'ZRO', 'USDT', 'layerzero', 'by-hands-on-2025-01-01'),
 ('bybit', 'ZRX', 'USDT', '0x', 'by-hands-on-2025-01-01');
----
+--
 INSERT INTO default.t_fut_to_coingecko_coin_id
 WITH fut_prices AS (
     SELECT
@@ -1131,7 +1181,7 @@ FULL OUTER JOIN spot_prices ts
 WHERE tf.base != '' AND ts.target != '' AND diff_rel_abs < 2
 ORDER BY diff_rel_abs
 );
----
+--
 INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('gateio', 'DOGEGOV', 'USDT', '', 'by-hands-on-2025-01-07'),
 ('gateio', 'AIOZ', 'USDT', 'aioz-network', 'by-hands-on-2025-01-07'),
@@ -1309,7 +1359,7 @@ INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('gateio', 'XNO', 'USDT', 'nano', 'by-hands-on-2025-01-07'),
 ('gateio', 'GAL', 'USDT', '', 'by-hands-on-2025-01-07'),
 ('gateio', 'MBABYNEIRO', 'USDT', '', 'by-hands-on-2025-01-07');
----
+--
 INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('arkm', 'BONK', 'USD', 'bonk', 'by-hands-on-2025-01-19'),
 ('arkm', 'RENDER', 'USD', 'render', 'by-hands-on-2025-01-19'),
@@ -1326,3 +1376,414 @@ INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('arkm', 'WIF', 'USD', 'dogwifhat', 'by-hands-on-2025-01-19'),
 ('arkm', 'FET', 'USD', 'artificial-superintelligence-alliance', 'by-hands-on-2025-01-19'),
 ('arkm', 'SOL', 'USD', 'solana', 'by-hands-on-2025-01-19');
+--
+CREATE TABLE default.t_paradex_2025_01_21
+(
+    `market_raw` String,
+    `s` String,
+    `k` String,
+    `baseCoin` String,
+    `quoteCoin` String,
+    `fundingInterval` UInt64
+)
+ENGINE = TinyLog;
+--
+INSERT INTO default.t_paradex_2025_01_21
+SELECT
+    market_raw,
+    JSONExtractString(market_raw, 'symbol') s,
+    'fut' k,
+    JSONExtractString(market_raw, 'base_currency') baseCoin,
+    JSONExtractString(market_raw, 'quote_currency') quoteCoin,
+    JSONExtractString(market_raw, 'funding_period_hours') fundingInterval
+FROM (
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'results')) market_raw
+    FROM url('https://api.prod.paradex.trade/v1/markets', 'JSONAsString')
+);
+--
+INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+('paradex', 'EIGEN', 'USD', 'eigenlayer', 'by-hands-on-2025-01-21'),
+('paradex', 'ORDI', 'USD', 'ordi', 'by-hands-on-2025-01-21'),
+('paradex', 'SEI', 'USD', 'sei', 'by-hands-on-2025-01-21'),
+('paradex', 'POPCAT', 'USD', 'popcat', 'by-hands-on-2025-01-21'),
+('paradex', 'BTC', 'USD', 'bitcoin', 'by-hands-on-2025-01-21'),
+('paradex', 'PENGU', 'USD', 'pudgy-penguins', 'by-hands-on-2025-01-21'),
+('paradex', 'XLM', 'USD', 'stellar', 'by-hands-on-2025-01-21'),
+('paradex', 'PNUT', 'USD', 'peanut-the-squirrel', 'by-hands-on-2025-01-21'),
+('paradex', 'TIA', 'USD', 'celestia', 'by-hands-on-2025-01-21'),
+('paradex', 'STX', 'USD', 'stacks', 'by-hands-on-2025-01-21'),
+('paradex', 'TON', 'USD', 'toncoin', 'by-hands-on-2025-01-21'),
+('paradex', 'ETH', 'USD', 'ethereum', 'by-hands-on-2025-01-21'),
+('paradex', 'GOAT', 'USD', 'goatseus-maximus', 'by-hands-on-2025-01-21'),
+('paradex', 'BOME', 'USD', 'book-of-meme', 'by-hands-on-2025-01-21'),
+('paradex', 'SUI', 'USD', 'sui', 'by-hands-on-2025-01-21'),
+('paradex', 'SAND', 'USD', 'the-sandbox', 'by-hands-on-2025-01-21'),
+('paradex', 'JTO', 'USD', 'jito', 'by-hands-on-2025-01-21'),
+('paradex', 'LINK', 'USD', 'chainlink', 'by-hands-on-2025-01-21'),
+('paradex', 'INJ', 'USD', 'injective', 'by-hands-on-2025-01-21'),
+('paradex', 'MOVE', 'USD', 'movement', 'by-hands-on-2025-01-21'),
+('paradex', 'OP', 'USD', 'optimism', 'by-hands-on-2025-01-21'),
+('paradex', 'BNB', 'USD', 'bnb', 'by-hands-on-2025-01-21'),
+('paradex', 'GMX', 'USD', 'gmx', 'by-hands-on-2025-01-21'),
+('paradex', 'APT', 'USD', 'aptos', 'by-hands-on-2025-01-21'),
+('paradex', 'PEOPLE', 'USD', 'constitutiondao', 'by-hands-on-2025-01-21'),
+('paradex', 'RUNE', 'USD', 'thorchain', 'by-hands-on-2025-01-21'),
+('paradex', 'AI16Z', 'USD', 'ai16z', 'by-hands-on-2025-01-21'),
+('paradex', 'AERO', 'USD', 'aerodrome-finance', 'by-hands-on-2025-01-21'),
+('paradex', 'ARB', 'USD', 'arbitrum', 'by-hands-on-2025-01-21'),
+('paradex', 'TURBO', 'USD', 'turbo', 'by-hands-on-2025-01-21'),
+('paradex', 'AAVE', 'USD', 'aave', 'by-hands-on-2025-01-21'),
+('paradex', 'kCAT', 'USD', 'simons-cat', 'by-hands-on-2025-01-21'),
+('paradex', 'ADA', 'USD', 'cardano', 'by-hands-on-2025-01-21'),
+('paradex', 'ZRO', 'USD', 'layerzero', 'by-hands-on-2025-01-21'),
+('paradex', 'STRK', 'USD', 'starknet', 'by-hands-on-2025-01-21'),
+('paradex', 'AIXBT', 'USD', 'aixbt-by-virtuals', 'by-hands-on-2025-01-21'),
+('paradex', 'IO', 'USD', 'io-net', 'by-hands-on-2025-01-21'),
+('paradex', 'MELANIA', 'USD', 'melania-meme', 'by-hands-on-2025-01-21'),
+('paradex', 'DOGE', 'USD', 'dogecoin', 'by-hands-on-2025-01-21'),
+('paradex', 'WLD', 'USD', 'worldcoin', 'by-hands-on-2025-01-21'),
+('paradex', 'ME', 'USD', 'magic-eden', 'by-hands-on-2025-01-21'),
+('paradex', 'VIRTUAL', 'USD', 'virtual-protocol', 'by-hands-on-2025-01-21'),
+('paradex', 'TAO', 'USD', 'bittensor', 'by-hands-on-2025-01-21'),
+('paradex', 'ONDO', 'USD', 'ondo', 'by-hands-on-2025-01-21'),
+('paradex', 'kPEPE', 'USD', 'pepe', 'by-hands-on-2025-01-21'),
+('paradex', 'AEVO', 'USD', 'aevo', 'by-hands-on-2025-01-21'),
+('paradex', 'XMR', 'USD', 'monero', 'by-hands-on-2025-01-21'),
+('paradex', 'MEW', 'USD', 'mew', 'by-hands-on-2025-01-21'),
+('paradex', 'DOT', 'USD', 'polkadot', 'by-hands-on-2025-01-21'),
+('paradex', 'ENA', 'USD', 'ethena', 'by-hands-on-2025-01-21'),
+('paradex', 'kSHIB', 'USD', 'shiba-inu', 'by-hands-on-2025-01-21'),
+('paradex', 'JUP', 'USD', 'jupiter', 'by-hands-on-2025-01-21'),
+('paradex', 'MORPHO', 'USD', 'morpho', 'by-hands-on-2025-01-21'),
+('paradex', 'PYTH', 'USD', 'pyth-network', 'by-hands-on-2025-01-21'),
+('paradex', 'kFLOKI', 'USD', 'floki', 'by-hands-on-2025-01-21'),
+('paradex', 'TRUMP', 'USD', 'official-trump', 'by-hands-on-2025-01-21'),
+('paradex', 'NEAR', 'USD', 'near', 'by-hands-on-2025-01-21'),
+('paradex', 'SCR', 'USD', 'scroll', 'by-hands-on-2025-01-21'),
+('paradex', 'AVAX', 'USD', 'avalanche', 'by-hands-on-2025-01-21'),
+('paradex', 'SOL', 'USD', 'solana', 'by-hands-on-2025-01-21'),
+('paradex', 'USUAL', 'USD', 'usual', 'by-hands-on-2025-01-21'),
+('paradex', 'TRX', 'USD', 'tron', 'by-hands-on-2025-01-21'),
+('paradex', 'ZEREBRO', 'USD', 'zerebro', 'by-hands-on-2025-01-21'),
+('paradex', 'NEIRO', 'USD', 'neiro-3', 'by-hands-on-2025-01-21'),
+('paradex', 'GRASS', 'USD', 'grass', 'by-hands-on-2025-01-21'),
+('paradex', 'DRIFT', 'USD', 'drift-protocol', 'by-hands-on-2025-01-21'),
+('paradex', 'TRB', 'USD', 'tellor-tributes', 'by-hands-on-2025-01-21'),
+('paradex', 'MKR', 'USD', 'maker', 'by-hands-on-2025-01-21'),
+('paradex', 'CRV', 'USD', 'curve-dao-token', 'by-hands-on-2025-01-21'),
+('paradex', 'FLOW', 'USD', 'flow', 'by-hands-on-2025-01-21'),
+('paradex', 'XRP', 'USD', 'xrp', 'by-hands-on-2025-01-21'),
+('paradex', 'DYDX', 'USD', 'dydx-chain', 'by-hands-on-2025-01-21'),
+('paradex', 'FIL', 'USD', 'filecoin', 'by-hands-on-2025-01-21'),
+('paradex', 'LTC', 'USD', 'litecoin', 'by-hands-on-2025-01-21'),
+('paradex', 'LDO', 'USD', 'lido-dao', 'by-hands-on-2025-01-21'),
+('paradex', 'MOODENG', 'USD', 'moo-deng', 'by-hands-on-2025-01-21'),
+('paradex', 'PENDLE', 'USD', 'pendle', 'by-hands-on-2025-01-21'),
+('paradex', 'UNI', 'USD', 'uniswap', 'by-hands-on-2025-01-21'),
+('paradex', 'kBONK', 'USD', 'bonk', 'by-hands-on-2025-01-21'),
+('paradex', 'HYPE', 'USD', 'hyperliquid', 'by-hands-on-2025-01-21'),
+('paradex', 'WIF', 'USD', 'dogwifhat', 'by-hands-on-2025-01-21'),
+('paradex', 'FARTCOIN', 'USD', 'fartcoin', 'by-hands-on-2025-01-21'),
+('paradex', 'CHILLGUY', 'USD', 'just-a-chill-guy', 'by-hands-on-2025-01-21');
+--
+INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+('polynomial-fi', 'AAVE', 'USD', 'aave', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'LDO', 'USD', 'lido-dao', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'CRV', 'USD', 'curve-dao-token', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ARB', 'USD', 'arbitrum', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'MAV', 'USD', 'maverick-protocol', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'FIL', 'USD', 'filecoin', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'NEAR', 'USD', 'near', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'XMR', 'USD', 'monero', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'sBTC', 'USD', 'bitcoin', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'SEI', 'USD', 'sei', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ATOM', 'USD', 'cosmos-hub', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'TRX', 'USD', 'tron', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'DYDX', 'USD', 'dydx-chain', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'APT', 'USD', 'aptos', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'BONK', 'USD', 'bonk', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'DOT', 'USD', 'polkadot', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'PYTH', 'USD', 'pyth-network', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ETC', 'USD', 'ethereum-classic', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'BAL', 'USD', 'balancer', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ADA', 'USD', 'cardano', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'UNI', 'USD', 'uniswap', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'IMX', 'USD', 'immutable-x', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'OP', 'USD', 'optimism', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'BNB', 'USD', 'bnb', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'STRK', 'USD', 'starknet', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'XLM', 'USD', 'stellar', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ICP', 'USD', 'internet-computer', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'COMP', 'USD', 'compound', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'BLUR', 'USD', 'blur', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'DOGE', 'USD', 'dogecoin', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ETHBTC', 'USD', ' ', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'PENDLE', 'USD', 'pendle', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'JTO', 'USD', 'jito', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'RUNE', 'USD', 'thorchain', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'TIA', 'USD', 'celestia', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'WLD', 'USD', 'worldcoin', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'LINK', 'USD', 'chainlink', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'MEME', 'USD', 'meme', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'EOS', 'USD', 'eos', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ALGO', 'USD', 'algorand', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'SHIB', 'USD', 'shiba-inu', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'GRT', 'USD', 'the-graph', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'XRP', 'USD', 'xrp', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'MKR', 'USD', 'maker', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'SUI', 'USD', 'sui', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'SOL', 'USD', 'solana', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'GMX', 'USD', 'gmx', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'JUP', 'USD', 'jupiter', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'LTC', 'USD', 'litecoin', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'SUSHI', 'USD', 'sushi', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'YFI', 'USD', 'yearn-finance', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'ORDI', 'USD', 'ordi', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'STETH', 'USD', 'lido-staked-ether', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'BCH', 'USD', 'bitcoin-cash', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'AXS', 'USD', 'axie-infinity', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'RPL', 'USD', 'rocket-pool', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'AVAX', 'USD', 'avalanche', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'FXS', 'USD', 'frax-share', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'INJ', 'USD', 'injective', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'PEPE', 'USD', 'pepe', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'PERP', 'USD', 'perpetual-protocol', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'FLOW', 'USD', 'flow', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'sETH', 'USD', 'ethereum', 'by-hands-on-2025-01-21'),
+('polynomial-fi', 'USDT', 'USD', ' ', 'by-hands-on-2025-01-21');
+--
+INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+('apex-pro', 'BCH', 'USD', 'bitcoin-cash', 'by-hands-on-2025-01-01'),
+('apex-pro', 'LTC', 'USD', 'litecoin', 'by-hands-on-2025-01-01'),
+('apex-pro', 'ETH', 'USD', 'ethereum', 'by-hands-on-2025-01-01'),
+('apex-pro', 'ATOM', 'USD', 'cosmos-hub', 'by-hands-on-2025-01-01'),
+('apex-pro', 'DYDX', 'USD', 'dydx-chain', 'by-hands-on-2025-01-01'),
+('apex-pro', 'BLUR', 'USD', 'blur', 'by-hands-on-2025-01-01'),
+('apex-pro', 'WLD', 'USD', 'worldcoin', 'by-hands-on-2025-01-01'),
+('apex-pro', 'TIA', 'USD', 'celestia', 'by-hands-on-2025-01-01'),
+('apex-pro', 'DOGE', 'USD', 'dogecoin', 'by-hands-on-2025-01-01'),
+('apex-pro', 'SOL', 'USD', 'solana', 'by-hands-on-2025-01-01'),
+('apex-pro', 'XRP', 'USD', 'xrp', 'by-hands-on-2025-01-01'),
+('apex-pro', 'BNB', 'USD', 'bnb', 'by-hands-on-2025-01-01'),
+('apex-pro', 'TON', 'USD', 'toncoin', 'by-hands-on-2025-01-01'),
+('apex-pro', 'LINK', 'USD', 'chainlink', 'by-hands-on-2025-01-01'),
+('apex-pro', 'AVAX', 'USD', 'avalanche', 'by-hands-on-2025-01-01'),
+('apex-pro', 'APT', 'USD', 'aptos', 'by-hands-on-2025-01-01'),
+('apex-pro', 'OP', 'USD', 'optimism', 'by-hands-on-2025-01-01'),
+('apex-pro', 'LBR', 'USD', '', 'by-hands-on-2025-01-01'),
+('apex-pro', 'ARB', 'USD', 'arbitrum', 'by-hands-on-2025-01-01'),
+('apex-pro', 'LDO', 'USD', 'lido-dao', 'by-hands-on-2025-01-01'),
+('apex-pro', 'BTC', 'USD', 'bitcoin', 'by-hands-on-2025-01-01'),
+('apex-pro', 'ETC', 'USD', '', 'by-hands-on-2025-01-01'),
+('apex-pro', 'MATIC', 'USD', '', 'by-hands-on-2025-01-01'),
+('apex-pro', 'PEPE', 'USD', 'pepe', 'by-hands-on-2025-01-01');
+--
+INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+('apex-omni', 'TRX', 'USD', 'tron', 'by-hands-on-2025-02-03'),
+('apex-omni', 'HBAR', 'USD', 'hedera', 'by-hands-on-2025-02-03'),
+('apex-omni', 'APT', 'USD', 'aptos', 'by-hands-on-2025-02-03'),
+('apex-omni', 'SEI', 'USD', 'sei', 'by-hands-on-2025-02-03'),
+('apex-omni', 'LDO', 'USD', 'lido-dao', 'by-hands-on-2025-02-03'),
+('apex-omni', 'CRV', 'USD', 'curve-dao-token', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ARB', 'USD', 'arbitrum', 'by-hands-on-2025-02-03'),
+('apex-omni', 'FIL', 'USD', 'filecoin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ADA', 'USD', 'cardano', 'by-hands-on-2025-02-03'),
+('apex-omni', 'UNI', 'USD', 'uniswap', 'by-hands-on-2025-02-03'),
+('apex-omni', 'OP', 'USD', 'optimism', 'by-hands-on-2025-02-03'),
+('apex-omni', 'BTC', 'USD', 'bitcoin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'LINK', 'USD', 'chainlink', 'by-hands-on-2025-02-03'),
+('apex-omni', 'AR', 'USD', 'arweave', 'by-hands-on-2025-02-03'),
+('apex-omni', 'STX', 'USD', 'stacks', 'by-hands-on-2025-02-03'),
+('apex-omni', 'AVAX', 'USD', 'avalanche', 'by-hands-on-2025-02-03'),
+('apex-omni', 'RON', 'USD', 'ronin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'PNUT', 'USD', 'peanut-the-squirrel', 'by-hands-on-2025-02-03'),
+('apex-omni', 'WIF', 'USD', 'dogwifhat', 'by-hands-on-2025-02-03'),
+('apex-omni', 'BNB', 'USD', 'bnb', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ZEN', 'USD', 'horizen', 'by-hands-on-2025-02-03'),
+('apex-omni', 'TON', 'USD', 'toncoin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'S', 'USD', 'sonic', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ZRO', 'USD', 'layerzero', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ENS', 'USD', 'ethereum-name-service', 'by-hands-on-2025-02-03'),
+('apex-omni', 'IO', 'USD', 'io-net', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ZK', 'USD', 'zksync', 'by-hands-on-2025-02-03'),
+('apex-omni', 'GOAT', 'USD', 'goatseus-maximus', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ORDI', 'USD', 'ordi', 'by-hands-on-2025-02-03'),
+('apex-omni', 'WLD', 'USD', 'worldcoin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ENA', 'USD', 'ethena', 'by-hands-on-2025-02-03'),
+('apex-omni', 'TIA', 'USD', 'celestia', 'by-hands-on-2025-02-03'),
+('apex-omni', 'SOL', 'USD', 'solana', 'by-hands-on-2025-02-03'),
+('apex-omni', 'NOT', 'USD', 'notcoin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'AAVE', 'USD', 'aave', 'by-hands-on-2025-02-03'),
+('apex-omni', 'XRP', 'USD', 'xrp', 'by-hands-on-2025-02-03'),
+('apex-omni', 'MKR', 'USD', 'maker', 'by-hands-on-2025-02-03'),
+('apex-omni', 'SUI', 'USD', 'sui', 'by-hands-on-2025-02-03'),
+('apex-omni', 'NEAR', 'USD', 'near', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ONDO', 'USD', 'ondo', 'by-hands-on-2025-02-03'),
+('apex-omni', 'BCH', 'USD', 'bitcoin-cash', 'by-hands-on-2025-02-03'),
+('apex-omni', 'POL', 'USD', 'pol-ex-matic', 'by-hands-on-2025-02-03'),
+('apex-omni', 'RNDR', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'LTC', 'USD', 'litecoin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'MEW', 'USD', 'mew', 'by-hands-on-2025-02-03'),
+('apex-omni', 'DOGE', 'USD', 'dogecoin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'JUP', 'USD', 'jupiter', 'by-hands-on-2025-02-03'),
+('apex-omni', 'DOGS', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'FTM', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ETH', 'USD', 'ethereum', 'by-hands-on-2025-02-03'),
+('apex-omni', 'ACT', 'USD', 'act-i-the-ai-prophecy', 'by-hands-on-2025-02-03'),
+('apex-omni', 'INJ', 'USD', 'injective', 'by-hands-on-2025-02-03'),
+('apex-omni', 'MOG', 'USD', 'mog-coin', 'by-hands-on-2025-02-03'),
+('apex-omni', 'PEPE', 'USD', 'pepe', 'by-hands-on-2025-02-03'),
+('apex-omni', 'HMSTR', 'USD', 'hamster-kombat', 'by-hands-on-2025-02-03'),
+('apex-omni', 'PENDLE', 'USD', 'pendle', 'by-hands-on-2025-02-03'),
+('apex-omni', '1000SHIB', 'USD', 'shiba-inu', 'by-hands-on-2025-02-03'),
+('apex-omni', '1000BONK', 'USD', 'bonk', 'by-hands-on-2025-02-03'),
+('apex-omni', 'HPOS10I', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'FIGHT', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'HIPPO', 'USD', 'sudeng', 'by-hands-on-2025-02-03'),
+('apex-omni', 'NEIRO', 'USD', 'neiro-3', 'by-hands-on-2025-02-03'),
+('apex-omni', 'TRUMP', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'UXLINK', 'USD', 'uxlink', 'by-hands-on-2025-02-03'),
+('apex-omni', 'BLAST', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'RENDER', 'USD', 'render', 'by-hands-on-2025-02-03'),
+('apex-omni', 'NEIROETH', 'USD', 'neiro-on-eth', 'by-hands-on-2025-02-03'),
+('apex-omni', 'AI16Z', 'USD', 'ai16z', 'by-hands-on-2025-02-03'),
+('apex-omni', 'PEOPLE', 'USD', '', 'by-hands-on-2025-02-03'),
+('apex-omni', 'TURBO', 'USD', 'turbo', 'by-hands-on-2025-02-03'),
+('apex-omni', 'MOODENG', 'USD', 'moo-deng', 'by-hands-on-2025-02-03'),
+('apex-omni', 'VIRTUAL', 'USD', 'virtual-protocol', 'by-hands-on-2025-02-03'),
+('apex-omni', 'MELANIA', 'USD', 'melania-meme', 'by-hands-on-2025-02-03'),
+('apex-omni', 'POPCAT', 'USD', 'popcat', 'by-hands-on-2025-02-03'),
+('apex-omni', 'SUNDOG', 'USD', 'sundog', 'by-hands-on-2025-02-03'),
+('apex-omni', 'EIGEN', 'USD', 'eigenlayer', 'by-hands-on-2025-02-03');
+--
+INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
+('aevo', 'SUI', 'USD', 'sui', 'by-hands-on-2025-02-03'),
+('aevo', 'BIO', 'USD', 'bio-protocol', 'by-hands-on-2025-02-03'),
+('aevo', 'MKR', 'USD', 'maker', 'by-hands-on-2025-02-03'),
+('aevo', 'XRP', 'USD', 'xrp', 'by-hands-on-2025-02-03'),
+('aevo', 'TKO', 'USD', '', 'by-hands-on-2025-02-03'),
+('aevo', 'ME', 'USD', '', 'by-hands-on-2025-02-03'),
+('aevo', 'MOVE', 'USD', 'movement', 'by-hands-on-2025-02-03'),
+('aevo', 'CULT', 'USD', 'milady-cult-coin', 'by-hands-on-2025-02-03'),
+('aevo', 'SOL', 'USD', 'solana', 'by-hands-on-2025-02-03'),
+('aevo', 'ZETA', 'USD', 'zetachain', 'by-hands-on-2025-02-03'),
+('aevo', 'NOT', 'USD', 'notcoin', 'by-hands-on-2025-02-03'),
+('aevo', 'HYPE', 'USD', 'hyperliquid', 'by-hands-on-2025-02-03'),
+('aevo', 'OM', 'USD', 'mantra', 'by-hands-on-2025-02-03'),
+('aevo', 'SCR', 'USD', 'scroll', 'by-hands-on-2025-02-03'),
+('aevo', 'HIFI', 'USD', 'hifi-finance', 'by-hands-on-2025-02-03'),
+('aevo', 'WLD', 'USD', 'worldcoin', 'by-hands-on-2025-02-03'),
+('aevo', 'ENA', 'USD', 'ethena', 'by-hands-on-2025-02-03'),
+('aevo', 'W', 'USD', 'wormhole', 'by-hands-on-2025-02-03'),
+('aevo', 'NMR', 'USD', 'numeraire', 'by-hands-on-2025-02-03'),
+('aevo', 'MEME', 'USD', 'meme', 'by-hands-on-2025-02-03'),
+('aevo', 'LINK', 'USD', 'chainlink', 'by-hands-on-2025-02-03'),
+('aevo', 'TIA', 'USD', 'celestia', 'by-hands-on-2025-02-03'),
+('aevo', 'SPX', 'USD', 'spx6900', 'by-hands-on-2025-02-03'),
+('aevo', 'PNUT', 'USD', 'peanut-the-squirrel', 'by-hands-on-2025-02-03'),
+('aevo', 'DYM', 'USD', 'dymension', 'by-hands-on-2025-02-03'),
+('aevo', 'COW', 'USD', 'cow-protocol', 'by-hands-on-2025-02-03'),
+('aevo', 'JITO', 'USD', 'jito', 'by-hands-on-2025-02-03'),
+('aevo', 'ETH', 'USD', 'ethereum', 'by-hands-on-2025-02-03'),
+('aevo', 'TRB', 'USD', 'tellor-tributes', 'by-hands-on-2025-02-03'),
+('aevo', 'AVAX', 'USD', 'avalanche', 'by-hands-on-2025-02-03'),
+('aevo', 'T', 'USD', '', 'by-hands-on-2025-02-03'),
+('aevo', 'ACT', 'USD', 'act-i-the-ai-prophecy', 'by-hands-on-2025-02-03'),
+('aevo', 'MYRO', 'USD', 'myro', 'by-hands-on-2025-02-03'),
+('aevo', 'BLUE', 'USD', 'bluefin', 'by-hands-on-2025-02-03'),
+('aevo', 'INJ', 'USD', 'injective', 'by-hands-on-2025-02-03'),
+('aevo', 'POL', 'USD', 'polygon', 'by-hands-on-2025-02-03'),
+('aevo', 'DBR', 'USD', 'debridge', 'by-hands-on-2025-02-03'),
+('aevo', 'RAY', 'USD', 'raydium', 'by-hands-on-2025-02-03'),
+('aevo', 'JUP', 'USD', 'jupiter', 'by-hands-on-2025-02-03'),
+('aevo', 'GOAT', 'USD', 'goatseus-maximus', 'by-hands-on-2025-02-03'),
+('aevo', 'TNSR', 'USD', 'tensor', 'by-hands-on-2025-02-03'),
+('aevo', 'ORDI', 'USD', 'ordi', 'by-hands-on-2025-02-03'),
+('aevo', 'SAI', 'USD', 'sharpe-ai', 'by-hands-on-2025-02-03'),
+('aevo', 'MEW', 'USD', 'mew', 'by-hands-on-2025-02-03'),
+('aevo', 'MERL', 'USD', 'merlin-chain', 'by-hands-on-2025-02-03'),
+('aevo', 'BTC', 'USD', 'bitcoin', 'by-hands-on-2025-02-03'),
+('aevo', 'PYTH', 'USD', 'pyth-network', 'by-hands-on-2025-02-03'),
+('aevo', 'ALT', 'USD', 'altlayer', 'by-hands-on-2025-02-03'),
+('aevo', 'VANA', 'USD', 'vana', 'by-hands-on-2025-02-03'),
+('aevo', 'LAVA', 'USD', 'lava-network', 'by-hands-on-2025-02-03'),
+('aevo', 'ILV', 'USD', 'illuvium', 'by-hands-on-2025-02-03'),
+('aevo', 'AR', 'USD', 'arweave', 'by-hands-on-2025-02-03'),
+('aevo', 'UNI', 'USD', 'uniswap', 'by-hands-on-2025-02-03'),
+('aevo', 'NEAR', 'USD', 'near', 'by-hands-on-2025-02-03'),
+('aevo', 'IO', 'USD', 'io-net', 'by-hands-on-2025-02-03'),
+('aevo', 'SEI', 'USD', 'sei', 'by-hands-on-2025-02-03'),
+('aevo', 'GLMR', 'USD', 'moonbeam', 'by-hands-on-2025-02-03'),
+('aevo', 'TRX', 'USD', 'tron', 'by-hands-on-2025-02-03'),
+('aevo', 'SUN', 'USD', 'sun-token', 'by-hands-on-2025-02-03'),
+('aevo', 'APT', 'USD', 'aptos', 'by-hands-on-2025-02-03'),
+('aevo', 'ZK', 'USD', 'zksync', 'by-hands-on-2025-02-03'),
+('aevo', 'AAVE', 'USD', 'aave', 'by-hands-on-2025-02-03'),
+('aevo', 'CRV', 'USD', 'curve-dao-token', 'by-hands-on-2025-02-03'),
+('aevo', 'LDO', 'USD', 'lido-dao', 'by-hands-on-2025-02-03'),
+('aevo', 'DYDX', 'USD', 'dydx-chain', 'by-hands-on-2025-02-03'),
+('aevo', 'AEVO', 'USD', 'aevo', 'by-hands-on-2025-02-03'),
+('aevo', 'ARB', 'USD', 'arbitrum', 'by-hands-on-2025-02-03'),
+('aevo', 'ATOM', 'USD', 'cosmos-hub', 'by-hands-on-2025-02-03'),
+('aevo', 'ONDO', 'USD', 'ondo', 'by-hands-on-2025-02-03'),
+('aevo', 'AERO', 'USD', 'aerodrome-finance', 'by-hands-on-2025-02-03'),
+('aevo', 'BLUR', 'USD', 'blur', 'by-hands-on-2025-02-03'),
+('aevo', 'SAGA', 'USD', 'saga', 'by-hands-on-2025-02-03'),
+('aevo', 'ZRO', 'USD', 'layerzero', 'by-hands-on-2025-02-03'),
+('aevo', 'TAO', 'USD', 'bittensor', 'by-hands-on-2025-02-03'),
+('aevo', 'UMA', 'USD', 'uma', 'by-hands-on-2025-02-03'),
+('aevo', 'TON', 'USD', 'toncoin', 'by-hands-on-2025-02-03'),
+('aevo', 'DOGE', 'USD', 'dogecoin', 'by-hands-on-2025-02-03'),
+('aevo', 'OMNI', 'USD', 'omni-network', 'by-hands-on-2025-02-03'),
+('aevo', 'MINA', 'USD', 'mina-protocol', 'by-hands-on-2025-02-03'),
+('aevo', 'TWT', 'USD', 'trust-wallet-token', 'by-hands-on-2025-02-03'),
+('aevo', 'NTRN', 'USD', 'neutron', 'by-hands-on-2025-02-03'),
+('aevo', 'AXL', 'USD', 'axelar', 'by-hands-on-2025-02-03'),
+('aevo', 'STRK', 'USD', 'starknet', 'by-hands-on-2025-02-03'),
+('aevo', 'MOCA', 'USD', 'moca-coin', 'by-hands-on-2025-02-03'),
+('aevo', 'DOGS', 'USD', 'dogs', 'by-hands-on-2025-02-03'),
+('aevo', 'BSX', 'USD', 'bsx', 'by-hands-on-2025-02-03'),
+('aevo', 'OP', 'USD', 'optimism', 'by-hands-on-2025-02-03'),
+('aevo', 'BNB', 'USD', 'bnb', 'by-hands-on-2025-02-03'),
+('aevo', 'WIF', 'USD', 'dogwifhat', 'by-hands-on-2025-02-03'),
+('aevo', 'BRETT', 'USD', 'brett-2', 'by-hands-on-2025-02-03'),
+('aevo', 'PENDLE', 'USD', 'pendle', 'by-hands-on-2025-02-03'),
+('aevo', 'CLOUD', 'USD', 'cloud', 'by-hands-on-2025-02-03'),
+('aevo', 'BLAST', 'USD', 'blast', 'by-hands-on-2025-02-03'),
+('aevo', 'USUAL', 'USD', 'usual', 'by-hands-on-2025-02-03'),
+('aevo', 'SOCIAL', 'USD', 'phavercoin', 'by-hands-on-2025-02-03'),
+('aevo', 'TRUMP', 'USD', 'official-trump', 'by-hands-on-2025-02-03'),
+('aevo', 'SWELL', 'USD', 'swell-network', 'by-hands-on-2025-02-03'),
+('aevo', 'CAT', 'USD', 'simons-cat', 'by-hands-on-2025-02-03'),
+('aevo', 'NEIROETH', 'USD', 'neiro-on-eth', 'by-hands-on-2025-02-03'),
+('aevo', 'GRASS', 'USD', 'grass', 'by-hands-on-2025-02-03'),
+('aevo', 'DRIFT', 'USD', 'drift-protocol', 'by-hands-on-2025-02-03'),
+('aevo', 'PRIME', 'USD', 'echelon-prime', 'by-hands-on-2025-02-03'),
+('aevo', 'CHILLGUY', 'USD', 'just-a-chill-guy', 'by-hands-on-2025-02-03'),
+('aevo', 'BEAMX', 'USD', '', 'by-hands-on-2025-02-03'),
+('aevo', 'HMSTR', 'USD', 'hamster-kombat', 'by-hands-on-2025-02-03'),
+('aevo', 'VIRTUAL', 'USD', 'virtual-protocol', 'by-hands-on-2025-02-03'),
+('aevo', 'MELANIA', 'USD', 'melania-meme', 'by-hands-on-2025-02-03'),
+('aevo', 'ETHFI', 'USD', 'ether-fi', 'by-hands-on-2025-02-03'),
+('aevo', 'EIGEN', 'USD', 'eigenlayer', 'by-hands-on-2025-02-03'),
+('aevo', 'SATS', 'USD', 'sats-ordinals', 'by-hands-on-2025-02-03'),
+('aevo', 'RETARDIO', 'USD', 'retardio', 'by-hands-on-2025-02-03'),
+('aevo', 'PENGU', 'USD', 'pudgy-penguins', 'by-hands-on-2025-02-03'),
+('aevo', 'BITCOIN', 'USD', '', 'by-hands-on-2025-02-03'),
+('aevo', 'PORTAL', 'USD', 'portal', 'by-hands-on-2025-02-03'),
+('aevo', 'ZEREBRO', 'USD', 'zerebro', 'by-hands-on-2025-02-03'),
+('aevo', 'PEPE', 'USD', 'pepe', 'by-hands-on-2025-02-03'),
+('aevo', 'ANIME', 'USD', 'anime', 'by-hands-on-2025-02-03'),
+('aevo', 'MOG', 'USD', 'mog-coin', 'by-hands-on-2025-02-03'),
+('aevo', 'AVAIL', 'USD', 'avail', 'by-hands-on-2025-02-03'),
+('aevo', 'BONK', 'USD', 'bonk', 'by-hands-on-2025-02-03'),
+('aevo', 'PARCL', 'USD', 'parcl', 'by-hands-on-2025-02-03'),
+('aevo', 'AIXBT', 'USD', 'aixbt-by-virtuals', 'by-hands-on-2025-02-03'),
+('aevo', 'MOODENG', 'USD', 'moo-deng', 'by-hands-on-2025-02-03'),
+('aevo', 'POPCAT', 'USD', 'popcat', 'by-hands-on-2025-02-03'),
+('aevo', 'ORDER', 'USD', 'orderly-network', 'by-hands-on-2025-02-03'),
+('aevo', 'PIXEL', 'USD', 'pixels', 'by-hands-on-2025-02-03'),
+('aevo', 'MANTA', 'USD', 'manta-network', 'by-hands-on-2025-02-03'),
+('aevo', 'PONKE', 'USD', 'ponke', 'by-hands-on-2025-02-03'),
+('aevo', 'AI16Z', 'USD', 'ai16z', 'by-hands-on-2025-02-03'),
+('aevo', 'FARTCOIN', 'USD', 'fartcoin', 'by-hands-on-2025-02-03');

@@ -97,6 +97,11 @@
         "cassert": "cpp",
         "print": "cpp",
         "sim_vector": "cpp",
-        "condition_variable": "cpp"
+        "condition_variable": "cpp",
+        "simd": "cpp",
+        "hash_map": "cpp",
+        "hash_set": "cpp",
+        "format": "cpp",
+        "execution": "cpp"
     }
 }

@@ -82,6 +82,7 @@ target_link_libraries(t PRIVATE
 
 add_executable(trade_contango_arbitrage_2024_11_11
     trade_contango_arbitrage_2024_11_11.cxx
+    src/lib.cxx
     src/models.cxx
     src/clients.cxx
     src/spreads_map.cxx
@@ -116,6 +117,31 @@ target_link_libraries(trade_contango_arbitrage_2024_11_11 PRIVATE
     protobuf::libprotobuf
     ${BACKWARD}
     ${LIBRDKAFKA}
+)
+
+add_executable(trade_fundings_2025_01_12
+    trade_fundings_2025_01_12.cxx
+    src/lib.cxx
+    src/models.cxx
+    src/clients.cxx
+)
+target_include_directories(trade_fundings_2025_01_12 PRIVATE
+    libs/libhv/build/include/hv
+    libs/spdlog/include
+    libs/curl/include/curl
+    libs/backward-cpp
+    libs/gmp-6.3.0/build/include
+    libs/clickhouse-cpp
+)
+target_link_libraries(trade_fundings_2025_01_12 PRIVATE
+    nlohmann_json::nlohmann_json
+    ${LIBHV}
+    ${SPDLOG}
+    ${ZLIB}
+    ${CURL}
+    ${GMP}
+    OpenSSL::SSL
+    clickhouse-cpp-lib
 )
 
 enable_testing()
