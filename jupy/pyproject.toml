@@ -35,8 +35,6 @@ local = [
     "idna==3.6",
     "playwright==1.42.0",
     "psycopg2-binary==2.9.9",
-    "pydantic-core==2.16.3",
-    "pydantic==2.6.4",
     "pyee==11.0.1",
     "python-dotenv==1.0.1",
     "requests==2.31.0",
@@ -45,4 +43,6 @@ local = [
     "urllib3==2.2.1",
     "asynch>=0.2.5",
     "clickhouse-connect>=0.8.13",
+    "pydantic==2.8.2",
+    "avantis-trader-sdk==0.6.0",
 ]

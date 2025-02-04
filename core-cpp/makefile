@@ -65,6 +65,7 @@ run-trade-contango-arbitrage-2024-11-11-fetch-process-tickers:
 
 run-trade-fundings-2025-01-12:
 	cmake --build build -j 12 --target trade_fundings_2025_01_12 && \
+		${env_vars} \
 		SPDLOG_LEVEL=debug \
 		MODE=upload_fundings_curr \
 		./build/trade_fundings_2025_01_12
@@ -103,3 +104,16 @@ install-cpp-backward:
 	# cd build
 	# cmake ..
 	# make
+
+fetch-grafana-dashboard:
+	# https://grafana.com/docs/grafana/latest/administration/service-accounts/migrate-api-keys/#example
+	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
+		"http://localhost:3000/api/search?folderIds=0&query=&starred=false" | jq
+	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
+		"http://localhost:3000/api/dashboards/uid/aec6cilacsidcc" | jq
+	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
+		"http://localhost:3000/api/dashboards/uid/fec14y22vtjpcb" | jq \
+		> ../grafana/dashboards/fundings.json
+	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
+		"http://localhost:3000/api/v1/provisioning/alert-rules" | jq \
+		> ../grafana/alert-rules.json

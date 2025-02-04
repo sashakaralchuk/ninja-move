@@ -36,9 +36,22 @@ services:
     - 9000:9000
     volumes:
     - ./.var/data_clickhouse:/var/lib/clickhouse/
+    - ./.var/log_server_clickhouse:/var/log/clickhouse-server/
+    - ./.var/tmp_clickhouse:/tmp
     mem_limit: 16gb
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.16.2
     command: mlflow server --host 0.0.0.0
     ports:
     - 5000:5000
+  grafana:
+    image: grafana/grafana:11.5.0
+    ports:
+    - 3000:3000
+    volumes:
+    - ./grafana/data-source-clickhouse-1.yml:/etc/grafana/provisioning/datasources/data-source-clickhouse-1.yml
+    - .var/grafana-data:/var/lib/grafana/
+    environment:
+    - GF_SECURITY_ADMIN_PASSWORD=pass@123 # login: admin
+    - GF_USERS_ALLOW_SIGN_UP=false
+    - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource

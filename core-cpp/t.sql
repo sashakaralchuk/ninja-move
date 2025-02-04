@@ -1,14 +1,15 @@
---
-CREATE TABLE IF NOT EXISTS default.fundings_curr_2025_01_12 (
+CREATE TABLE default.fundings_curr_2025_01_12 (
     ticker_raw String,
     symbol String,
     fundingRate Float64,
-    nextFundingTime Int64,
-    ts Int64,
+    nextFundingTime UInt64,
+    ts UInt64,
     ex String,
-    k String
+    k String,
+    ts_write DateTime
 )
-ENGINE = TinyLog;
+PARTITION BY toDate(ts_write)
+ORDER BY (ex, k, ts);
 -- fill coingecko_coin_id for hyperliquid
 INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
     ('hyperliquid', 'ARB', 'USD', 'arbitrum', 'by-hands-on-2024-01-19'),
@@ -187,139 +188,6 @@ INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
     ('hyperliquid', 'AI16Z', 'USD', 'ai16z', 'by-hands-on-2024-01-19'),
     ('hyperliquid', 'MYRO', 'USD', 'myro', 'by-hands-on-2024-01-19');
 -- figure out fundings differences
-WITH fundings_bybit AS (
-    SELECT t1.*, toUInt64(t2.fundingInterval / 60) funding_hours
-    FROM default.fundings_curr_2025_01_12 t1
-    INNER JOIN (
-        SELECT *
-        FROM default.t_bybit_2025_01_02
-        WHERE k = 'fut'
-    ) t2
-        ON t1.symbol = t2.s
-    WHERE ex = 'bybit'
-), fundings_gateio AS (
-    SELECT t1.*, funding_hours
-    FROM default.fundings_curr_2025_01_12 t1
-    INNER JOIN (
-        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours
-        FROM default.t_gateio_2025_01_02
-        WHERE k = 'fut'
-    ) t2
-        ON t1.symbol = t2.s
-    WHERE ex = 'gateio'
-), fundings_hyperliquid AS (
-    SELECT *, 1 funding_hours
-    FROM default.fundings_curr_2025_01_12
-    WHERE ex = 'hyperliquid'
-), fundings_arkm AS (
-    SELECT *, 1 funding_hours
-    FROM default.fundings_curr_2025_01_12
-    WHERE ex = 'arkm'
-), fundings_paradex AS (
-    SELECT t1.*, fundingInterval funding_hours
-    FROM default.fundings_curr_2025_01_12 t1
-    INNER JOIN (
-        SELECT s, fundingInterval
-        FROM default.t_paradex_2025_01_21
-        WHERE k = 'fut'
-    ) t2
-        ON t1.symbol = t2.s
-    WHERE ex = 'paradex'
-), fundings_polynomial_fi AS (
-    SELECT *, 1 funding_hours
-    FROM default.fundings_curr_2025_01_12
-    WHERE ex = 'polynomial-fi'
-), fundings_apex_pro AS (
-    SELECT *, 1 funding_hours
-    FROM default.fundings_curr_2025_01_12
-    WHERE ex = 'apex-pro'
-), fundings_apex_omni AS (
-    SELECT *, 1 funding_hours
-    FROM default.fundings_curr_2025_01_12
-    WHERE ex = 'apex-omni'
-), fundings_aevo AS (
-    SELECT *, 1 funding_hours
-    FROM default.fundings_curr_2025_01_12
-    WHERE ex = 'aevo'
-), fundings AS (
-    SELECT *
-    FROM (
-        SELECT
-            t1.ex,
-            replaceRegexpOne(
-                replaceRegexpOne(
-                    replaceRegexpOne(
-                        replaceRegexpOne(
-                            replaceRegexpOne(
-                                replaceRegexpOne(
-                                    replaceRegexpOne(symbol, '-USD', '')
-                                    , 'USDC', ''),
-                                '-USD-PERP', ''),
-                            '_PERP$', ''
-                        ),
-                    '_USDT$', ''),
-                '_USDC$', ''),
-                'USDT$', ''
-            ) token_1,
-            t1.fundingRate / t1.funding_hours funding_rate_1h,
-            row_number() OVER (PARTITION BY ex, symbol ORDER BY ts DESC) AS rank,
-            t2.coingecko_coin_id
-        FROM (
-            -- SELECT * FROM fundings_bybit
-            -- UNION ALL
-            -- SELECT * FROM fundings_gateio
-            -- UNION ALL
-            -- SELECT * FROM fundings_hyperliquid
-            -- UNION ALL
-            -- SELECT * FROM fundings_arkm
-            -- UNION ALL
-            -- SELECT * FROM fundings_paradex
-            -- UNION ALL
-            -- SELECT * FROM fundings_polynomial_fi
-            -- UNION ALL
-            SELECT * FROM fundings_apex_pro
-            UNION ALL
-            SELECT * FROM fundings_apex_omni
-            UNION ALL
-            SELECT * FROM fundings_aevo
-        ) t1
-        INNER JOIN default.t_fut_to_coingecko_coin_id t2
-            ON t1.ex = t2.ex AND token_1 = t2.base
-        WHERE replaceAll(t2.coingecko_coin_id, ' ', '') != ''
-    )
-    WHERE rank = 1
-), fundings_min AS (
-    SELECT *
-    FROM (
-        SELECT *, row_number() OVER (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h ASC) t_rank
-        FROM fundings
-    )
-    WHERE t_rank = 1
-), fundings_max AS (
-    SELECT *
-    FROM (
-        SELECT *, row_number() OVER (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h DESC) t_rank
-        FROM fundings
-    )
-    WHERE t_rank = 1
-)
-SELECT
-    t1.coingecko_coin_id,
-    t1.token_1,
-    t1.ex ex_min,
-    t2.ex ex_max,
-    t1.funding_rate_1h fund_1h_min,
-    t2.funding_rate_1h fund_1h_max,
-    truncate(fund_1h_max - fund_1h_min, 4) diff_abs_1h,
-    fund_1h_min * 8 fund_8h_min,
-    fund_1h_max * 8 fund_8h_max,
-    truncate(fund_8h_max - fund_8h_min, 4) diff_abs_8h
-FROM fundings_min t1
-INNER JOIN fundings_max t2
-    ON t1.coingecko_coin_id = t2.coingecko_coin_id
-ORDER BY abs(diff_abs_1h) DESC
-LIMIT 10
---
 CREATE TABLE default.t_mexc_2025_01_02 (
     `symbol_raw` String,
     `s` String,
@@ -1787,3 +1655,24 @@ INSERT INTO default.t_fut_to_coingecko_coin_id VALUES
 ('aevo', 'PONKE', 'USD', 'ponke', 'by-hands-on-2025-02-03'),
 ('aevo', 'AI16Z', 'USD', 'ai16z', 'by-hands-on-2025-02-03'),
 ('aevo', 'FARTCOIN', 'USD', 'fartcoin', 'by-hands-on-2025-02-03');
+--
+CREATE FUNCTION symbol_to_token AS (s) -> replaceRegexpOne(
+    replaceRegexpOne(
+        replaceRegexpOne(
+            replaceRegexpOne(
+                replaceRegexpOne(
+                    replaceRegexpOne(
+                        replaceRegexpOne(
+                            replaceRegexpOne(s, 'USDC', ''),
+                            '-USD-PERP', ''),
+                        '_PERP$', ''),
+                    '-USDT', ''),
+                '_USDT$', ''),
+            '_USDC$', ''),
+        'USDT$', '')
+    , '-USD', '');
+--
+SELECT *
+FROM default.t_fut_to_coingecko_coin_id
+INTO OUTFILE '/tmp/dump_default_t_fut_to_coingecko_coin_id_on_2025_02_09.sql'
+FORMAT SQLInsert;

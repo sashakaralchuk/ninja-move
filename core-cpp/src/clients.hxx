@@ -7,7 +7,7 @@
 
 struct FundingRes {
     nlohmann::json ticker_raw;
-    std::string symbol;
+    std::string s;
     double funding_rate;
     long next_funding_time;
     long ts;
@@ -396,6 +396,48 @@ class ClientPublicAevo {
     ClientPublicAevo(std::string kind);
 
     std::vector<FundingRes> fetch_fundings_sync();
+};
+
+class ClientPublicBitunix {
+   public:
+    std::string ex;
+    std::string k;
+
+    ClientPublicBitunix(std::string kind);
+
+    std::vector<FundingRes> fetch_fundings_sync();
+};
+
+class ClientPublicCoinEx : public ClientPublic {
+   public:
+    ClientPublicCoinEx(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
+class ClientPublicBingx : public ClientPublic {
+   public:
+    ClientPublicBingx(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
 };
 
 class TelegramBotPort {
