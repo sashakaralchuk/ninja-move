@@ -8,21 +8,25 @@ import asynch
 import clickhouse_connect
 import playwright._impl._errors
 import pydantic as pc
+import requests
 from playwright import sync_api as p_sync_api
 
 logger = logging.getLogger()
 
 
-def main() -> None:
+def main() -> typing.NoReturn:
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, help="Input file name", required=True)
+    parser.add_argument("--ex", type=str, required=False)
     args_ = parser.parse_args()
     match args_.mode:
         case "parse-coinglass-funding-rates-2025-01-12":
             parse_coinglass_funding_rates_2025_01_12()
         case "parse-coingecko-token-2025-01-06":
             parse_coingecko_token_2025_01_06()
+        case "match-bitunix-tokens-with-ccid":
+            match_bitunix_tokens_with_ccid(ex=args_.ex)
         case _:
             raise NotImplementedError(f"Unknown {args_.mode=}")
 
@@ -219,6 +223,61 @@ def markets_select_curr_exchanges(
             )
         )
     return out
+
+
+def match_bitunix_tokens_with_ccid(ex: typing.Optional[str]) -> typing.NoReturn:
+    if ex is None:
+        raise ValueError("ex is mandatory")
+    clickhouse_client = clickhouse_connect.get_client(
+        dsn="clickhousedb://127.0.0.1:18123/default"
+    )
+    match ex:
+        case "bitunix":
+            last_price_path = "$.lastPrice"
+        case "coinex":
+            last_price_path = "$.mark_price"
+        case "bingx":
+            last_price_path = "$.indexPrice"
+        case _:
+            raise Exception(f"Unknown {ex=}")
+    symbols_in_tickers = clickhouse_client.query(
+        f"""
+        SELECT * EXCEPT(rank_out, ts_write)
+        FROM (
+            SELECT *, RANK() OVER (ORDER BY ts_write DESC) AS rank_out
+            FROM (
+                SELECT
+                    symbol,
+                    toFloat64(JSON_VALUE(ticker_raw, {last_price_path!r})) last_price,
+                    ts_write
+                FROM default.fundings_curr_2025_01_12
+                WHERE ex = {ex!r}
+            )
+        )
+        WHERE rank_out = 1
+        """,
+    ).result_rows
+    for symbol_in_ticker, price_in_ticker in symbols_in_tickers:
+        coin_in_ticker = symbol_in_ticker.replace("-USDT", "").replace("USDT", "")
+        url_search = (
+            f"https://www.coingecko.com/en/search_v2?"
+            f"query={coin_in_ticker}&vs_currency=usd"
+        )
+        res_search = requests.get(url_search)
+        res_search.raise_for_status()
+        match_list = []
+        for coin_obj in res_search.json()["coins"]:
+            if coin_obj["symbol"] == coin_in_ticker:
+                try:
+                    price_cg = float(coin_obj["data"]["price"].replace("$", ""))
+                    if abs(price_cg - price_in_ticker) / price_in_ticker * 100 < 1:
+                        match_list.append((coin_in_ticker, coin_obj["id"]))
+                except ValueError:
+                    pass
+        if len(match_list) == 1:
+            print(match_list[0][0], match_list[0][1])
+        else:
+            print(f"{symbol_in_ticker=} match_list !=1 {match_list=}")
 
 
 if __name__ == "__main__":
