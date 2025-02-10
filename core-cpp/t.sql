@@ -652,21 +652,23 @@ FROM (
     FROM url('https://api.prod.paradex.trade/v1/markets', 'JSONAsString')
 );
 --
-CREATE FUNCTION symbol_to_token AS (s) -> replaceRegexpOne(
+CREATE FUNCTION conv_symbol_to_token_dumb AS (s) -> replaceRegexpOne(
     replaceRegexpOne(
         replaceRegexpOne(
             replaceRegexpOne(
                 replaceRegexpOne(
                     replaceRegexpOne(
                         replaceRegexpOne(
-                            replaceRegexpOne(s, 'USDC', ''),
-                            '-USD-PERP', ''),
-                        '_PERP$', ''),
-                    '-USDT', ''),
-                '_USDT$', ''),
-            '_USDC$', ''),
-        'USDT$', '')
-    , '-USD', '');
+                            replaceRegexpOne(
+                                replaceRegexpOne(s, 'USDC', ''),
+                                '-USD-PERP', ''),
+                            '_PERP$', ''),
+                        '-USDT', ''),
+                    '_USDT$', ''),
+                '_USDC$', ''),
+            'USDT$', '')
+        , '-USD', ''),
+    '^(100*)', '');
 --
 SELECT *
 FROM default.t_fut_to_coingecko_coin_id
