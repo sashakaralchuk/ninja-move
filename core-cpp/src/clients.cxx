@@ -305,8 +305,8 @@ ClientPublicGateio::ClientPublicGateio(std::string kind)
         SELECT
             json ticker_raw,
             JSONExtractString(ticker_raw, 'contract') symbol,
-            JSONExtractFloat(ticker_raw, 'funding_rate') fundingRate,
-            0 nextFundingTime,
+            JSONExtractFloat(ticker_raw, 'funding_rate') funding_rate,
+            0 next_funding_time,
             NOW() ts,
             'gateio' ex,
             'fut' k,
@@ -1235,8 +1235,8 @@ ClientPublicMexc::ClientPublicMexc(std::string kind)
         SELECT
             ticker_raw,
             JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'fundingRate') fundingRate,
-            JSONExtract(ticker_raw, 'nextFundingTime', 'UInt64') nextFundingTime,
+            JSONExtractFloat(ticker_raw, 'fundingRate') funding_rate,
+            JSONExtract(ticker_raw, 'nextFundingTime', 'UInt64') next_funding_time,
             JSONExtractFloat(ticker_raw, 'timestamp') ts,
             'mexc' ex,
             'fut' k,
@@ -1878,8 +1878,8 @@ ClientPublicBybit::ClientPublicBybit(std::string kind)
         SELECT
             ticker_raw,
             JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'fundingRate') fundingRate,
-            JSONExtract(ticker_raw, 'nextFundingTime', 'UInt64') nextFundingTime,
+            JSONExtractFloat(ticker_raw, 'fundingRate') funding_rate,
+            JSONExtract(ticker_raw, 'nextFundingTime', 'UInt64') next_funding_time,
             ts,
             'bybit' ex,
             'fut' k,
@@ -2982,8 +2982,8 @@ ClientPublicArkm::ClientPublicArkm(std::string kind)
         SELECT
             json ticker_raw,
             JSONExtractString(json, 'symbol') symbol,
-            JSONExtractFloat(json, 'fundingRate') fundingRate,
-            JSONExtract(json, 'nextFundingTime', 'UInt64') nextFundingTime,
+            JSONExtractFloat(json, 'fundingRate') funding_rate,
+            JSONExtract(json, 'nextFundingTime', 'UInt64') next_funding_time,
             NOW() ts,
             'arkm' ex,
             'fut' k,
@@ -3029,8 +3029,8 @@ ClientPublicParadex::ClientPublicParadex(std::string kind)
         SELECT
             ticker_raw,
             JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'funding_rate') fundingRate,
-            0 nextFundingTime,
+            JSONExtractFloat(ticker_raw, 'funding_rate') funding_rate,
+            0 next_funding_time,
             JSONExtract(ticker_raw, 'created_at', 'UInt64') ts,
             'paradex' ex,
             'fut' k,
@@ -3082,8 +3082,8 @@ ClientPublicPolynomialFi::ClientPublicPolynomialFi(std::string kind)
         SELECT
             ticker_raw,
             JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'currentFundingRate1HInPercentage') fundingRate,
-            0 nextFundingTime,
+            JSONExtractFloat(ticker_raw, 'currentFundingRate1HInPercentage') funding_rate,
+            0 next_funding_time,
             NOW() ts,
             'polynomial-fi' ex,
             'fut' k,
@@ -3150,13 +3150,15 @@ ClientPublicApexPro::ClientPublicApexPro(std::string kind) {
 /// Fetch symbols `curl "https://pro.apex.exchange/api/v2/symbols" | \
 /// jq '.data.usdcConfig.perpetualContract[].crossSymbolName'`
 std::vector<FundingRes> ClientPublicApexPro::fetch_fundings_sync() {
-    SPDLOG_INFO("ex={} k={} start fundings upload", ex, k);
     std::string url_assets = "https://pro.apex.exchange/api/v2/symbols";
     nlohmann::json res_symbols_obj = exec_http_get_req(url_assets);
+    auto symbols_obj =
+        res_symbols_obj["data"]["usdcConfig"]["perpetualContract"];
     std::vector<FundingRes> fundings_vec;
+    SPDLOG_INFO("ex={} k={} start fundings upload size={}", ex, k,
+                symbols_obj.size());
     long ts = now_millis();
-    for (auto& obj_symbol :
-         res_symbols_obj["data"]["usdcConfig"]["perpetualContract"]) {
+    for (auto& obj_symbol : symbols_obj) {
         std::string url =
             fmt::format("https://pro.apex.exchange/api/v2/ticker?symbol={}",
                         (std::string)obj_symbol["crossSymbolName"]);
@@ -3302,8 +3304,8 @@ ClientPublicCoinEx::ClientPublicCoinEx(std::string kind)
         SELECT
             ticker_raw,
             JSONExtractString(ticker_raw, 'market') symbol,
-            toFloat64(JSON_VALUE(ticker_raw, '$.latest_funding_rate')) fundingRate,
-            toUInt64(JSON_VALUE(ticker_raw, '$.next_funding_time')) nextFundingTime,
+            toFloat64(JSON_VALUE(ticker_raw, '$.latest_funding_rate')) funding_rate,
+            toUInt64(JSON_VALUE(ticker_raw, '$.next_funding_time')) next_funding_time,
             toUInt64(JSON_VALUE(ticker_raw, '$.latest_funding_time')) ts,
             'coinex' ex,
             'fut' k,
@@ -3352,8 +3354,8 @@ ClientPublicBingx::ClientPublicBingx(std::string kind)
         SELECT
             ticker_raw,
             JSONExtractString(ticker_raw, 'symbol') symbol,
-            toFloat64(JSON_VALUE(ticker_raw, '$.lastFundingRate')) fundingRate,
-            toUInt64(JSON_VALUE(ticker_raw, '$.nextFundingTime')) nextFundingTime,
+            toFloat64(JSON_VALUE(ticker_raw, '$.lastFundingRate')) funding_rate,
+            toUInt64(JSON_VALUE(ticker_raw, '$.nextFundingTime')) next_funding_time,
             NOW() ts,
             'bingx' ex,
             'fut' k,

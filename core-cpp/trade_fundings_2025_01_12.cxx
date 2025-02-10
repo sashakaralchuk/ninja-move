@@ -158,8 +158,8 @@ void insert_fundings_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
     clickhouse::Block block;
     block.AppendColumn("ticker_raw", ticker_raw_vec);
     block.AppendColumn("symbol", symbol_vec);
-    block.AppendColumn("fundingRate", funding_rate_vec);
-    block.AppendColumn("nextFundingTime", next_funding_time_vec);
+    block.AppendColumn("funding_rate", funding_rate_vec);
+    block.AppendColumn("next_funding_time", next_funding_time_vec);
     block.AppendColumn("ts", ts_vec);
     block.AppendColumn("ex", ex_vec);
     block.AppendColumn("k", k_vec);

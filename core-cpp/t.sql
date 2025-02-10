@@ -1,8 +1,8 @@
 CREATE TABLE default.fundings_curr_2025_01_12 (
     ticker_raw String,
     symbol String,
-    fundingRate Float64,
-    nextFundingTime UInt64,
+    funding_rate Float64,
+    next_funding_time UInt64,
     ts UInt64,
     ex String,
     k String,
@@ -660,7 +660,9 @@ CREATE FUNCTION conv_symbol_to_token_dumb AS (s) -> replaceRegexpOne(
                     replaceRegexpOne(
                         replaceRegexpOne(
                             replaceRegexpOne(
-                                replaceRegexpOne(s, 'USDC', ''),
+                                replaceRegexpOne(
+                                    replaceRegexpOne(s, '_USDC$', ''),
+                                    'USDC', ''),
                                 '-USD-PERP', ''),
                             '_PERP$', ''),
                         '-USDT', ''),
