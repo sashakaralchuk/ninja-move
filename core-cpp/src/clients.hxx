@@ -24,6 +24,9 @@ std::string rstrip_zeros(std::string s);
 std::tuple<std::string, double> conv_symbol_price_to_atomic_v1(
     std::string symbol, double price);
 
+std::string exec_http_get_req_raw(std::string& url,
+                                  curl_slist* headers = nullptr);
+
 nlohmann::json exec_http_get_req(std::string& url,
                                  curl_slist* headers = nullptr,
                                  bool log_res = false);

@@ -49,8 +49,7 @@ static size_t execute_http_req_write_cb(void* contents, size_t size,
     return size * nmemb;
 }
 
-nlohmann::json exec_http_get_req(std::string& url, curl_slist* headers,
-                                 bool log_res) {
+std::string exec_http_get_req_raw(std::string& url, curl_slist* headers) {
     CURL* curl;
     CURLcode res;
     std::string readBuffer;
@@ -62,11 +61,17 @@ nlohmann::json exec_http_get_req(std::string& url, curl_slist* headers,
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     }
     res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    return readBuffer;
+}
+
+nlohmann::json exec_http_get_req(std::string& url, curl_slist* headers,
+                                 bool log_res) {
+    std::string readBuffer = exec_http_get_req_raw(url, headers);
     if (log_res) {
         SPDLOG_DEBUG("exec_http_get_req url={} readBuffer={}", url, readBuffer);
     }
     nlohmann::json res_obj = nlohmann::json::parse(readBuffer);
-    curl_easy_cleanup(curl);
     return res_obj;
 }
 
@@ -3200,8 +3205,12 @@ std::vector<FundingRes> ClientPublicApexOmni::fetch_fundings_sync() {
         std::string url =
             fmt::format("https://omni.apex.exchange/api/v3/ticker?symbol={}",
                         (std::string)obj_symbol["crossSymbolName"]);
-        struct curl_slist* headers = NULL;
-        nlohmann::json res_obj = exec_http_get_req(url, headers, true);
+        std::string res_str = exec_http_get_req_raw(url);
+        if (res_str.size() == 0) {
+            SPDLOG_WARN("ex={} k={} url={} res_str={}", ex, k, url, res_str);
+            continue;
+        }
+        nlohmann::json res_obj = nlohmann::json::parse(res_str);
         for (auto& obj_data : res_obj["data"]) {
             fundings_vec.push_back(FundingRes{
                 .ticker_raw = obj_data,
