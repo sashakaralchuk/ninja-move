@@ -534,7 +534,7 @@ CREATE TABLE default.t_fut_to_coingecko_coin_id (
     `base` String,
     `target` String,
     `coingecko_coin_id` String,
-    `how_appeared` String
+    `notes` String
 )
 ENGINE = TinyLog;
 --
