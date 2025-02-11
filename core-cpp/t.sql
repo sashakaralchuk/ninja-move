@@ -662,17 +662,21 @@ CREATE FUNCTION conv_symbol_to_token_dumb AS (s) -> replaceRegexpOne(
                             replaceRegexpOne(
                                 replaceRegexpOne(
                                     replaceRegexpOne(
-                                        replaceRegexpOne(s, '-USDC$', ''),
-                                        '_USDC$', ''),
-                                    'USDC', ''),
-                                '-USD-PERP', ''),
-                            '_PERP$', ''),
-                        '-USDT', ''),
-                    '_USDT$', ''),
-                '_USDC$', ''),
-            'USDT$', '')
-        , '-USD', ''),
-    '^(100*)', '');
+                                        replaceRegexpOne(
+                                            replaceRegexpOne(s, '-USDC$', ''),
+                                            '_USDC$', ''),
+                                        'USDC', ''),
+                                    '-USD-PERP', ''),
+                                '_PERP$', ''),
+                            '-USDT', ''),
+                        '_USDT$', ''),
+                    '_USDC$', ''),
+                'USDT$', '')
+            , '-USD$', ''),
+        '^(100*)', ''),
+    'USD$',
+    ''
+);
 --
 SELECT *
 FROM default.t_fut_to_coingecko_coin_id
