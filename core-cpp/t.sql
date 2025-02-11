@@ -661,7 +661,9 @@ CREATE FUNCTION conv_symbol_to_token_dumb AS (s) -> replaceRegexpOne(
                         replaceRegexpOne(
                             replaceRegexpOne(
                                 replaceRegexpOne(
-                                    replaceRegexpOne(s, '_USDC$', ''),
+                                    replaceRegexpOne(
+                                        replaceRegexpOne(s, '-USDC$', ''),
+                                        '_USDC$', ''),
                                     'USDC', ''),
                                 '-USD-PERP', ''),
                             '_PERP$', ''),
