@@ -238,6 +238,8 @@ def match_bitunix_tokens_with_ccid(ex: typing.Optional[str]) -> typing.NoReturn:
             last_price_path = "$.mark_price"
         case "bingx":
             last_price_path = "$.indexPrice"
+        case "mexc":
+            last_price_path = "$.lastPrice"
         case _:
             raise Exception(f"Unknown {ex=}")
     symbols_in_tickers = clickhouse_client.query(
@@ -255,10 +257,16 @@ def match_bitunix_tokens_with_ccid(ex: typing.Optional[str]) -> typing.NoReturn:
             )
         )
         WHERE rank_out = 1
+        ORDER BY symbol
         """,
     ).result_rows
+    logger.info("len(symbols_in_tickers)=%s", len(symbols_in_tickers))
     for symbol_in_ticker, price_in_ticker in symbols_in_tickers:
-        coin_in_ticker = symbol_in_ticker.replace("-USDT", "").replace("USDT", "")
+        coin_in_ticker = (
+            symbol_in_ticker.replace("_USDT", "")
+            .replace("-USDT", "")
+            .replace("USDT", "")
+        )
         url_search = (
             f"https://www.coingecko.com/en/search_v2?"
             f"query={coin_in_ticker}&vs_currency=usd"
@@ -272,7 +280,7 @@ def match_bitunix_tokens_with_ccid(ex: typing.Optional[str]) -> typing.NoReturn:
                     price_cg = float(coin_obj["data"]["price"].replace("$", ""))
                     if abs(price_cg - price_in_ticker) / price_in_ticker * 100 < 1:
                         match_list.append((coin_in_ticker, coin_obj["id"]))
-                except ValueError:
+                except (ValueError, ZeroDivisionError):
                     pass
         if len(match_list) == 1:
             print(match_list[0][0], match_list[0][1])

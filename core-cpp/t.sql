@@ -664,17 +664,19 @@ CREATE FUNCTION conv_symbol_to_token_dumb AS (s) -> replaceRegexpOne(
                                     replaceRegexpOne(
                                         replaceRegexpOne(
                                             replaceRegexpOne(
-                                                replaceRegexpOne(s, '-USDC$', ''),
-                                                '_USDC$', ''),
-                                            'USDC', ''),
-                                        '-USD-PERP', ''),
-                                    '_PERP$', ''),
-                                '-USDT', ''),
-                            '_USDT$', ''),
-                        '_USDC$', ''),
-                    'USDT$', '')
-                , '-USD$', ''),
-            '^(100*)', ''),
+                                                replaceRegexpOne(
+                                                    replaceRegexpOne(s, '-USDC$', ''),
+                                                    '_USDC$', ''),
+                                                'USDC', ''),
+                                            '-USD-PERP', ''),
+                                        '_PERP$', ''),
+                                    '-USDT', ''),
+                                '_USDT$', ''),
+                            '_USDC$', ''),
+                        'USDT$', '')
+                    , '-USD$', ''),
+                '^(100*)', ''),
+            '_USD$', ''),
         'USD$', ''),
     'PERP$', ''
 );
@@ -683,3 +685,69 @@ SELECT *
 FROM default.t_fut_to_coingecko_coin_id
 INTO OUTFILE '/tmp/dump_default_t_fut_to_coingecko_coin_id_on_2025_02_09.sql'
 FORMAT SQLInsert;
+--
+CREATE TABLE default.spreads_curr_rasul_hasanov_2025_02_13 (
+    obj_kind String,
+    obj_raw String,
+    s String,
+    p_bid Float64,
+    p_ask Float64,
+    ex String,
+    k String,
+    ts_write DateTime
+)
+PARTITION BY toDate(ts_write)
+ORDER BY (ex, k, ts_write);
+--
+INSERT INTO default.spreads_curr_rasul_hasanov_2025_02_13
+SELECT
+    'ticker' obj_kind,
+    ticker_raw obj_raw,
+    JSON_VALUE(ticker_raw, '$.symbol') s,
+    toFloat64(JSON_VALUE(ticker_raw, '$.bid1Price')) p_bid,
+    toFloat64(JSON_VALUE(ticker_raw, '$.ask1Price')) p_ask,
+    'bybit' ex,
+    'fut' k,
+    NOW() ts_write
+FROM (
+    SELECT
+        arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) ticker_raw
+    FROM url('https://api.bybit.com/v5/market/tickers?category=linear', 'JSONAsString')
+)
+UNION ALL
+SELECT
+    'ticker' obj_kind,
+    ticker_raw obj_raw,
+    JSON_VALUE(ticker_raw, '$.symbol') s,
+    toFloat64(JSON_VALUE(ticker_raw, '$.bid1Price')) p_bid,
+    toFloat64(JSON_VALUE(ticker_raw, '$.ask1Price')) p_ask,
+    'bybit' ex,
+    'spot' k,
+    NOW() ts_write
+FROM (
+    SELECT
+        arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) ticker_raw
+    FROM url('https://api.bybit.com/v5/market/tickers?category=spot', 'JSONAsString')
+)
+UNION ALL
+SELECT
+    'book-ticker' obj_kind,
+    json obj_raw,
+    JSON_VALUE(json, '$.symbol') s,
+    toFloat64(JSON_VALUE(json, '$.bidPrice')) last_bid,
+    toFloat64(JSON_VALUE(json, '$.askPrice')) last_ask,
+    'binance' ex,
+    'fut' k,
+    NOW() ts_write
+FROM url('https://fapi.binance.com/fapi/v1/ticker/bookTicker', 'JSONAsString')
+UNION ALL
+SELECT
+    'book-ticker' obj_kind,
+    json obj_raw,
+    JSON_VALUE(json, '$.symbol') s,
+    toFloat64(JSON_VALUE(json, '$.bidPrice')) last_bid,
+    toFloat64(JSON_VALUE(json, '$.askPrice')) last_ask,
+    'binance' ex,
+    'spot' k,
+    NOW() ts_write
+FROM url('https://api.binance.com/api/v1/ticker/bookTicker', 'JSONAsString');
