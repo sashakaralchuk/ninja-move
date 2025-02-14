@@ -103,6 +103,7 @@ CREATE TABLE default.t_bybit_2025_01_02 (
     `isPreListing` Boolean
 )
 ENGINE = TinyLog;
+--
 INSERT INTO default.t_bybit_2025_01_02
 SELECT
     symbol_raw,
@@ -118,9 +119,9 @@ SELECT
     JSONExtractBool(symbol_raw, 'isPreListing') isPreListing
 FROM (
     SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) symbol_raw
-    FROM url('https://api.bybit.com/v5/market/instruments-info?category=linear', JSONAsString)
-);
-INSERT INTO default.t_bybit_2025_01_02
+    FROM url('https://api.bybit.com/v5/market/instruments-info?category=linear&limit=1000', JSONAsString)
+)
+UNION ALL
 SELECT
     symbol_raw,
     JSONExtractString(symbol_raw, 'symbol') s,
@@ -135,7 +136,7 @@ SELECT
     false isPreListing
 FROM (
     SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) symbol_raw
-    FROM url('https://api.bybit.com/v5/market/instruments-info?category=spot', JSONAsString)
+    FROM url('https://api.bybit.com/v5/market/instruments-info?category=spot&limit=1000', JSONAsString)
 );
 --
 CREATE TABLE default.t_cmc_exchange_market_pairs_2025_01_05 (
@@ -751,3 +752,54 @@ SELECT
     'spot' k,
     NOW() ts_write
 FROM url('https://api.binance.com/api/v1/ticker/bookTicker', 'JSONAsString');
+--
+CREATE TABLE default.t_ex_k_to_coingecko_coin_id (
+    `ex` String,
+    `k` String,
+    `base` String,
+    `target` String,
+    `coingecko_coin_id` String,
+    `notes` String
+)
+ENGINE = TinyLog;
+--
+INSERT INTO default.t_ex_k_to_coingecko_coin_id
+SELECT ex, 'fut' k, base, target, coingecko_coin_id, notes
+FROM default.t_fut_to_coingecko_coin_id
+WHERE ex = 'bybit';
+--
+INSERT INTO default.t_ex_k_to_coingecko_coin_id
+SELECT
+    'bybit' ex,
+    'spot' k,
+    JSON_VALUE(ticker_raw, '$.base') base,
+    JSON_VALUE(ticker_raw, '$.target') target,
+    JSON_VALUE(ticker_raw, '$.coin_id') coingecko_coin_id,
+    'added-from-coingecko-tickers-api-on-2025-02-14' notes
+FROM (
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=0', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    UNION ALL
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=1', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    UNION ALL
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=2', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    UNION ALL
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=3', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    UNION ALL
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=4', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    UNION ALL
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=5', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    UNION ALL
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=6', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+    UNION ALL
+    SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=7', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
+)
+GROUP BY ex, k, base, target, coingecko_coin_id, notes;
+--
+INSERT INTO default.t_ex_k_to_coingecko_coin_id VALUES
+('bybit', 'fut', 'B3', 'USD', 'b3', 'added-by-hands-on-2025-02-14'),
+('bybit', 'fut', 'IP', 'USD', 'story', 'added-by-hands-on-2025-02-14'),
+('bybit', 'fut', 'RONIN', 'USD', 'ronin', 'added-by-hands-on-2025-02-14');
+--
+INSERT INTO default.t_ex_k_to_coingecko_coin_id VALUES
+('bybit', 'spot', 'OM', 'USD', 'mantra', 'added-by-hands-on-2025-02-14'),
+('bybit', 'spot', 'MCG', 'USD', 'metalcore', 'added-by-hands-on-2025-02-14');

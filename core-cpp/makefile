@@ -108,12 +108,15 @@ install-cpp-backward:
 fetch-grafana-dashboard:
 	# https://grafana.com/docs/grafana/latest/administration/service-accounts/migrate-api-keys/#example
 	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
-		"http://localhost:3000/api/search?folderIds=0&query=&starred=false" | jq
+		"http://localhost:3000/api/search?query=" | jq
 	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
 		"http://localhost:3000/api/dashboards/uid/aec6cilacsidcc" | jq
 	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
 		"http://localhost:3000/api/dashboards/uid/fec14y22vtjpcb" | jq \
 		> ../grafana/dashboards/fundings.json
+	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
+		"http://localhost:3000/api/dashboards/uid/bed1x3o4e6y2oe" | jq \
+		> ../grafana/dashboards/spreads-curr-rasul-hasanov.json
 	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
 		"http://localhost:3000/api/v1/provisioning/alert-rules" | jq \
 		> ../grafana/alert-rules.json

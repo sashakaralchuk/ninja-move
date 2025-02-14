@@ -299,7 +299,7 @@ INSERT INTO default.t_fut_to_coingecko_coin_id (`ex`, `base`, `target`, `coingec
 ('bybit', 'DUSK', 'USDT', 'dusk', 'added-by-hands-on-2025-01-06'),
 ('bybit', 'EDU', 'USDT', 'open-campus', 'added-by-hands-on-2025-01-06'),
 ('bybit', 'FARTCOIN', 'USDT', 'fartcoin', 'added-by-hands-on-2025-01-06'),
-('bybit', 'FDUSD', 'USDT', '', 'added-by-hands-on-2025-01-06'),
+('bybit', 'FDUSD', 'USDT', 'first-digital-usd', 'added-by-hands-on-2025-01-06'),
 ('bybit', 'FIO', 'USDT', 'fio-protocol', 'added-by-hands-on-2025-01-06'),
 ('bybit', 'FLM', 'USDT', 'flamingo-finance', 'added-by-hands-on-2025-01-06'),
 ('bybit', 'FLUX', 'USDT', 'flux-zelcash', 'added-by-hands-on-2025-01-06'),
