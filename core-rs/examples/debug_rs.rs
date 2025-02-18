@@ -2,6 +2,28 @@ use std::borrow::Borrow;
 use std::rc::Rc;
 use std::sync::Arc;
 
+struct User {
+    id: i64,
+}
+
+fn find_user(users_vec: &Vec<User>, id: i64) -> Result<&User, Box<dyn std::error::Error>> {
+    users_vec
+        .iter()
+        .find(|user| user.id == id)
+        .ok_or("User not found".into())
+}
+
+fn main2() -> Result<(), Box<dyn std::error::Error>> {
+    let users = vec![User { id: 1 }, User { id: 2 }];
+    let user = find_user(&users, 1)?;
+    Ok(())
+}
+
+fn main4() -> Result<(), String> {
+    Err("lala".to_string())
+    // Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     return bench_rc_vs_arc();
