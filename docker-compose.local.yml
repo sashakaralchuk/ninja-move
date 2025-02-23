@@ -52,6 +52,7 @@ services:
     - ./grafana/data-source-clickhouse-1.yml:/etc/grafana/provisioning/datasources/data-source-clickhouse-1.yml
     - .var/grafana-data:/var/lib/grafana/
     environment:
-    - GF_SECURITY_ADMIN_PASSWORD=pass@123 # login: admin
+    - GF_SECURITY_ADMIN_USER=admin1
+    - GF_SECURITY_ADMIN_PASSWORD=admin1
     - GF_USERS_ALLOW_SIGN_UP=false
     - GF_INSTALL_PLUGINS=vertamedia-clickhouse-datasource

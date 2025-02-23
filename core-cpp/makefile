@@ -120,3 +120,7 @@ fetch-grafana-dashboard:
 	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
 		"http://localhost:3000/api/v1/provisioning/alert-rules" | jq \
 		> ../grafana/alert-rules.json
+
+run-grafana-localtunnel:
+	# npx localtunnel --port 3000
+	# curl https://loca.lt/mytunnelpassword

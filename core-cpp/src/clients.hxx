@@ -124,6 +124,10 @@ class ClientPrivate : public hv::WebSocketClient {
 
 class ClientPublicGateio : public ClientPublic {
    public:
+    static std::string QUERY_CREATE_CONTRACTS;
+    static std::string QUERY_TRUNCATE_CONTRACTS;
+    static std::string QUERY_INSERT_CONTRACTS;
+
     ClientPublicGateio(std::string kind);
 
     void init_idle();
@@ -224,6 +228,10 @@ class ClientPrivateMexc : public ClientPrivate {
 
 class ClientPublicBybit : public ClientPublic {
    public:
+    static std::string QUERY_CREATE_INSTRUMENTS_INFO;
+    static std::string QUERY_TRUNCATE_INSTRUMENTS_INFO;
+    static std::string QUERY_INSERT_INSTRUMENTS_INFO;
+
     ClientPublicBybit(std::string kind);
 
     void init_idle();
@@ -353,6 +361,10 @@ class ClientPublicArkm : public ClientPublic {
 
 class ClientPublicParadex : public ClientPublic {
    public:
+    static std::string QUERY_CREATE_MARKETS;
+    static std::string QUERY_TRUNCATE_MARKETS;
+    static std::string QUERY_INSERT_MARKETS;
+
     ClientPublicParadex(std::string kind);
 
     void init_idle();

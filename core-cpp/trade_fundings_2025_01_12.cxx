@@ -113,6 +113,16 @@ void upload_fundings_curr() {
         insert_tickers_vec_into_clickhouse(clickhouse_client, tickers_vec);
         clickhouse_client_mutex.unlock();
     };
+    SPDLOG_INFO("re-upload gateio-contracts");
+    clickhouse_client.Execute(ClientPublicGateio::QUERY_TRUNCATE_CONTRACTS);
+    clickhouse_client.Execute(ClientPublicGateio::QUERY_INSERT_CONTRACTS);
+    SPDLOG_INFO("re-upload bybit-instruments-info");
+    clickhouse_client.Execute(
+        ClientPublicBybit::QUERY_TRUNCATE_INSTRUMENTS_INFO);
+    clickhouse_client.Execute(ClientPublicBybit::QUERY_INSERT_INSTRUMENTS_INFO);
+    SPDLOG_INFO("re-upload paradex-markets");
+    clickhouse_client.Execute(ClientPublicParadex::QUERY_TRUNCATE_MARKETS);
+    clickhouse_client.Execute(ClientPublicParadex::QUERY_INSERT_MARKETS);
     std::atomic<bool> pool_alive(true);
     std::thread _1([&]() {
         exec_safe([&]() {

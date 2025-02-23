@@ -310,6 +310,69 @@ nlohmann::json ClientPrivate::get_exchange_info() {
     }
 }
 
+std::string ClientPublicGateio::QUERY_CREATE_CONTRACTS = R"(
+    CREATE TABLE default.gateio_contracts (
+        current_pair_raw String,
+        currency_raw String,
+        contract_raw String,
+        s String,
+        k String,
+        trade_status String,
+        sell_start DateTime,
+        buy_start DateTime,
+        delisted Boolean,
+        trade_disabled Boolean,
+        in_delisting Boolean,
+        ts_write DateTime
+    )
+    ENGINE = TinyLog;
+)";
+
+std::string ClientPublicGateio::QUERY_TRUNCATE_CONTRACTS =
+    "TRUNCATE TABLE default.gateio_contracts";
+
+std::string ClientPublicGateio::QUERY_INSERT_CONTRACTS = R"(
+    INSERT INTO default.gateio_contracts
+    SELECT
+        '{}' current_pair_raw,
+        '{}' currency_raw,
+        json contract_raw,
+        JSONExtractString(contract_raw, 'name') s,
+        'fut' k,
+        '' trade_status,
+        toDateTime(0) sell_start,
+        toDateTime(0) buy_start,
+        false delisted,
+        false trade_disabled,
+        JSONExtractBool(contract_raw, 'in_delisting') in_delisting,
+        NOW() ts_write
+    FROM url('https://api.gateio.ws/api/v4/futures/usdt/contracts', JSONAsString)
+    UNION ALL
+    SELECT
+        current_pair_raw,
+        currency_raw,
+        '{}' contract_raw,
+        JSONExtractString(current_pair_raw, 'id') s,
+        'spot' k,
+        JSONExtractString(current_pair_raw, 'trade_status') trade_status,
+        toDateTime(JSONExtract(current_pair_raw, 'sell_start', 'UInt64')) sell_start,
+        toDateTime(JSONExtract(current_pair_raw, 'buy_start', 'UInt64')) buy_start,
+        JSONExtractBool(currency_raw, 'delisted') delisted,
+        JSONExtractBool(currency_raw, 'trade_disabled') trade_disabled,
+        false in_delisting,
+        NOW() ts_write
+    FROM (
+        SELECT json current_pair_raw
+        FROM url('https://api.gateio.ws/api/v4/spot/currency_pairs', 'JSONAsString')
+    ) t1
+    LEFT JOIN (
+        SELECT json currency_raw
+        FROM url('https://api.gateio.ws/api/v4/spot/currencies', 'JSONAsString')
+    ) t2
+        ON JSONExtractString(current_pair_raw, 'base') =
+            JSONExtractString(currency_raw, 'currency');
+)";
+
 ClientPublicGateio::ClientPublicGateio(std::string kind)
     : ClientPublic("gateio", kind) {
     template_tickers_insert_sql = R"(
@@ -1881,6 +1944,66 @@ std::string ClientPrivateMexc::create_listen_key() {
     return res_obj["listenKey"];
 }
 
+std::string ClientPublicBybit::QUERY_CREATE_INSTRUMENTS_INFO = R"(
+    CREATE TABLE default.bybit_instruments_info (
+        obj_raw String,
+        k String,
+        s String,
+        base_coin String,
+        quote_coin String,
+        status String,
+        funding_interval UInt64,
+        settle_coin String,
+        upper_funding_rate Float64,
+        lower_funding_rate Float64,
+        is_pre_listing Boolean,
+        ts_write DateTime
+    )
+    ENGINE = TinyLog;
+)";
+
+std::string ClientPublicBybit::QUERY_TRUNCATE_INSTRUMENTS_INFO =
+    "TRUNCATE TABLE default.bybit_instruments_info;";
+
+std::string ClientPublicBybit::QUERY_INSERT_INSTRUMENTS_INFO = R"(
+    INSERT INTO default.bybit_instruments_info
+    SELECT
+        obj_raw,
+        'fut' k,
+        JSONExtractString(obj_raw, 'symbol') s,
+        JSONExtractString(obj_raw, 'baseCoin') base_coin,
+        JSONExtractString(obj_raw, 'quoteCoin') quote_coin,
+        JSONExtractString(obj_raw, 'status') status,
+        JSONExtract(obj_raw, 'fundingInterval', 'UInt64') funding_interval,
+        JSONExtractString(obj_raw, 'settleCoin') settle_coin,
+        JSONExtract(obj_raw, 'upperFundingRate', 'Float64') upper_funding_rate,
+        JSONExtract(obj_raw, 'lowerFundingRate', 'Float64') lower_funding_rate,
+        JSONExtractBool(obj_raw, 'isPreListing') is_pre_listing,
+        NOW() ts_write
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) obj_raw
+        FROM url('https://api.bybit.com/v5/market/instruments-info?category=linear&limit=1000', JSONAsString)
+    )
+    UNION ALL
+    SELECT
+        obj_raw,
+        'spot' k,
+        JSONExtractString(obj_raw, 'symbol') s,
+        JSONExtractString(obj_raw, 'baseCoin') base_coin,
+        JSONExtractString(obj_raw, 'quoteCoin') quote_coin,
+        JSONExtractString(obj_raw, 'status') status,
+        0 funding_interval,
+        '' settle_coin,
+        .0 upper_funding_rate,
+        .0 lower_funding_rate,
+        false is_pre_listing,
+        NOW() ts_write
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) obj_raw
+        FROM url('https://api.bybit.com/v5/market/instruments-info?category=spot&limit=1000', JSONAsString)
+    );
+)";
+
 ClientPublicBybit::ClientPublicBybit(std::string kind)
     : ClientPublic("bybit", kind) {
     if (kind == "fut") {
@@ -3050,6 +3173,38 @@ std::vector<Ticker> ClientPublicArkm::fetch_tickers() {
 void ClientPublicArkm::handle_onmessage(const std::string& msg) {
     throw std::runtime_error("not-implemented");
 }
+
+std::string ClientPublicParadex::QUERY_CREATE_MARKETS = R"(
+    CREATE TABLE default.paradex_markets (
+        market_raw String,
+        s String,
+        k String,
+        base_coin String,
+        quote_coin String,
+        funding_interval UInt64,
+        ts_write DateTime
+    )
+    ENGINE = TinyLog;
+)";
+
+std::string ClientPublicParadex::QUERY_TRUNCATE_MARKETS =
+    "TRUNCATE TABLE default.paradex_markets;";
+
+std::string ClientPublicParadex::QUERY_INSERT_MARKETS = R"(
+    INSERT INTO default.paradex_markets
+    SELECT
+        obj_raw,
+        JSONExtractString(obj_raw, 'symbol') s,
+        'fut' k,
+        JSONExtractString(obj_raw, 'base_currency') base_coin,
+        JSONExtractString(obj_raw, 'quote_currency') quote_coin,
+        JSONExtractString(obj_raw, 'funding_period_hours') funding_interval,
+        NOW() ts_write
+    FROM (
+        SELECT arrayJoin(JSONExtractArrayRaw(json, 'results')) obj_raw
+        FROM url('https://api.prod.paradex.trade/v1/markets', 'JSONAsString')
+    );
+)";
 
 ClientPublicParadex::ClientPublicParadex(std::string kind)
     : ClientPublic("paradex", kind) {
