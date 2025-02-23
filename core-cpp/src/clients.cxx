@@ -193,6 +193,13 @@ std::string ClientPublic::gen_fundings_insert_sql(std::string table_name) {
     return fmt::format(template_fundings_insert_sql, table_name);
 }
 
+std::string ClientPublic::gen_tickers_insert_sql(std::string table_name) {
+    if (template_tickers_insert_sql == "") {
+        throw std::runtime_error("template_tickers_insert_sql is empty");
+    }
+    return fmt::format(template_tickers_insert_sql, table_name);
+}
+
 ClientPrivate::ClientPrivate(std::string ex_, std::string kind_,
                              hv::EventLoopPtr loop)
     : WebSocketClient(loop) {
@@ -305,13 +312,12 @@ nlohmann::json ClientPrivate::get_exchange_info() {
 
 ClientPublicGateio::ClientPublicGateio(std::string kind)
     : ClientPublic("gateio", kind) {
-    template_fundings_insert_sql = R"(
+    template_tickers_insert_sql = R"(
         INSERT INTO {}
         SELECT
-            json ticker_raw,
-            JSONExtractString(ticker_raw, 'contract') symbol,
-            JSONExtractFloat(ticker_raw, 'funding_rate') funding_rate,
-            0 next_funding_time,
+            json obj_raw,
+            JSONExtractString(obj_raw, 'contract') s,
+            JSONExtractFloat(obj_raw, 'funding_rate') funding_rate,
             NOW() ts,
             'gateio' ex,
             'fut' k,
@@ -1235,19 +1241,18 @@ std::string ClientPrivateGateio::sign_str(std::string method, std::string t,
 
 ClientPublicMexc::ClientPublicMexc(std::string kind)
     : ClientPublic("mexc", kind) {
-    template_fundings_insert_sql = R"(
+    template_tickers_insert_sql = R"(
         INSERT INTO {}
         SELECT
-            ticker_raw,
-            JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'fundingRate') funding_rate,
-            JSONExtract(ticker_raw, 'nextFundingTime', 'UInt64') next_funding_time,
-            JSONExtractFloat(ticker_raw, 'timestamp') ts,
+            obj_raw,
+            JSONExtractString(obj_raw, 'symbol') s,
+            JSONExtractFloat(obj_raw, 'fundingRate') funding_rate,
+            JSONExtractFloat(obj_raw, 'timestamp') ts,
             'mexc' ex,
             'fut' k,
             NOW() ts_write
         FROM (
-            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) ticker_raw
+            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
             FROM url('https://contract.mexc.com/api/v1/contract/ticker', 'JSONAsString')
         );
     )";
@@ -1878,24 +1883,43 @@ std::string ClientPrivateMexc::create_listen_key() {
 
 ClientPublicBybit::ClientPublicBybit(std::string kind)
     : ClientPublic("bybit", kind) {
-    template_fundings_insert_sql = R"(
-        INSERT INTO {}
-        SELECT
-            ticker_raw,
-            JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'fundingRate') funding_rate,
-            JSONExtract(ticker_raw, 'nextFundingTime', 'UInt64') next_funding_time,
-            ts,
-            'bybit' ex,
-            'fut' k,
-            NOW() ts_write
-        FROM (
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
             SELECT
-                arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) ticker_raw,
-                JSONExtract(json, 'time', 'Int64') ts
-            FROM url('https://api.bybit.com/v5/market/tickers?category=linear', 'JSONAsString')
-        );
-    )";
+                obj_raw,
+                JSONExtractString(obj_raw, 'symbol') s,
+                JSONExtractFloat(obj_raw, 'fundingRate') funding_rate,
+                ts,
+                'bybit' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT
+                    arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) obj_raw,
+                    JSONExtract(json, 'time', 'Int64') ts
+                FROM url('https://api.bybit.com/v5/market/tickers?category=linear', 'JSONAsString')
+            );
+        )";
+    } else {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSONExtractString(obj_raw, 'symbol') s,
+                0 funding_rate,
+                ts,
+                'bybit' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM (
+                SELECT
+                    arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'result'), 'list')) obj_raw,
+                    JSONExtract(json, 'time', 'Int64') ts
+                FROM url('https://api.bybit.com/v5/market/tickers?category=spot', 'JSONAsString')
+            );
+        )";
+    }
 }
 
 void ClientPublicBybit::init_idle() {
@@ -2967,12 +2991,12 @@ std::vector<FundingRes> ClientPublicHyperliquid::fetch_fundings_sync() {
         nlohmann::json meta_obj = res_obj[0]["universe"][i];
         nlohmann::json assert_ctx_obj = res_obj[1][i];
         fundings_vec.push_back(FundingRes{
-            .ticker_raw = nlohmann::json{{"meta", meta_obj},
-                                         {"assert_ctx", assert_ctx_obj}},
+            .obj_raw = nlohmann::json{{"meta", meta_obj},
+                                      {"assert_ctx", assert_ctx_obj}},
+            .obj_k = "info",
             .s = fmt::format("{}_USDC", (std::string)meta_obj["name"]),
             .funding_rate = stod((std::string)assert_ctx_obj["funding"]),
-            .next_funding_time = 0,
-            ts = ts,
+            .ts = ts,
             .ex = ex,
             .k = kind,
         });
@@ -2985,10 +3009,10 @@ ClientPublicArkm::ClientPublicArkm(std::string kind)
     template_fundings_insert_sql = R"(
         INSERT INTO {}
         SELECT
-            json ticker_raw,
-            JSONExtractString(json, 'symbol') symbol,
-            JSONExtractFloat(json, 'fundingRate') funding_rate,
-            JSONExtract(json, 'nextFundingTime', 'UInt64') next_funding_time,
+            json obj_raw,
+            'contract' obj_k,
+            JSONExtractString(obj_raw, 'symbol') s,
+            JSONExtractFloat(obj_raw, 'fundingRate') funding_rate,
             NOW() ts,
             'arkm' ex,
             'fut' k,
@@ -3032,17 +3056,17 @@ ClientPublicParadex::ClientPublicParadex(std::string kind)
     template_fundings_insert_sql = R"(
         INSERT INTO {}
         SELECT
-            ticker_raw,
-            JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'funding_rate') funding_rate,
-            0 next_funding_time,
-            JSONExtract(ticker_raw, 'created_at', 'UInt64') ts,
+            obj_raw,
+            'market' obj_k,
+            JSONExtractString(obj_raw, 'symbol') s,
+            JSONExtractFloat(obj_raw, 'funding_rate') funding_rate,
+            JSONExtract(obj_raw, 'created_at', 'UInt64') ts,
             'paradex' ex,
             'fut' k,
             NOW() ts_write
         FROM (
             SELECT
-                arrayJoin(JSONExtractArrayRaw(json, 'results')) ticker_raw
+                arrayJoin(JSONExtractArrayRaw(json, 'results')) obj_raw
             FROM url('https://api.prod.paradex.trade/v1/markets/summary?market=ALL', 'JSONAsString')
         );
     )";
@@ -3085,16 +3109,16 @@ ClientPublicPolynomialFi::ClientPublicPolynomialFi(std::string kind)
     template_fundings_insert_sql = R"(
         INSERT INTO {}
         SELECT
-            ticker_raw,
-            JSONExtractString(ticker_raw, 'symbol') symbol,
-            JSONExtractFloat(ticker_raw, 'currentFundingRate1HInPercentage') funding_rate,
-            0 next_funding_time,
+            obj_raw,
+            'market' obj_k,
+            JSONExtractString(obj_raw, 'symbol') s,
+            JSONExtractFloat(obj_raw, 'currentFundingRate1HInPercentage') funding_rate,
             NOW() ts,
             'polynomial-fi' ex,
             'fut' k,
             NOW() ts_write
         FROM (
-            SELECT arrayJoin(JSONExtractArrayRaw(json, 'markets')) ticker_raw
+            SELECT arrayJoin(JSONExtractArrayRaw(json, 'markets')) obj_raw
             FROM url('https://perps-api-mainnet.polynomial.finance/markets', 'JSONAsString')
         );
     )";
@@ -3154,12 +3178,12 @@ ClientPublicApexPro::ClientPublicApexPro(std::string kind) {
 
 /// Fetch symbols `curl "https://pro.apex.exchange/api/v2/symbols" | \
 /// jq '.data.usdcConfig.perpetualContract[].crossSymbolName'`
-std::vector<FundingRes> ClientPublicApexPro::fetch_fundings_sync() {
+std::vector<TickerRes> ClientPublicApexPro::fetch_tickers_sync() {
     std::string url_assets = "https://pro.apex.exchange/api/v2/symbols";
     nlohmann::json res_symbols_obj = exec_http_get_req(url_assets);
     auto symbols_obj =
         res_symbols_obj["data"]["usdcConfig"]["perpetualContract"];
-    std::vector<FundingRes> fundings_vec;
+    std::vector<TickerRes> tickers_vec;
     SPDLOG_INFO("ex={} k={} start fundings upload size={}", ex, k,
                 symbols_obj.size());
     long ts = now_millis();
@@ -3169,20 +3193,18 @@ std::vector<FundingRes> ClientPublicApexPro::fetch_fundings_sync() {
                         (std::string)obj_symbol["crossSymbolName"]);
         nlohmann::json res_obj = exec_http_get_req(url);
         for (auto& obj_data : res_obj["data"]) {
-            fundings_vec.push_back(FundingRes{
-                .ticker_raw = obj_data,
+            tickers_vec.push_back(TickerRes{
+                .obj_raw = obj_data,
                 .s = obj_data["symbol"],
                 .funding_rate = stod((std::string)obj_data["fundingRate"]),
-                .next_funding_time =
-                    parse_apex_fundings_res_ts(obj_data["nextFundingTime"]),
-                ts = ts,
+                .ts = ts,
                 .ex = ex,
                 .k = k,
             });
         }
     }
     SPDLOG_INFO("ex={} k={} end fundings upload", ex, k);
-    return fundings_vec;
+    return tickers_vec;
 }
 
 ClientPublicApexOmni::ClientPublicApexOmni(std::string kind) {
@@ -3192,10 +3214,10 @@ ClientPublicApexOmni::ClientPublicApexOmni(std::string kind) {
 
 /// Fetch symbols `curl "https://omni.apex.exchange/api/v3/symbols" | \
 /// jq '.data.contractConfig.perpetualContract[].crossSymbolName'`
-std::vector<FundingRes> ClientPublicApexOmni::fetch_fundings_sync() {
+std::vector<TickerRes> ClientPublicApexOmni::fetch_tickers_sync() {
     std::string url_assets = "https://omni.apex.exchange/api/v3/symbols";
     nlohmann::json res_symbols_obj = exec_http_get_req(url_assets);
-    std::vector<FundingRes> fundings_vec;
+    std::vector<TickerRes> tickers_vec;
     long ts = now_millis();
     auto perpetualContract =
         res_symbols_obj["data"]["contractConfig"]["perpetualContract"];
@@ -3212,20 +3234,18 @@ std::vector<FundingRes> ClientPublicApexOmni::fetch_fundings_sync() {
         }
         nlohmann::json res_obj = nlohmann::json::parse(res_str);
         for (auto& obj_data : res_obj["data"]) {
-            fundings_vec.push_back(FundingRes{
-                .ticker_raw = obj_data,
+            tickers_vec.push_back(TickerRes{
+                .obj_raw = obj_data,
                 .s = obj_data["symbol"],
                 .funding_rate = stod((std::string)obj_data["fundingRate"]),
-                .next_funding_time =
-                    parse_apex_fundings_res_ts(obj_data["nextFundingTime"]),
-                ts = ts,
+                .ts = ts,
                 .ex = ex,
                 .k = k,
             });
         }
     }
     SPDLOG_INFO("ex={} k={} end fundings upload", ex, k);
-    return fundings_vec;
+    return tickers_vec;
 }
 
 ClientPublicAevo::ClientPublicAevo(std::string kind) {
@@ -3252,10 +3272,10 @@ std::vector<FundingRes> ClientPublicAevo::fetch_fundings_sync() {
             continue;
         }
         fundings_vec.push_back(FundingRes{
-            .ticker_raw = nlohmann::json({}),
+            .obj_raw = nlohmann::json({}),
+            .obj_k = "funding",
             .s = fmt::format("{}-USD", asset),
             .funding_rate = stod((std::string)res_obj["funding_rate"]),
-            .next_funding_time = stol((std::string)res_obj["next_epoch"]),
             .ts = ts,
             .ex = ex,
             .k = k,
@@ -3293,10 +3313,10 @@ std::vector<FundingRes> ClientPublicBitunix::fetch_fundings_sync() {
             continue;
         }
         fundings_vec.push_back(FundingRes{
-            .ticker_raw = res_obj["data"],
+            .obj_raw = res_obj["data"],
+            .obj_k = "funding-rate",
             .s = s,
             .funding_rate = stod((std::string)res_obj["data"]["fundingRate"]),
-            .next_funding_time = 0,
             .ts = ts,
             .ex = ex,
             .k = k,
@@ -3311,16 +3331,16 @@ ClientPublicCoinEx::ClientPublicCoinEx(std::string kind)
     template_fundings_insert_sql = R"(
         INSERT INTO {}
         SELECT
-            ticker_raw,
-            JSONExtractString(ticker_raw, 'market') symbol,
-            toFloat64(JSON_VALUE(ticker_raw, '$.latest_funding_rate')) funding_rate,
-            toUInt64(JSON_VALUE(ticker_raw, '$.next_funding_time')) next_funding_time,
-            toUInt64(JSON_VALUE(ticker_raw, '$.latest_funding_time')) ts,
+            obj_raw,
+            'futures-funding-rate' obj_k,
+            JSONExtractString(obj_raw, 'market') s,
+            toFloat64(JSON_VALUE(obj_raw, '$.latest_funding_rate')) funding_rate,
+            toUInt64(JSON_VALUE(obj_raw, '$.latest_funding_time')) ts,
             'coinex' ex,
             'fut' k,
             NOW() ts_write
         FROM (
-            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) ticker_raw
+            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
             FROM url('https://api.coinex.com/v2/futures/funding-rate', 'JSONAsString')
         );
     )";
@@ -3361,16 +3381,16 @@ ClientPublicBingx::ClientPublicBingx(std::string kind)
     template_fundings_insert_sql = R"(
         INSERT INTO {}
         SELECT
-            ticker_raw,
-            JSONExtractString(ticker_raw, 'symbol') symbol,
-            toFloat64(JSON_VALUE(ticker_raw, '$.lastFundingRate')) funding_rate,
-            toUInt64(JSON_VALUE(ticker_raw, '$.nextFundingTime')) next_funding_time,
+            obj_raw,
+            'quote-promium-index' obj_k,
+            JSONExtractString(obj_raw, 'symbol') s,
+            toFloat64(JSON_VALUE(obj_raw, '$.lastFundingRate')) funding_rate,
             NOW() ts,
             'bingx' ex,
             'fut' k,
             NOW() ts_write
         FROM (
-            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) ticker_raw
+            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
             FROM url('https://open-api.bingx.com/openApi/swap/v2/quote/premiumIndex', 'JSONAsString')
         );
     )";
@@ -3403,6 +3423,71 @@ std::vector<Ticker> ClientPublicBingx::fetch_tickers() {
 }
 
 void ClientPublicBingx::handle_onmessage(const std::string& msg) {
+    throw std::runtime_error("not-implemented");
+}
+
+ClientPublicBinance::ClientPublicBinance(std::string kind)
+    : ClientPublic("binance", kind) {
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                json obj_raw,
+                JSON_VALUE(json, '$.symbol') s,
+                0 funding_rate,
+                JSON_VALUE(json, '$.time') ts,
+                'binance' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM url('https://fapi.binance.com/fapi/v1/ticker/bookTicker', 'JSONAsString')
+        )";
+    } else if (kind == "spot") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                json obj_raw,
+                JSON_VALUE(json, '$.symbol') s,
+                0 funding_rate,
+                0 ts,
+                'binance' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM url('https://api.binance.com/api/v1/ticker/bookTicker', 'JSONAsString');
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
+}
+
+void ClientPublicBinance::init_idle() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBinance::subscribe_to_trades(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBinance::subscribe_to_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBinance::unsubscribe_from_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBinance::ping() {
+    throw std::runtime_error("not-implemented");
+}
+
+Ticker ClientPublicBinance::fetch_ticker(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+std::vector<Ticker> ClientPublicBinance::fetch_tickers() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBinance::handle_onmessage(const std::string& msg) {
     throw std::runtime_error("not-implemented");
 }
 

@@ -6,10 +6,19 @@
 #include "models.hxx"
 
 struct FundingRes {
-    nlohmann::json ticker_raw;
+    nlohmann::json obj_raw;
+    std::string obj_k;
     std::string s;
     double funding_rate;
-    long next_funding_time;
+    long ts;
+    std::string ex;
+    std::string k;
+};
+
+struct TickerRes {
+    nlohmann::json obj_raw;
+    std::string s;
+    double funding_rate;
     long ts;
     std::string ex;
     std::string k;
@@ -54,11 +63,14 @@ class ClientPublic : public hv::WebSocketClient {
     virtual std::vector<Ticker> fetch_tickers() = 0;
     std::string gen_fundings_insert_sql(
         std::string table_name = "default.fundings_curr_2025_01_12");
+    std::string gen_tickers_insert_sql(
+        std::string table_name = "default.tickers");
 
    protected:
     virtual void handle_onmessage(const std::string& msg) = 0;
     void init_idle_(std::string& url);
     std::string template_fundings_insert_sql;
+    std::string template_tickers_insert_sql;
 };
 
 class ClientPrivate : public hv::WebSocketClient {
@@ -378,7 +390,7 @@ class ClientPublicApexPro {
 
     ClientPublicApexPro(std::string k);
 
-    std::vector<FundingRes> fetch_fundings_sync();
+    std::vector<TickerRes> fetch_tickers_sync();
 };
 
 class ClientPublicApexOmni {
@@ -388,7 +400,7 @@ class ClientPublicApexOmni {
 
     ClientPublicApexOmni(std::string k);
 
-    std::vector<FundingRes> fetch_fundings_sync();
+    std::vector<TickerRes> fetch_tickers_sync();
 };
 
 class ClientPublicAevo {
@@ -430,6 +442,22 @@ class ClientPublicCoinEx : public ClientPublic {
 class ClientPublicBingx : public ClientPublic {
    public:
     ClientPublicBingx(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
+class ClientPublicBinance : public ClientPublic {
+   public:
+    ClientPublicBinance(std::string kind);
 
     void init_idle();
     void subscribe_to_trades(std::string& symbol);
