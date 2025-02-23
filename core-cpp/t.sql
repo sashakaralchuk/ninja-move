@@ -682,6 +682,26 @@ CREATE FUNCTION conv_symbol_to_token_dumb AS (s) -> replaceRegexpOne(
     'PERP$', ''
 );
 --
+CREATE FUNCTION conv_symbol_to_token_v2 AS (ex, s) -> replaceRegexpOne(
+  multiIf(
+    ex = 'bingx', replaceRegexpOne(s, '-(USDT|USDC)$', ''),
+    ex = 'gateio', replaceRegexpOne(s, '_USDT$', ''),
+    ex = 'bitunix', replaceRegexpOne(s, 'USDT$', ''),
+    ex = 'apex-pro', replaceRegexpOne(s, 'USDC$', ''),
+    ex = 'paradex', replaceRegexpOne(s, '-USD-PERP$', ''),
+    ex = 'bybit', replaceRegexpOne(s, '(USDT|PERP|(USDT)?-[0-9]{2}[A-Z]{3}[0-9]{2})$', ''),
+    ex = 'mexc', replaceRegexpOne(s, '_(USDT|USD)$', ''),
+    ex = 'arkm', replaceRegexpOne(s, '_USDT_PERP$', ''),
+    ex = 'aevo', replaceRegexpOne(s, '-USD$', ''),
+    ex = 'coinex', replaceRegexpOne(s, '(USDT|USDC|USD)$', ''),
+    ex = 'hyperliquid', replaceRegexpOne(s, '_USDC$', ''),
+    ex = 'apex-omni', replaceRegexpOne(s, 'USDT$', ''),
+    ex = 'polynomial-fi', s,
+    ''
+  ),
+  '^(100*)', ''
+);
+--
 SELECT *
 FROM default.t_fut_to_coingecko_coin_id
 INTO OUTFILE '/tmp/dump_default_t_fut_to_coingecko_coin_id_on_2025_02_09.sql'

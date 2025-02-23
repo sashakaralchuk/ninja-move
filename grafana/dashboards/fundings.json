@@ -10,16 +10,16 @@
     "url": "/d/fec14y22vtjpcb/fundings",
     "expires": "0001-01-01T00:00:00Z",
     "created": "2025-02-04T08:28:22Z",
-    "updated": "2025-02-11T07:38:42Z",
+    "updated": "2025-02-23T10:26:59Z",
     "updatedBy": "admin",
     "createdBy": "admin",
-    "version": 47,
+    "version": 53,
     "hasAcl": false,
     "isFolder": false,
     "folderId": 3,
     "folderUid": "aec6cilacsidcc",
-    "folderTitle": "fundings-dir",
-    "folderUrl": "/dashboards/f/aec6cilacsidcc/fundings-dir",
+    "folderTitle": "default-dir",
+    "folderUrl": "/dashboards/f/aec6cilacsidcc/default-dir",
     "provisioned": false,
     "provisionedExternalId": "",
     "annotationsPermissions": {
@@ -190,7 +190,7 @@
           ]
         },
         "gridPos": {
-          "h": 7,
+          "h": 6,
           "w": 16,
           "x": 0,
           "y": 0
@@ -227,8 +227,8 @@
             "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
             "interval": "",
             "intervalFactor": 1,
-            "query": "SELECT * EXCEPT (rank_out, _fund_1h_min, _fund_1h_max)\nFROM (\n    SELECT\n        coingecko_coin_id ccid,\n        truncate(_fund_1h_max - _fund_1h_min, 6) diff_abs_1h,\n        truncate(_fund_1h_max * 8 - _fund_1h_min * 8, 6) diff_abs_8h,\n        first_value(ex) OVER w_asc AS ex_min,\n        first_value(ex) OVER w_desc AS ex_max,\n        first_value(ts) OVER w_asc AS ts_min,\n        first_value(ts) OVER w_desc AS ts_max,\n        token_1,\n        first_value(funding_rate_1h) OVER w_asc AS _fund_1h_min,\n        first_value(funding_rate_1h) OVER w_desc AS _fund_1h_max,\n        truncate(_fund_1h_min, 6) fund_1h_min,\n        truncate(_fund_1h_max, 6) fund_1h_max,\n        truncate(_fund_1h_min * 8, 6) fund_8h_min,\n        truncate(_fund_1h_max * 8, 6) fund_8h_max,\n        row_number() OVER (PARTITION BY coingecko_coin_id) rank_out\n    FROM (\n        SELECT * EXCEPT (rank)\n        FROM (\n            SELECT\n                t1.ex,\n                conv_symbol_to_token_dumb(symbol) token_1,\n                t1.funding_rate / t1.funding_hours funding_rate_1h,\n                row_number() OVER (PARTITION BY ex, symbol ORDER BY ts DESC) AS rank,\n                t2.coingecko_coin_id,\n                toDateTime(t1.ts / 1000) ts\n            FROM (\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, toUInt64(t2.fundingInterval / 60) funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT *\n                        FROM default.t_bybit_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'bybit'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours\n                        FROM default.t_gateio_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'gateio'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'hyperliquid'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'arkm'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, fundingInterval funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, fundingInterval\n                        FROM default.t_paradex_2025_01_21\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'paradex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate / 10e17 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'polynomial-fi'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-pro'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-omni'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'aevo'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bitunix'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'coinex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bingx'\n                )\n            ) t1\n            INNER JOIN default.t_fut_to_coingecko_coin_id t2\n                ON t1.ex = t2.ex AND token_1 = t2.base\n            WHERE t2.coingecko_coin_id != ''\n                AND startsWith(notes, 'not-on-ui-on-') = 0\n                AND startsWith(notes, 'delisted-on-') = 0\n                AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\n                AND ts_write >= NOW() - INTERVAL 30 MINUTE\n        )\n        WHERE rank = 1\n    )\n    WINDOW w_asc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h ASC),\n        w_desc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h DESC)\n)\nWHERE rank_out = 1\nORDER BY abs(diff_abs_1h) DESC\nLIMIT 10",
-            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT * EXCEPT (rank_out, _fund_1h_min, _fund_1h_max)\nFROM (\n    SELECT\n        coingecko_coin_id ccid,\n        truncate(_fund_1h_max - _fund_1h_min, 6) diff_abs_1h,\n        truncate(_fund_1h_max * 8 - _fund_1h_min * 8, 6) diff_abs_8h,\n        first_value(ex) OVER w_asc AS ex_min,\n        first_value(ex) OVER w_desc AS ex_max,\n        first_value(ts) OVER w_asc AS ts_min,\n        first_value(ts) OVER w_desc AS ts_max,\n        token_1,\n        first_value(funding_rate_1h) OVER w_asc AS _fund_1h_min,\n        first_value(funding_rate_1h) OVER w_desc AS _fund_1h_max,\n        truncate(_fund_1h_min, 6) fund_1h_min,\n        truncate(_fund_1h_max, 6) fund_1h_max,\n        truncate(_fund_1h_min * 8, 6) fund_8h_min,\n        truncate(_fund_1h_max * 8, 6) fund_8h_max,\n        row_number() OVER (PARTITION BY coingecko_coin_id) rank_out\n    FROM (\n        SELECT * EXCEPT (rank)\n        FROM (\n            SELECT\n                t1.ex,\n                conv_symbol_to_token_dumb(symbol) token_1,\n                t1.funding_rate / t1.funding_hours funding_rate_1h,\n                row_number() OVER (PARTITION BY ex, symbol ORDER BY ts DESC) AS rank,\n                t2.coingecko_coin_id,\n                toDateTime(t1.ts / 1000) ts\n            FROM (\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, toUInt64(t2.fundingInterval / 60) funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT *\n                        FROM default.t_bybit_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'bybit'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours\n                        FROM default.t_gateio_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'gateio'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'hyperliquid'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'arkm'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, fundingInterval funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, fundingInterval\n                        FROM default.t_paradex_2025_01_21\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'paradex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate / 10e17 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'polynomial-fi'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-pro'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-omni'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'aevo'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bitunix'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'coinex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bingx'\n                )\n            ) t1\n            INNER JOIN default.t_fut_to_coingecko_coin_id t2\n                ON t1.ex = t2.ex AND token_1 = t2.base\n            WHERE t2.coingecko_coin_id != ''\n                AND startsWith(notes, 'not-on-ui-on-') = 0\n                AND startsWith(notes, 'delisted-on-') = 0\n                AND startsWith(notes, '') = 0\n                AND ts_write >= NOW() - INTERVAL 30 MINUTE\n        )\n        WHERE rank = 1\n    )\n    WINDOW w_asc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h ASC),\n        w_desc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h DESC)\n)\nWHERE rank_out = 1\nORDER BY abs(diff_abs_1h) DESC\nLIMIT 10",
+            "query": "SELECT * EXCEPT (rank_out, _fund_1h_min, _fund_1h_max)\nFROM (\n    SELECT\n        coingecko_coin_id ccid,\n        truncate(_fund_1h_max - _fund_1h_min, 6) diff_abs_1h,\n        truncate(_fund_1h_max * 8 - _fund_1h_min * 8, 6) diff_abs_8h,\n        first_value(ex) OVER w_asc AS ex_min,\n        first_value(ex) OVER w_desc AS ex_max,\n        first_value(ts) OVER w_asc AS ts_min,\n        first_value(ts) OVER w_desc AS ts_max,\n        token_1,\n        first_value(funding_rate_1h) OVER w_asc AS _fund_1h_min,\n        first_value(funding_rate_1h) OVER w_desc AS _fund_1h_max,\n        truncate(_fund_1h_min, 6) fund_1h_min,\n        truncate(_fund_1h_max, 6) fund_1h_max,\n        truncate(_fund_1h_min * 8, 6) fund_8h_min,\n        truncate(_fund_1h_max * 8, 6) fund_8h_max,\n        row_number() OVER (PARTITION BY coingecko_coin_id) rank_out\n    FROM (\n        SELECT * EXCEPT (rank)\n        FROM (\n            SELECT\n                t1.ex,\n                conv_symbol_to_token_v2(t1.ex, symbol) token_1,\n                t1.funding_rate / t1.funding_hours funding_rate_1h,\n                row_number() OVER (PARTITION BY ex, symbol ORDER BY ts DESC) AS rank,\n                t2.coingecko_coin_id,\n                toDateTime(t1.ts / 1000) ts\n            FROM (\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, toUInt64(t2.fundingInterval / 60) funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT *\n                        FROM default.t_bybit_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'bybit'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours\n                        FROM default.t_gateio_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'gateio'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'hyperliquid'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'arkm'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, fundingInterval funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, fundingInterval\n                        FROM default.t_paradex_2025_01_21\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'paradex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate / 10e17 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'polynomial-fi'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-pro'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-omni'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'aevo'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bitunix'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'coinex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bingx'\n                )\n            ) t1\n            INNER JOIN default.t_fut_to_coingecko_coin_id t2\n                ON t1.ex = t2.ex AND token_1 = t2.base\n            WHERE t2.coingecko_coin_id != ''\n                AND startsWith(notes, 'not-on-ui-on-') = 0\n                AND startsWith(notes, 'delisted-on-') = 0\n                AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\n                AND ts_write >= NOW() - INTERVAL 30 MINUTE\n        )\n        WHERE rank = 1\n    )\n    WINDOW w_asc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h ASC),\n        w_desc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h DESC)\n)\nWHERE rank_out = 1\nORDER BY abs(diff_abs_1h) DESC\nLIMIT 10",
+            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT * EXCEPT (rank_out, _fund_1h_min, _fund_1h_max)\nFROM (\n    SELECT\n        coingecko_coin_id ccid,\n        truncate(_fund_1h_max - _fund_1h_min, 6) diff_abs_1h,\n        truncate(_fund_1h_max * 8 - _fund_1h_min * 8, 6) diff_abs_8h,\n        first_value(ex) OVER w_asc AS ex_min,\n        first_value(ex) OVER w_desc AS ex_max,\n        first_value(ts) OVER w_asc AS ts_min,\n        first_value(ts) OVER w_desc AS ts_max,\n        token_1,\n        first_value(funding_rate_1h) OVER w_asc AS _fund_1h_min,\n        first_value(funding_rate_1h) OVER w_desc AS _fund_1h_max,\n        truncate(_fund_1h_min, 6) fund_1h_min,\n        truncate(_fund_1h_max, 6) fund_1h_max,\n        truncate(_fund_1h_min * 8, 6) fund_8h_min,\n        truncate(_fund_1h_max * 8, 6) fund_8h_max,\n        row_number() OVER (PARTITION BY coingecko_coin_id) rank_out\n    FROM (\n        SELECT * EXCEPT (rank)\n        FROM (\n            SELECT\n                t1.ex,\n                conv_symbol_to_token_v2(t1.ex, symbol) token_1,\n                t1.funding_rate / t1.funding_hours funding_rate_1h,\n                row_number() OVER (PARTITION BY ex, symbol ORDER BY ts DESC) AS rank,\n                t2.coingecko_coin_id,\n                toDateTime(t1.ts / 1000) ts\n            FROM (\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, toUInt64(t2.fundingInterval / 60) funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT *\n                        FROM default.t_bybit_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'bybit'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours\n                        FROM default.t_gateio_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'gateio'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'hyperliquid'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'arkm'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, fundingInterval funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, fundingInterval\n                        FROM default.t_paradex_2025_01_21\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.symbol = t2.s\n                    WHERE ex = 'paradex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate / 10e17 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'polynomial-fi'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-pro'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'apex-omni'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'aevo'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bitunix'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'coinex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT symbol, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bingx'\n                )\n            ) t1\n            INNER JOIN default.t_fut_to_coingecko_coin_id t2\n                ON t1.ex = t2.ex AND token_1 = t2.base\n            WHERE t2.coingecko_coin_id != ''\n                AND startsWith(notes, 'not-on-ui-on-') = 0\n                AND startsWith(notes, 'delisted-on-') = 0\n                AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\n                AND ts_write >= NOW() - INTERVAL 30 MINUTE\n        )\n        WHERE rank = 1\n    )\n    WINDOW w_asc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h ASC),\n        w_desc AS (PARTITION BY coingecko_coin_id ORDER BY funding_rate_1h DESC)\n)\nWHERE rank_out = 1\nORDER BY abs(diff_abs_1h) DESC\nLIMIT 10",
             "refId": "A",
             "round": "0s",
             "skip_comments": true,
@@ -273,7 +273,7 @@
           "overrides": []
         },
         "gridPos": {
-          "h": 7,
+          "h": 4,
           "w": 7,
           "x": 17,
           "y": 0
@@ -314,114 +314,6 @@
         ],
         "title": "last-write-by-ex",
         "type": "table"
-      },
-      {
-        "datasource": {
-          "type": "vertamedia-clickhouse-datasource",
-          "uid": "P17DD60A6E550C391"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "barAlignment": 0,
-              "barWidthFactor": 0.6,
-              "drawStyle": "line",
-              "fillOpacity": 0,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "insertNulls": false,
-              "lineInterpolation": "linear",
-              "lineWidth": 1,
-              "pointSize": 5,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "showPoints": "auto",
-              "spanNulls": false,
-              "stacking": {
-                "group": "A",
-                "mode": "none"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": null
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            }
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 7,
-          "w": 16,
-          "x": 0,
-          "y": 7
-        },
-        "id": 2,
-        "options": {
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "bottom",
-            "showLegend": true
-          },
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          }
-        },
-        "pluginVersion": "11.5.0",
-        "targets": [
-          {
-            "adHocFilters": [],
-            "adHocValuesQuery": "",
-            "add_metadata": true,
-            "contextWindowSize": "10",
-            "datasource": {
-              "type": "vertamedia-clickhouse-datasource",
-              "uid": "P17DD60A6E550C391"
-            },
-            "editorMode": "builder",
-            "extrapolate": true,
-            "format": "time_series",
-            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
-            "interval": "",
-            "intervalFactor": 1,
-            "query": "SELECT\n  toDateTime(t1.ts / 1000) ts,\n  conv_symbol_to_token_dumb(symbol) token_1,\n  t1.funding_rate\nFROM default.fundings_curr_2025_01_12 t1\nINNER JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE replaceAll(t2.coingecko_coin_id, ' ', '') != ''\n  AND ts BETWEEN toDateTime($from) AND toDateTime($to)\n  AND t1.k = 'fut'\n  AND t1.ex = '$var_ex'\n  AND t2.coingecko_coin_id = '$var_ccid'\nORDER BY ts",
-            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT\n  toDateTime(t1.ts / 1000) ts,\n  replaceRegexpOne(\n    replaceRegexpOne(\n      replaceRegexpOne(\n        replaceRegexpOne(\n          replaceRegexpOne(\n            replaceRegexpOne(\n              replaceRegexpOne(symbol, '-USD', '')\n              , 'USDC', ''),\n            '-USD-PERP', ''),\n          '_PERP$', ''\n        ),\n      '_USDT$', ''),\n    '_USDC$', ''),\n    'USDT$', ''\n  ) token_1,\n  t1.fundingRate\nFROM default.fundings_curr_2025_01_12 t1\nINNER JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE replaceAll(t2.coingecko_coin_id, ' ', '') != ''\n  AND ts BETWEEN toDateTime(1739150353) AND toDateTime(1739171953)\n  AND t1.k = 'fut'\n  AND t1.ex = 'bybit'\n  AND t2.coingecko_coin_id = 'celestia'\nORDER BY ts",
-            "refId": "A",
-            "round": "0s",
-            "skip_comments": true,
-            "useWindowFuncForMacros": true
-          }
-        ],
-        "title": "funding-raw",
-        "type": "timeseries"
       },
       {
         "datasource": {
@@ -495,10 +387,10 @@
           ]
         },
         "gridPos": {
-          "h": 7,
+          "h": 4,
           "w": 7,
           "x": 17,
-          "y": 7
+          "y": 4
         },
         "id": 6,
         "options": {
@@ -527,8 +419,8 @@
             "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
             "interval": "",
             "intervalFactor": 1,
-            "query": "SELECT\n  t1.*,\n  conv_symbol_to_token_dumb(t1.symbol) token_1,\n  t2.coingecko_coin_id\nFROM (\n  SELECT ex, symbol\n  FROM default.fundings_curr_2025_01_12\n  GROUP BY ex, symbol\n) t1\nLEFT JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.coingecko_coin_id = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, symbol",
-            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT\n  t1.*,\n  conv_symbol_to_token_dumb(t1.symbol) token_1,\n  t2.coingecko_coin_id\nFROM (\n  SELECT ex, symbol\n  FROM default.fundings_curr_2025_01_12\n  GROUP BY ex, symbol\n) t1\nLEFT JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.coingecko_coin_id = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\n\nORDER BY ex, symbol",
+            "query": "SELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.symbol) token_1,\n  t2.coingecko_coin_id\nFROM (\n  SELECT ex, symbol\n  FROM default.fundings_curr_2025_01_12\n  GROUP BY ex, symbol\n) t1\nLEFT JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.coingecko_coin_id = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, symbol",
+            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.symbol) token_1,\n  t2.coingecko_coin_id\nFROM (\n  SELECT ex, symbol\n  FROM default.fundings_curr_2025_01_12\n  GROUP BY ex, symbol\n) t1\nLEFT JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.coingecko_coin_id = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, symbol",
             "refId": "A",
             "round": "0s",
             "skip_comments": true,
@@ -536,6 +428,294 @@
           }
         ],
         "title": "non-matched-tokens-with-ccid",
+        "type": "table"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 16,
+          "x": 0,
+          "y": 6
+        },
+        "id": 2,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "hideZeros": false,
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "datasource": {
+              "type": "vertamedia-clickhouse-datasource",
+              "uid": "P17DD60A6E550C391"
+            },
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "time_series",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT\n  toDateTime(t1.ts / 1000) ts,\n  conv_symbol_to_token_v2(ex, symbol) token_1,\n  t1.funding_rate\nFROM default.fundings_curr_2025_01_12 t1\nINNER JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE replaceAll(t2.coingecko_coin_id, ' ', '') != ''\n  AND ts BETWEEN toDateTime($from) AND toDateTime($to)\n  AND t1.k = 'fut'\n  AND t1.ex = '$var_ex'\n  AND t2.coingecko_coin_id = '$var_ccid'\nORDER BY ts",
+            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT\n  toDateTime(t1.ts / 1000) ts,\n  conv_symbol_to_token_v2(ex,symbol) token_1,\n  t1.funding_rate\nFROM default.fundings_curr_2025_01_12 t1\nINNER JOIN default.t_fut_to_coingecko_coin_id t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE replaceAll(t2.coingecko_coin_id, ' ', '') != ''\n  AND ts BETWEEN toDateTime(1740234688) AND toDateTime(1740256288)\n  AND t1.k = 'fut'\n  AND t1.ex = 'bybit'\n  AND t2.coingecko_coin_id = 'celestia'\nORDER BY ts",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "funding-raw",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 89
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "base"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 80
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 7,
+          "x": 17,
+          "y": 8
+        },
+        "id": 7,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true,
+          "sortBy": []
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT ex, base, count() AS amount\nFROM default.t_fut_to_coingecko_coin_id\nGROUP BY ex, base\nHAVING amount != 1",
+            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT ex, base, count() AS amount\nFROM default.t_fut_to_coingecko_coin_id\nGROUP BY ex, base\nHAVING amount != 1",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "duplicates-ccid",
+        "type": "table"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 7,
+          "x": 17,
+          "y": 12
+        },
+        "id": 8,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT ex, base, notes\nFROM default.t_fut_to_coingecko_coin_id\nWHERE startsWith(notes, 'not-on-ui-on-')",
+            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT ex, base, notes\nFROM default.t_fut_to_coingecko_coin_id\nWHERE startsWith(notes, 'not-on-ui-on-')",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "non-on-ui-ccid",
         "type": "table"
       },
       {
@@ -568,7 +748,7 @@
           "h": 4,
           "w": 3,
           "x": 17,
-          "y": 14
+          "y": 16
         },
         "id": 4,
         "options": {
@@ -643,7 +823,7 @@
           "h": 4,
           "w": 3,
           "x": 20,
-          "y": 14
+          "y": 16
         },
         "id": 5,
         "options": {
@@ -742,7 +922,7 @@
     "timezone": "browser",
     "title": "fundings",
     "uid": "fec14y22vtjpcb",
-    "version": 47,
+    "version": 53,
     "weekStart": ""
   }
 }
