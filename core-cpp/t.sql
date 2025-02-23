@@ -530,15 +530,6 @@ WHERE k = 'fut' AND market_identifier = 'bybit'
 LIMIT 1
 \G;
 --
-CREATE TABLE default.t_fut_to_coingecko_coin_id (
-    `ex` String,
-    `base` String,
-    `target` String,
-    `coingecko_coin_id` String,
-    `notes` String
-)
-ENGINE = TinyLog;
---
 INSERT INTO default.t_fut_to_coingecko_coin_id
 -- join bybit fut+spot and figure out diff-rel
 WITH fut_prices AS (
@@ -702,11 +693,6 @@ CREATE FUNCTION conv_symbol_to_token_v2 AS (ex, s) -> replaceRegexpOne(
   '^(100*)', ''
 );
 --
-SELECT *
-FROM default.t_fut_to_coingecko_coin_id
-INTO OUTFILE '/tmp/dump_default_t_fut_to_coingecko_coin_id_on_2025_02_09.sql'
-FORMAT SQLInsert;
---
 CREATE TABLE default.spreads_curr_rasul_hasanov_2025_02_13 (
     obj_kind String,
     obj_raw String,
@@ -773,29 +759,24 @@ SELECT
     NOW() ts_write
 FROM url('https://api.binance.com/api/v1/ticker/bookTicker', 'JSONAsString');
 --
-CREATE TABLE default.t_ex_k_to_coingecko_coin_id (
+CREATE TABLE default.ex_k_to_ccid (
     `ex` String,
     `k` String,
     `base` String,
     `target` String,
-    `coingecko_coin_id` String,
+    `ccid` String,
     `notes` String
 )
 ENGINE = TinyLog;
 --
-INSERT INTO default.t_ex_k_to_coingecko_coin_id
-SELECT ex, 'fut' k, base, target, coingecko_coin_id, notes
-FROM default.t_fut_to_coingecko_coin_id
-WHERE ex = 'bybit';
---
-INSERT INTO default.t_ex_k_to_coingecko_coin_id
+INSERT INTO default.ex_k_to_ccid
 SELECT
     'bybit' ex,
     'spot' k,
     JSON_VALUE(ticker_raw, '$.base') base,
     JSON_VALUE(ticker_raw, '$.target') target,
-    JSON_VALUE(ticker_raw, '$.coin_id') coingecko_coin_id,
-    'added-from-coingecko-tickers-api-on-2025-02-14' notes
+    JSON_VALUE(ticker_raw, '$.coin_id') ccid,
+    'added-from-coingecko-tickers-api-on-2025-02-23' notes
 FROM (
     SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=0', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
     UNION ALL
@@ -813,13 +794,8 @@ FROM (
     UNION ALL
     SELECT arrayJoin(JSONExtractArrayRaw(json, 'tickers')) ticker_raw FROM url('https://api.coingecko.com/api/v3/exchanges/bybit_spot/tickers?page=7', JSONAsString, headers('x-cg-demo-api-key'='CG-SW1M45WZhgX1R29iEfWJYCme'))
 )
-GROUP BY ex, k, base, target, coingecko_coin_id, notes;
+GROUP BY ex, k, base, target, ccid, notes;
 --
-INSERT INTO default.t_ex_k_to_coingecko_coin_id VALUES
-('bybit', 'fut', 'B3', 'USD', 'b3', 'added-by-hands-on-2025-02-14'),
-('bybit', 'fut', 'IP', 'USD', 'story', 'added-by-hands-on-2025-02-14'),
-('bybit', 'fut', 'RONIN', 'USD', 'ronin', 'added-by-hands-on-2025-02-14');
---
-INSERT INTO default.t_ex_k_to_coingecko_coin_id VALUES
-('bybit', 'spot', 'OM', 'USD', 'mantra', 'added-by-hands-on-2025-02-14'),
-('bybit', 'spot', 'MCG', 'USD', 'metalcore', 'added-by-hands-on-2025-02-14');
+INSERT INTO default.ex_k_to_ccid
+SELECT ex, 'fut' AS k, base, target, coingecko_coin_id AS ccid, notes
+FROM default.t_fut_to_coingecko_coin_id;
