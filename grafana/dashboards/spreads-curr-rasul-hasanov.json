@@ -10,16 +10,16 @@
     "url": "/d/bed1x3o4e6y2oe/spreads-curr-rasul-hasanov",
     "expires": "0001-01-01T00:00:00Z",
     "created": "2025-02-14T15:52:16Z",
-    "updated": "2025-02-14T17:42:52Z",
+    "updated": "2025-02-23T18:17:52Z",
     "updatedBy": "admin",
     "createdBy": "admin",
-    "version": 5,
+    "version": 11,
     "hasAcl": false,
     "isFolder": false,
     "folderId": 3,
     "folderUid": "aec6cilacsidcc",
-    "folderTitle": "fundings-dir",
-    "folderUrl": "/dashboards/f/aec6cilacsidcc/fundings-dir",
+    "folderTitle": "default-dir",
+    "folderUrl": "/dashboards/f/aec6cilacsidcc/default-dir",
     "provisioned": false,
     "provisionedExternalId": "",
     "annotationsPermissions": {
@@ -106,7 +106,7 @@
           "overrides": []
         },
         "gridPos": {
-          "h": 7,
+          "h": 6,
           "w": 16,
           "x": 0,
           "y": 1
@@ -137,8 +137,8 @@
             "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
             "interval": "",
             "intervalFactor": 1,
-            "query": "SELECT\n    ex,\n    coingecko_coin_id,\n    truncate((p_fut - p_spot) / p_spot * 100, 2) diff_rel,\n    sum(if(k = 'fut', p_bid_per_1_token, 0)) p_fut,\n    sum(if(k = 'spot', p_bid_per_1_token, 0)) p_spot,\n    groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n    groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n    groupArrayIf(s, k = 'fut') s_fut,\n    groupArrayIf(s, k = 'spot') s_spot,\n    groupArrayIf(p_bid, k = 'fut') p_bid_fut,\n    groupArrayIf(p_bid, k = 'spot') p_bid_spot,\n    groupArrayIf(ex, k = 'fut') ex_fut,\n    groupArrayIf(ex, k = 'spot') ex_spot\nFROM (\n    SELECT\n        t1.ex ex,\n        t1.s s,\n        t1.k k,\n        t1.s s,\n        t1.ts_write ts_write,\n        if(t1.k = 'fut', replaceRegexpOne(t2.baseCoin, '^(100*)', ''), t2.baseCoin) token_1,\n        t3.coingecko_coin_id coingecko_coin_id,\n        p_bid,\n        multiIf(\n            (ex, k, s) = ('bybit', 'fut', 'SHIB1000PERP'), p_bid / pow(10, 3),\n            k = 'fut', p_bid / pow(10, LENGTH(regexpExtract(t2.baseCoin, '^1(0*)'))),\n            p_bid\n        ) p_bid_per_1_token,\n        row_number() OVER (PARTITION BY ex, k, coingecko_coin_id ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit'\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_ex_k_to_coingecko_coin_id\n        WHERE ex = 'bybit'\n    ) t3\n        ON token_1 = t3.base AND t1.k = t3.k\n    WHERE t2.baseCoin != '' AND t3.coingecko_coin_id != ''\n)\nWHERE rank_last_event = 1\nGROUP BY ex, coingecko_coin_id\nHAVING p_fut != 0 AND p_spot != 0\nORDER BY diff_rel DESC\nLIMIT 20",
-            "rawQuery": "/* grafana dashboard=spreads-curr-rasul-hasanov, user=1 */\nSELECT\n    ex,\n    coingecko_coin_id,\n    truncate((p_fut - p_spot) / p_spot * 100, 2) diff_rel,\n    sum(if(k = 'fut', p_bid_per_1_token, 0)) p_fut,\n    sum(if(k = 'spot', p_bid_per_1_token, 0)) p_spot,\n    groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n    groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n    groupArrayIf(s, k = 'fut') s_fut,\n    groupArrayIf(s, k = 'spot') s_spot,\n    groupArrayIf(p_bid, k = 'fut') p_bid_fut,\n    groupArrayIf(p_bid, k = 'spot') p_bid_spot,\n    groupArrayIf(ex, k = 'fut') ex_fut,\n    groupArrayIf(ex, k = 'spot') ex_spot\nFROM (\n    SELECT\n        t1.ex ex,\n        t1.s s,\n        t1.k k,\n        t1.s s,\n        t1.ts_write ts_write,\n        if(t1.k = 'fut', replaceRegexpOne(t2.baseCoin, '^(100*)', ''), t2.baseCoin) token_1,\n        t3.coingecko_coin_id coingecko_coin_id,\n        p_bid,\n        multiIf(\n            (ex, k, s) = ('bybit', 'fut', 'SHIB1000PERP'), p_bid / pow(10, 3),\n            k = 'fut', p_bid / pow(10, LENGTH(regexpExtract(t2.baseCoin, '^1(0*)'))),\n            p_bid\n        ) p_bid_per_1_token,\n        row_number() OVER (PARTITION BY ex, k, coingecko_coin_id ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit'\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_ex_k_to_coingecko_coin_id\n        WHERE ex = 'bybit'\n    ) t3\n        ON token_1 = t3.base AND t1.k = t3.k\n    WHERE t2.baseCoin != '' AND t3.coingecko_coin_id != ''\n)\nWHERE rank_last_event = 1\nGROUP BY ex, coingecko_coin_id\nHAVING p_fut != 0 AND p_spot != 0\nORDER BY diff_rel DESC\nLIMIT 20",
+            "query": "SELECT\n    ex,\n    ccid,\n    truncate((p_fut - p_spot) / p_spot * 100, 2) diff_rel,\n    sum(if(k = 'fut', p_bid_per_1_token, 0)) p_fut,\n    sum(if(k = 'spot', p_bid_per_1_token, 0)) p_spot,\n    groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n    groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n    groupArrayIf(s, k = 'fut') s_fut,\n    groupArrayIf(s, k = 'spot') s_spot,\n    groupArrayIf(p_bid, k = 'fut') p_bid_fut,\n    groupArrayIf(p_bid, k = 'spot') p_bid_spot,\n    groupArrayIf(ex, k = 'fut') ex_fut,\n    groupArrayIf(ex, k = 'spot') ex_spot\nFROM (\n    SELECT\n        t1.ex ex,\n        t1.s s,\n        t1.k k,\n        t1.ts_write ts_write,\n        if(t1.k = 'fut', replaceRegexpOne(t2.baseCoin, '^(100*)', ''), t2.baseCoin) token_1,\n        t3.ccid,\n        p_bid,\n        multiIf(\n            (ex, k, s) = ('bybit', 'fut', 'SHIB1000PERP'), p_bid / pow(10, 3),\n            k = 'fut', p_bid / pow(10, LENGTH(regexpExtract(t2.baseCoin, '^1(0*)'))),\n            p_bid\n        ) p_bid_per_1_token,\n        row_number() OVER (PARTITION BY ex, k, ccid ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT ex, s, k, ts_write,\n            toFloat64(JSON_VALUE(obj_raw, '$.bid1Price')) p_bid\n        FROM default.tickers\n        WHERE ex = 'bybit'\n            AND ts_write >= NOW() - INTERVAL 30 MINUTE\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n    LEFT JOIN (\n        SELECT *\n        FROM default.ex_k_to_ccid\n        WHERE ex = 'bybit'\n    ) t3\n        ON token_1 = t3.base AND t1.k = t3.k\n    WHERE t2.baseCoin != '' AND t3.ccid != ''\n)\nWHERE rank_last_event = 1\nGROUP BY ex, ccid\nHAVING p_fut != 0 AND p_spot != 0\nORDER BY diff_rel DESC\nLIMIT 20",
+            "rawQuery": "/* grafana dashboard=spreads-curr-rasul-hasanov, user=1 */\nSELECT\n    ex,\n    ccid,\n    truncate((p_fut - p_spot) / p_spot * 100, 2) diff_rel,\n    sum(if(k = 'fut', p_bid_per_1_token, 0)) p_fut,\n    sum(if(k = 'spot', p_bid_per_1_token, 0)) p_spot,\n    groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n    groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n    groupArrayIf(s, k = 'fut') s_fut,\n    groupArrayIf(s, k = 'spot') s_spot,\n    groupArrayIf(p_bid, k = 'fut') p_bid_fut,\n    groupArrayIf(p_bid, k = 'spot') p_bid_spot,\n    groupArrayIf(ex, k = 'fut') ex_fut,\n    groupArrayIf(ex, k = 'spot') ex_spot\nFROM (\n    SELECT\n        t1.ex ex,\n        t1.s s,\n        t1.k k,\n        t1.ts_write ts_write,\n        if(t1.k = 'fut', replaceRegexpOne(t2.baseCoin, '^(100*)', ''), t2.baseCoin) token_1,\n        t3.ccid,\n        p_bid,\n        multiIf(\n            (ex, k, s) = ('bybit', 'fut', 'SHIB1000PERP'), p_bid / pow(10, 3),\n            k = 'fut', p_bid / pow(10, LENGTH(regexpExtract(t2.baseCoin, '^1(0*)'))),\n            p_bid\n        ) p_bid_per_1_token,\n        row_number() OVER (PARTITION BY ex, k, ccid ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT ex, s, k, ts_write,\n            toFloat64(JSON_VALUE(obj_raw, '$.bid1Size')) p_bid\n        FROM default.tickers\n        WHERE ex = 'bybit'\n            AND ts_write >= NOW() - INTERVAL 30 MINUTE\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n    LEFT JOIN (\n        SELECT *\n        FROM default.ex_k_to_ccid\n        WHERE ex = 'bybit'\n    ) t3\n        ON token_1 = t3.base AND t1.k = t3.k\n    WHERE t2.baseCoin != '' AND t3.ccid != ''\n)\nWHERE rank_last_event = 1\nGROUP BY ex, ccid\nHAVING p_fut != 0 AND p_spot != 0\nORDER BY diff_rel DESC\nLIMIT 20",
             "refId": "A",
             "round": "0s",
             "skip_comments": true,
@@ -183,10 +183,10 @@
           "overrides": []
         },
         "gridPos": {
-          "h": 7,
+          "h": 6,
           "w": 16,
           "x": 0,
-          "y": 8
+          "y": 7
         },
         "id": 3,
         "options": {
@@ -214,8 +214,8 @@
             "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
             "interval": "",
             "intervalFactor": 1,
-            "query": "SELECT\n    t1.token_1,\n    t1.s s_fut_exp,\n    t2.s s_fut_perp,\n    truncate((p_fut_exp - p_fut_perp) / p_fut_perp * 100, 4) diff_ref,\n    t1.p_bid p_fut_exp,\n    t2.p_bid p_fut_perp\nFROM (\n    SELECT\n        s,\n        regexpExtract(s, '^([A-Z]+?)(?:USDT-|-)') token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit' AND k = 'fut' AND s like '%-%'\n    )\n) t1\nLEFT JOIN (\n    SELECT\n        t1.s s,\n        t2.baseCoin token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit' AND k = 'fut' AND s not like '%-%'\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n) t2\n    ON t1.token_1 = t2.token_1\nWHERE t1.rank_last_event = 1 AND t2.rank_last_event = 1\nORDER BY abs(diff_ref) DESC",
-            "rawQuery": "/* grafana dashboard=spreads-curr-rasul-hasanov, user=1 */\nSELECT\n    t1.token_1,\n    t1.s s_fut_exp,\n    t2.s s_fut_perp,\n    \n    t1.p_bid p_fut_exp,\n    t2.p_bid p_fut_perp\nFROM (\n    SELECT\n        s,\n        regexpExtract(s, '^([A-Z]+?)(?:USDT-|-)') token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit' AND k = 'fut' AND s like '%-%'\n    )\n) t1\nLEFT JOIN (\n    SELECT\n        t1.s s,\n        t2.baseCoin token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit' AND k = 'fut' AND s not like '%-%'\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n) t2\n    ON t1.token_1 = t2.token_1\nWHERE t1.rank_last_event = 1 AND t2.rank_last_event = 1\nORDER BY abs(diff_ref) DESC",
+            "query": "SELECT\n    t1.token_1,\n    t1.s s_fut_exp,\n    t2.s s_fut_perp,\n    truncate((p_fut_exp - p_fut_perp) / p_fut_perp * 100, 4) diff_ref,\n    t1.p_bid p_fut_exp,\n    t2.p_bid p_fut_perp\nFROM (\n    SELECT\n        s,\n        regexpExtract(s, '^([A-Z]+?)(?:USDT-|-)') token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT ex, s, k, ts_write,\n            toFloat64(JSON_VALUE(obj_raw, '$.bid1Price')) p_bid\n        FROM default.tickers\n        WHERE ex = 'bybit' AND k = 'fut' AND s like '%-%'\n    )\n) t1\nLEFT JOIN (\n    SELECT\n        t1.s s,\n        t2.baseCoin token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT ex, s, k, ts_write,\n            toFloat64(JSON_VALUE(obj_raw, '$.bid1Price')) p_bid\n        FROM default.tickers\n        WHERE ex = 'bybit' AND k = 'fut' AND s not like '%-%'\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n) t2\n    ON t1.token_1 = t2.token_1\nWHERE t1.rank_last_event = 1 AND t2.rank_last_event = 1\nORDER BY abs(diff_ref) DESC",
+            "rawQuery": "/* grafana dashboard=spreads-curr-rasul-hasanov, user=1 */\nSELECT\n    t1.token_1,\n    t1.s s_fut_exp,\n    t2.s s_fut_perp,\n    truncate((p_fut_exp - p_fut_perp) / p_fut_perp * 100, 4) diff_ref,\n    t1.p_bid p_fut_exp,\n    t2.p_bid p_fut_perp\nFROM (\n    SELECT\n        s,\n        regexpExtract(s, '^([A-Z]+?)(?:USDT-|-)') token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit' AND k = 'fut' AND s like '%-%'\n    )\n) t1\nLEFT JOIN (\n    SELECT\n        t1.s s,\n        t2.baseCoin token_1,\n        p_bid,\n        row_number() OVER (PARTITION BY token_1, s ORDER BY ts_write DESC) as rank_last_event\n    FROM (\n        SELECT *\n        FROM default.spreads_curr_rasul_hasanov_2025_02_13\n        WHERE ex = 'bybit' AND k = 'fut' AND s not like '%-%'\n    ) t1\n    LEFT JOIN (\n        SELECT *\n        FROM default.t_bybit_2025_01_02\n        WHERE quoteCoin in ('USDE', 'USDT', 'USDC')\n    ) t2\n        ON t1.s = t2.s AND t1.k = t2.k\n) t2\n    ON t1.token_1 = t2.token_1\nWHERE t1.rank_last_event = 1 AND t2.rank_last_event = 1\nORDER BY abs(diff_ref) DESC",
             "refId": "A",
             "round": "0s",
             "skip_comments": true,
@@ -231,7 +231,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 15
+          "y": 13
         },
         "id": 6,
         "panels": [
@@ -257,8 +257,7 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
-                      "value": null
+                      "color": "green"
                     },
                     {
                       "color": "red",
@@ -360,8 +359,7 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
-                      "value": null
+                      "color": "green"
                     },
                     {
                       "color": "red",
@@ -436,7 +434,7 @@
     "timezone": "browser",
     "title": "spreads-curr-rasul-hasanov",
     "uid": "bed1x3o4e6y2oe",
-    "version": 5,
+    "version": 11,
     "weekStart": ""
   }
 }

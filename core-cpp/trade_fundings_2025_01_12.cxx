@@ -29,10 +29,9 @@ int main() {
     //       https://bingx.com/en/tradeInfo/swap-trade-info, but as an idea
     //       this could be extracted from historical fundings like group by
     //       symbol nextFundingTime1 - nextFundingTime0
-    // XXX: conv_symbol_to_token_dumb
-    //      workout exp bybit futures e.g. BTC-14FEB25
-    //      workout USDC bybit futures e.g. AEVOPERP
-    //      workout and filter pre-market tokens
+    // NOTE: regaring mexc funding intervals: it's possible to fetch fundings
+    //       from endpoint api/v1/contract/funding_rate/{symbol} and then make
+    //       nextFundingTime1 - nextFundingTime0
     configure_logger();
     std::string v = std::getenv("MODE");
     auto fn = FNS_MAP.find(v);
