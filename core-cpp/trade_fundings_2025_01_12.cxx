@@ -32,6 +32,8 @@ int main() {
     // NOTE: regaring mexc funding intervals: it's possible to fetch fundings
     //       from endpoint api/v1/contract/funding_rate/{symbol} and then make
     //       nextFundingTime1 - nextFundingTime0
+    // XXX: add exchanges from https://defillama.com/protocols/Derivatives
+    //      and coingecko https://www.coingecko.com/en/exchanges
     configure_logger();
     std::string v = std::getenv("MODE");
     auto fn = FNS_MAP.find(v);
