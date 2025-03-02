@@ -535,6 +535,7 @@ CREATE FUNCTION conv_symbol_to_token_v2 AS (ex, s) -> replaceRegexpOne(
     ex = 'hyperliquid', replaceRegexpOne(s, '_USDC$', ''),
     ex = 'apex-omni', replaceRegexpOne(s, 'USDT$', ''),
     ex = 'polynomial-fi', s,
+    ex = 'binance', replaceRegexpOne(s, '(USDT|USDC)(_\d{6})?$', ''),
     ''
   ),
   '^(100*)', ''
