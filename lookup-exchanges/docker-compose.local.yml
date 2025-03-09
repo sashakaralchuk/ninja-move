@@ -1,7 +1,0 @@
-version: '3.4'
-services:
-  clickhouse:
-    image: docker.io/clickhouse/clickhouse-server:24.8.4.13
-    ports:
-    - 18123:8123
-    mem_limit: 16gb
