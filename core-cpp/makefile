@@ -113,7 +113,7 @@ fetch-grafana-dashboard:
 		"http://localhost:3000/api/dashboards/uid/aec6cilacsidcc" | jq
 	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
 		"http://localhost:3000/api/dashboards/uid/fec14y22vtjpcb" | jq \
-		> ../grafana/dashboards/fundings.json
+		> ../grafana/dashboards/default.json
 	curl -s -X GET -H "Authorization: Bearer $GRAFANA_API_KEY" \
 		"http://localhost:3000/api/dashboards/uid/bed1x3o4e6y2oe" | jq \
 		> ../grafana/dashboards/spreads-curr-rasul-hasanov.json
