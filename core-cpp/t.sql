@@ -589,3 +589,15 @@ CREATE TABLE default.tickers (
 )
 PARTITION BY toDate(ts_write)
 ORDER BY (ex, k, ts);
+--
+-- cat /dumps/dump_ex_k_to_ccid_v2.sql | xargs -I {} -0 clickhouse-client '{}'
+CREATE TABLE default.ex_k_to_ccid_v2 (
+    `ex` String,
+    `k` String,
+    `s` String,
+    `base` String,
+    `quote` String,
+    `ccid` String,
+    `notes` String
+)
+ENGINE = TinyLog;

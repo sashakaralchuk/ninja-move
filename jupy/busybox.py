@@ -19,14 +19,15 @@ def main() -> typing.NoReturn:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, help="Input file name", required=True)
     parser.add_argument("--ex", type=str, required=False)
+    parser.add_argument("--k", type=str, required=False)
     args_ = parser.parse_args()
     match args_.mode:
         case "parse-coinglass-funding-rates-2025-01-12":
             parse_coinglass_funding_rates_2025_01_12()
         case "parse-coingecko-token-2025-01-06":
             parse_coingecko_token_2025_01_06()
-        case "match-bitunix-tokens-with-ccid":
-            match_bitunix_tokens_with_ccid(ex=args_.ex)
+        case "match-ex-tokens-with-ccid":
+            match_ex_tokens_with_ccid(ex=args_.ex, k=args_.k)
         case _:
             raise NotImplementedError(f"Unknown {args_.mode=}")
 
@@ -225,42 +226,64 @@ def markets_select_curr_exchanges(
     return out
 
 
-def match_bitunix_tokens_with_ccid(ex: typing.Optional[str]) -> typing.NoReturn:
+def match_ex_tokens_with_ccid(  # noqa: PLR0912
+    ex: typing.Optional[str], k: typing.Optional[str]
+) -> typing.NoReturn:
     if ex is None:
         raise ValueError("ex is mandatory")
     clickhouse_client = clickhouse_connect.get_client(
         dsn="clickhousedb://127.0.0.1:18123/default"
     )
-    match ex:
-        case "bitunix":
-            last_price_path = "$.lastPrice"
-        case "coinex":
-            last_price_path = "$.mark_price"
-        case "bingx":
-            last_price_path = "$.indexPrice"
-        case "mexc":
-            last_price_path = "$.lastPrice"
-        case _:
-            raise Exception(f"Unknown {ex=}")
-    symbols_in_tickers = clickhouse_client.query(
-        f"""
-        SELECT * EXCEPT(rank_out, ts_write)
-        FROM (
-            SELECT *, RANK() OVER (ORDER BY ts_write DESC) AS rank_out
+    if ex == "bybit":
+        if k is None:
+            raise ValueError("k is mandatory")
+        symbols_in_tickers = clickhouse_client.query(
+            f"""
+            SELECT s, last_price
             FROM (
-                SELECT
-                    symbol,
-                    toFloat64(JSON_VALUE(ticker_raw, {last_price_path!r})) last_price,
-                    ts_write
-                FROM default.fundings_curr_2025_01_12
-                WHERE ex = {ex!r}
+                SELECT *,
+                    toFloat64(JSON_VALUE(obj_raw, '$.bid1Price')) last_price,
+                    RANK() OVER (ORDER BY ts_write DESC) AS rank_out
+                FROM default.tickers
+                WHERE ex = {ex!r} AND k = {k!r}
+                    AND ts_write >= NOW() - INTERVAL 30 MINUTE
             )
-        )
-        WHERE rank_out = 1
-        ORDER BY symbol
-        """,
-    ).result_rows
+            WHERE rank_out = 1
+            ORDER BY s
+            """,
+        ).result_rows
+    else:
+        match ex:
+            case "bitunix":
+                last_price_path = "$.lastPrice"
+            case "coinex":
+                last_price_path = "$.mark_price"
+            case "bingx":
+                last_price_path = "$.indexPrice"
+            case "mexc":
+                last_price_path = "$.lastPrice"
+            case _:
+                raise Exception(f"Unknown {ex=}")
+        symbols_in_tickers = clickhouse_client.query(
+            f"""
+            SELECT * EXCEPT(rank_out, ts_write)
+            FROM (
+                SELECT *, RANK() OVER (ORDER BY ts_write DESC) AS rank_out
+                FROM (
+                    SELECT
+                        s,
+                        toFloat64(JSON_VALUE(obj_raw, {last_price_path!r})) last_price,
+                        ts_write
+                    FROM default.fundings_curr_2025_01_12
+                    WHERE ex = {ex!r} AND k = 'fut'
+                )
+            )
+            WHERE rank_out = 1
+            ORDER BY s
+            """,
+        ).result_rows
     logger.info("len(symbols_in_tickers)=%s", len(symbols_in_tickers))
+    non_matched = []
     for symbol_in_ticker, price_in_ticker in symbols_in_tickers:
         coin_in_ticker = (
             symbol_in_ticker.replace("_USDT", "")
@@ -283,9 +306,11 @@ def match_bitunix_tokens_with_ccid(ex: typing.Optional[str]) -> typing.NoReturn:
                 except (ValueError, ZeroDivisionError):
                     pass
         if len(match_list) == 1:
-            print(match_list[0][0], match_list[0][1])
+            print(ex, k, symbol_in_ticker, match_list[0][0], "USDT", match_list[0][1])
         else:
-            print(f"{symbol_in_ticker=} match_list !=1 {match_list=}")
+            non_matched.append((symbol_in_ticker, match_list))
+    for symbol_in_ticker, match_list in non_matched:
+        print(f"{symbol_in_ticker=} {ex=} {k=} match_list !=1 {match_list=}")
 
 
 if __name__ == "__main__":

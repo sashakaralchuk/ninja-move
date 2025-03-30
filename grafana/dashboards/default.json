@@ -10,10 +10,10 @@
     "url": "/d/fec14y22vtjpcb/default",
     "expires": "0001-01-01T00:00:00Z",
     "created": "2025-02-04T08:28:22Z",
-    "updated": "2025-03-22T17:43:07Z",
+    "updated": "2025-03-24T08:51:27Z",
     "updatedBy": "admin",
     "createdBy": "admin",
-    "version": 70,
+    "version": 71,
     "hasAcl": false,
     "isFolder": false,
     "folderId": 3,
@@ -59,7 +59,7 @@
     "links": [],
     "panels": [
       {
-        "collapsed": true,
+        "collapsed": false,
         "gridPos": {
           "h": 1,
           "w": 24,
@@ -67,226 +67,227 @@
           "y": 0
         },
         "id": 12,
-        "panels": [
-          {
-            "datasource": {
-              "type": "vertamedia-clickhouse-datasource",
-              "uid": "P17DD60A6E550C391"
-            },
-            "fieldConfig": {
-              "defaults": {
-                "color": {
-                  "mode": "thresholds"
-                },
-                "custom": {
-                  "align": "auto",
-                  "cellOptions": {
-                    "type": "auto"
-                  },
-                  "inspect": false
-                },
-                "mappings": [],
-                "thresholds": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green"
-                    },
-                    {
-                      "color": "red",
-                      "value": 80
-                    }
-                  ]
-                }
-              },
-              "overrides": [
-                {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "ex"
-                  },
-                  "properties": [
-                    {
-                      "id": "custom.width",
-                      "value": 106
-                    }
-                  ]
-                },
-                {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "symbol"
-                  },
-                  "properties": [
-                    {
-                      "id": "custom.width",
-                      "value": 98
-                    }
-                  ]
-                },
-                {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "token_1"
-                  },
-                  "properties": [
-                    {
-                      "id": "custom.width",
-                      "value": 90
-                    }
-                  ]
-                }
-              ]
-            },
-            "gridPos": {
-              "h": 6,
-              "w": 5,
-              "x": 0,
-              "y": 1
-            },
-            "id": 6,
-            "options": {
-              "cellHeight": "sm",
-              "footer": {
-                "countRows": false,
-                "fields": "",
-                "reducer": [
-                  "sum"
-                ],
-                "show": false
-              },
-              "showHeader": true,
-              "sortBy": []
-            },
-            "pluginVersion": "11.5.0",
-            "targets": [
-              {
-                "adHocFilters": [],
-                "adHocValuesQuery": "",
-                "add_metadata": true,
-                "contextWindowSize": "10",
-                "editorMode": "builder",
-                "extrapolate": true,
-                "format": "table",
-                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
-                "interval": "",
-                "intervalFactor": 1,
-                "query": "SELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.s) token_1,\n  t2.ccid\nFROM (\n  SELECT DISTINCT ex, s, k\n  FROM (\n    SELECT ex, s, k\n    FROM default.fundings_curr_2025_01_12\n    UNION ALL\n    SELECT ex, s, k\n    FROM default.tickers\n  )\n  WHERE k = 'fut' AND ex != 'binance'\n) t1\nLEFT JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, s",
-                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.symbol) token_1,\n  t2.ccid\nFROM (\n  SELECT ex, symbol\n  FROM default.fundings_curr_2025_01_12\n  GROUP BY ex, symbol\n) t1\nLEFT JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, symbol",
-                "refId": "A",
-                "round": "0s",
-                "skip_comments": true,
-                "useWindowFuncForMacros": true
-              }
-            ],
-            "title": "non-matched-tokens-with-ccid",
-            "type": "table"
-          },
-          {
-            "datasource": {
-              "type": "vertamedia-clickhouse-datasource",
-              "uid": "P17DD60A6E550C391"
-            },
-            "fieldConfig": {
-              "defaults": {
-                "color": {
-                  "mode": "thresholds"
-                },
-                "custom": {
-                  "align": "auto",
-                  "cellOptions": {
-                    "type": "auto"
-                  },
-                  "inspect": false
-                },
-                "mappings": [],
-                "thresholds": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green"
-                    },
-                    {
-                      "color": "red",
-                      "value": 80
-                    }
-                  ]
-                }
-              },
-              "overrides": [
-                {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "ex"
-                  },
-                  "properties": [
-                    {
-                      "id": "custom.width",
-                      "value": 89
-                    }
-                  ]
-                },
-                {
-                  "matcher": {
-                    "id": "byName",
-                    "options": "base"
-                  },
-                  "properties": [
-                    {
-                      "id": "custom.width",
-                      "value": 80
-                    }
-                  ]
-                }
-              ]
-            },
-            "gridPos": {
-              "h": 6,
-              "w": 5,
-              "x": 5,
-              "y": 1
-            },
-            "id": 7,
-            "options": {
-              "cellHeight": "sm",
-              "footer": {
-                "countRows": false,
-                "fields": "",
-                "reducer": [
-                  "sum"
-                ],
-                "show": false
-              },
-              "showHeader": true,
-              "sortBy": []
-            },
-            "pluginVersion": "11.5.0",
-            "targets": [
-              {
-                "adHocFilters": [],
-                "adHocValuesQuery": "",
-                "add_metadata": true,
-                "contextWindowSize": "10",
-                "editorMode": "builder",
-                "extrapolate": true,
-                "format": "table",
-                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
-                "interval": "",
-                "intervalFactor": 1,
-                "query": "SELECT ex, base, count() AS amount\nFROM default.ex_k_to_ccid\nWHERE k = 'fut'\nGROUP BY ex, base\nHAVING amount != 1",
-                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT ex, base, count() AS amount\nFROM default.ex_k_to_ccid\nWHERE k = 'fut'\nGROUP BY ex, base\nHAVING amount != 1",
-                "refId": "A",
-                "round": "0s",
-                "skip_comments": true,
-                "useWindowFuncForMacros": true
-              }
-            ],
-            "title": "duplicates-ccid",
-            "type": "table"
-          }
-        ],
+        "panels": [],
         "title": "debug-must-be-zero",
         "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 106
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "symbol"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 98
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "token_1"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 90
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 5,
+          "x": 0,
+          "y": 1
+        },
+        "id": 6,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true,
+          "sortBy": []
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.s) token_1,\n  t2.ccid\nFROM (\n  SELECT DISTINCT ex, s, k\n  FROM (\n    SELECT ex, s, k\n    FROM default.fundings_curr_2025_01_12\n    UNION ALL\n    SELECT ex, s, k\n    FROM default.tickers\n  )\n  WHERE (k = 'fut' AND ex != 'binance') OR (k = 'spot' AND ex = 'bybit')\n) t1\nLEFT JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, s",
+            "rawQuery": "/* grafana dashboard=default, user=1 */\nSELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.s) token_1,\n  t2.ccid\nFROM (\n  SELECT DISTINCT ex, s, k\n  FROM (\n    SELECT ex, s, k\n    FROM default.fundings_curr_2025_01_12\n    UNION ALL\n    SELECT ex, s, k\n    FROM default.tickers\n  )\n  WHERE k = 'fut' AND ex != 'binance'\n) t1\nLEFT JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, s",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "non-matched-tokens-with-ccid",
+        "type": "table"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 89
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "base"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 80
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 5,
+          "x": 5,
+          "y": 1
+        },
+        "id": 7,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true,
+          "sortBy": []
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT ex, base, count() AS amount\nFROM default.ex_k_to_ccid\nWHERE k = 'fut'\nGROUP BY ex, base\nHAVING amount != 1",
+            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT ex, base, count() AS amount\nFROM default.ex_k_to_ccid\nWHERE k = 'fut'\nGROUP BY ex, base\nHAVING amount != 1",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "duplicates-ccid",
+        "type": "table"
       },
       {
         "collapsed": true,
@@ -294,7 +295,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 1
+          "y": 7
         },
         "id": 11,
         "panels": [
@@ -335,7 +336,7 @@
               "h": 6,
               "w": 5,
               "x": 0,
-              "y": 8
+              "y": 14
             },
             "id": 3,
             "options": {
@@ -411,7 +412,7 @@
               "h": 6,
               "w": 5,
               "x": 5,
-              "y": 8
+              "y": 14
             },
             "id": 8,
             "options": {
@@ -479,7 +480,7 @@
               "h": 4,
               "w": 3,
               "x": 0,
-              "y": 14
+              "y": 20
             },
             "id": 4,
             "options": {
@@ -553,7 +554,7 @@
               "h": 4,
               "w": 3,
               "x": 3,
-              "y": 14
+              "y": 20
             },
             "id": 5,
             "options": {
@@ -607,7 +608,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 2
+          "y": 8
         },
         "id": 10,
         "panels": [],
@@ -620,7 +621,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 3
+          "y": 9
         },
         "id": 9,
         "panels": [
@@ -758,7 +759,7 @@
               "h": 6,
               "w": 16,
               "x": 0,
-              "y": 10
+              "y": 16
             },
             "id": 1,
             "options": {
@@ -866,7 +867,7 @@
               "h": 6,
               "w": 16,
               "x": 0,
-              "y": 16
+              "y": 22
             },
             "id": 2,
             "options": {
@@ -969,7 +970,7 @@
     "timezone": "browser",
     "title": "default",
     "uid": "fec14y22vtjpcb",
-    "version": 70,
+    "version": 71,
     "weekStart": ""
   }
 }
