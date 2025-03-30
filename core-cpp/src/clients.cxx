@@ -1304,21 +1304,38 @@ std::string ClientPrivateGateio::sign_str(std::string method, std::string t,
 
 ClientPublicMexc::ClientPublicMexc(std::string kind)
     : ClientPublic("mexc", kind) {
-    template_tickers_insert_sql = R"(
-        INSERT INTO {}
-        SELECT
-            obj_raw,
-            JSONExtractString(obj_raw, 'symbol') s,
-            JSONExtractFloat(obj_raw, 'fundingRate') funding_rate,
-            JSONExtractFloat(obj_raw, 'timestamp') ts,
-            'mexc' ex,
-            'fut' k,
-            NOW() ts_write
-        FROM (
-            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
-            FROM url('https://contract.mexc.com/api/v1/contract/ticker', 'JSONAsString')
-        );
-    )";
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSONExtractString(obj_raw, 'symbol') s,
+                JSONExtractFloat(obj_raw, 'fundingRate') funding_rate,
+                JSONExtractFloat(obj_raw, 'timestamp') ts,
+                'mexc' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://contract.mexc.com/api/v1/contract/ticker', 'JSONAsString')
+            );
+        )";
+    } else if (kind == "spot") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                json obj_raw,
+                JSONExtractString(obj_raw, 'symbol') s,
+                0 funding_rate,
+                0 ts,
+                'mexc' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM url('https://api.mexc.com/api/v3/ticker/24hr', 'JSONAsString');
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
 }
 
 void ClientPublicMexc::init_idle() {
