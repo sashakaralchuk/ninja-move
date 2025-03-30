@@ -61,6 +61,7 @@ void upload_fundings_curr() {
     ClientPublicBybit client_bybit_fut("fut");
     ClientPublicBybit client_bybit_spot("spot");
     ClientPublicGateio client_gateio_fut("fut");
+    ClientPublicGateio client_gateio_spot("spot");
     ClientPublicMexc client_mexc_fut("fut");
     ClientPublicMexc client_mexc_spot("spot");
     ClientPublicArkm client_arkm("fut");
@@ -134,6 +135,7 @@ void upload_fundings_curr() {
             exec_insert(client_bybit_fut, "tickers");
             exec_insert(client_bybit_spot, "tickers");
             exec_insert(client_gateio_fut, "tickers");
+            exec_insert(client_gateio_spot, "tickers");
             exec_insert(client_mexc_fut, "tickers");
             exec_insert(client_mexc_spot, "tickers");
             exec_insert(client_arkm);

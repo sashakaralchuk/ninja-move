@@ -375,18 +375,35 @@ std::string ClientPublicGateio::QUERY_INSERT_CONTRACTS = R"(
 
 ClientPublicGateio::ClientPublicGateio(std::string kind)
     : ClientPublic("gateio", kind) {
-    template_tickers_insert_sql = R"(
-        INSERT INTO {}
-        SELECT
-            json obj_raw,
-            JSONExtractString(obj_raw, 'contract') s,
-            JSONExtractFloat(obj_raw, 'funding_rate') funding_rate,
-            NOW() ts,
-            'gateio' ex,
-            'fut' k,
-            NOW() ts_write
-        FROM url('https://fx-api.gateio.ws/api/v4/futures/usdt/tickers', 'JSONAsString');
-    )";
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                json obj_raw,
+                JSONExtractString(obj_raw, 'contract') s,
+                JSONExtractFloat(obj_raw, 'funding_rate') funding_rate,
+                NOW() ts,
+                'gateio' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM url('https://fx-api.gateio.ws/api/v4/futures/usdt/tickers', 'JSONAsString');
+        )";
+    } else if (kind == "spot") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                json obj_raw,
+                JSONExtractString(obj_raw, 'currency_pair') s,
+                0 funding_rate,
+                0 ts,
+                'gateio' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM url('https://api.gateio.ws/api/v4/spot/tickers', 'JSONAsString');
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
 }
 
 void ClientPublicGateio::init_idle() {
