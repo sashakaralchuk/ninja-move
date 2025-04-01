@@ -38,6 +38,7 @@ services:
     - ./.var/data_clickhouse:/var/lib/clickhouse/
     - ./.var/log_server_clickhouse:/var/log/clickhouse-server/
     - ./.var/tmp_clickhouse:/tmp
+    - ./core-cpp/dump_ex_k_to_ccid_v2.sql:/dumps/dump_ex_k_to_ccid_v2.sql
     mem_limit: 16gb
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.16.2

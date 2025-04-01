@@ -1,4 +1,5 @@
 import argparse
+import datetime as dt
 import json
 import logging
 import time
@@ -226,7 +227,7 @@ def markets_select_curr_exchanges(
     return out
 
 
-def match_ex_tokens_with_ccid(  # noqa: PLR0912
+def match_ex_tokens_with_ccid(  # noqa: PLR0912, PLR0915
     ex: typing.Optional[str], k: typing.Optional[str]
 ) -> typing.NoReturn:
     if ex is None:
@@ -234,15 +235,27 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912
     clickhouse_client = clickhouse_connect.get_client(
         dsn="clickhousedb://127.0.0.1:18123/default"
     )
-    if ex == "bybit":
+    if ex in ("bybit", "binance", "mexc", "gateio"):
         if k is None:
             raise ValueError("k is mandatory")
+        last_price_path = None
+        match ex:
+            case "bybit":
+                last_price_path = "$.bid1Price"
+            case "binance":
+                last_price_path = "$.bidPrice"
+            case "mexc":
+                last_price_path = "$.lastPrice"
+            case "gateio":
+                last_price_path = "$.last"
+            case _:
+                raise Exception(f"Unknown {ex=}")
         symbols_in_tickers = clickhouse_client.query(
             f"""
             SELECT s, last_price
             FROM (
                 SELECT *,
-                    toFloat64(JSON_VALUE(obj_raw, '$.bid1Price')) last_price,
+                    toFloat64(JSON_VALUE(obj_raw, {last_price_path!r})) last_price,
                     RANK() OVER (ORDER BY ts_write DESC) AS rank_out
                 FROM default.tickers
                 WHERE ex = {ex!r} AND k = {k!r}
@@ -260,8 +273,6 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912
                 last_price_path = "$.mark_price"
             case "bingx":
                 last_price_path = "$.indexPrice"
-            case "mexc":
-                last_price_path = "$.lastPrice"
             case _:
                 raise Exception(f"Unknown {ex=}")
         symbols_in_tickers = clickhouse_client.query(
@@ -275,7 +286,7 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912
                         toFloat64(JSON_VALUE(obj_raw, {last_price_path!r})) last_price,
                         ts_write
                     FROM default.fundings_curr_2025_01_12
-                    WHERE ex = {ex!r} AND k = 'fut'
+                    WHERE ex = {ex!r} AND k = {k!r}
                 )
             )
             WHERE rank_out = 1
@@ -294,8 +305,15 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912
             f"https://www.coingecko.com/en/search_v2?"
             f"query={coin_in_ticker}&vs_currency=usd"
         )
-        res_search = requests.get(url_search)
-        res_search.raise_for_status()
+        for _ in range(5):
+            res_search = requests.get(url_search)
+            if res_search.status_code == 429:  # noqa: PLR2004
+                secs = 10
+                print(f"Rate limit exceeded, sleeping for {secs} seconds...")
+                time.sleep(secs)
+                continue
+            res_search.raise_for_status()
+            break
         match_list = []
         for coin_obj in res_search.json()["coins"]:
             if coin_obj["symbol"] == coin_in_ticker:
@@ -306,7 +324,11 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912
                 except (ValueError, ZeroDivisionError):
                     pass
         if len(match_list) == 1:
-            print(ex, k, symbol_in_ticker, match_list[0][0], "USDT", match_list[0][1])
+            date_str = dt.date.today().isoformat()
+            print(
+                f"({ex!r}, {k!r}, {symbol_in_ticker!r}, {match_list[0][0]!r}, "
+                f"'USDT', {match_list[0][1]!r}, 'added-by-jupy-busybox-on-{date_str}'),"
+            )
         else:
             non_matched.append((symbol_in_ticker, match_list))
     for symbol_in_ticker, match_list in non_matched:
