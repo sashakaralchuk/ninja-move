@@ -1,4 +1,1090 @@
 {
-  "message": "Unauthorized",
-  "traceID": ""
+  "meta": {
+    "type": "db",
+    "canSave": false,
+    "canEdit": false,
+    "canAdmin": false,
+    "canStar": true,
+    "canDelete": false,
+    "slug": "default",
+    "url": "/d/fec14y22vtjpcb/default",
+    "expires": "0001-01-01T00:00:00Z",
+    "created": "2025-03-30T09:45:17Z",
+    "updated": "2025-04-02T07:21:24Z",
+    "updatedBy": "admin1",
+    "createdBy": "admin1",
+    "version": 9,
+    "hasAcl": false,
+    "isFolder": false,
+    "folderId": 0,
+    "folderUid": "",
+    "folderTitle": "General",
+    "folderUrl": "",
+    "provisioned": false,
+    "provisionedExternalId": "",
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": false,
+        "canEdit": false,
+        "canDelete": false
+      },
+      "organization": {
+        "canAdd": false,
+        "canEdit": false,
+        "canDelete": false
+      }
+    }
+  },
+  "dashboard": {
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 2,
+    "links": [],
+    "panels": [
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 12,
+        "panels": [],
+        "title": "debug-must-be-zero",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 106
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "symbol"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 98
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "token_1"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 90
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 5,
+          "x": 0,
+          "y": 1
+        },
+        "id": 6,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true,
+          "sortBy": []
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.s) token_1,\n  t2.ccid\nFROM (\n  SELECT DISTINCT ex, s, k\n  FROM (\n    SELECT ex, s, k\n    FROM default.fundings_curr_2025_01_12\n    UNION ALL\n    SELECT ex, s, k\n    FROM default.tickers\n  )\n  WHERE (k = 'fut' AND ex != 'binance') OR (k = 'spot' AND ex = 'bybit')\n) t1\nLEFT JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, s",
+            "rawQuery": "/* grafana dashboard=default, user=1 */\nSELECT\n  t1.*,\n  conv_symbol_to_token_v2(t1.ex, t1.s) token_1,\n  t2.ccid\nFROM (\n  SELECT DISTINCT ex, s, k\n  FROM (\n    SELECT ex, s, k\n    FROM default.fundings_curr_2025_01_12\n    UNION ALL\n    SELECT ex, s, k\n    FROM default.tickers\n  )\n  WHERE k = 'fut' AND ex != 'binance'\n) t1\nLEFT JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid = ''\n  AND startsWith(notes, 'not-on-ui-on-') = 0\n  AND startsWith(notes, 'delisted-on-') = 0\n  AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\nORDER BY ex, s",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "non-matched-tokens-with-ccid",
+        "type": "table"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 89
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "base"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 80
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 5,
+          "x": 5,
+          "y": 1
+        },
+        "id": 7,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true,
+          "sortBy": []
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT ex, base, count() AS amount\nFROM default.ex_k_to_ccid\nWHERE k = 'fut'\nGROUP BY ex, base\nHAVING amount != 1",
+            "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT ex, base, count() AS amount\nFROM default.ex_k_to_ccid\nWHERE k = 'fut'\nGROUP BY ex, base\nHAVING amount != 1",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "duplicates-ccid",
+        "type": "table"
+      },
+      {
+        "collapsed": true,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 7
+        },
+        "id": 11,
+        "panels": [
+          {
+            "datasource": {
+              "type": "vertamedia-clickhouse-datasource",
+              "uid": "P17DD60A6E550C391"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "inspect": false
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green"
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 6,
+              "w": 5,
+              "x": 0,
+              "y": 14
+            },
+            "id": 3,
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true
+            },
+            "pluginVersion": "11.5.0",
+            "targets": [
+              {
+                "adHocFilters": [],
+                "adHocValuesQuery": "",
+                "add_metadata": true,
+                "contextWindowSize": "10",
+                "editorMode": "builder",
+                "extrapolate": true,
+                "format": "table",
+                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+                "interval": "",
+                "intervalFactor": 1,
+                "query": "SELECT\n    ex,\n    max(ts_write) AS last_write\nFROM default.fundings_curr_2025_01_12\nWHERE toDate(ts_write) = today()\nGROUP BY ex\nORDER BY last_write ASC",
+                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT\n    ex,\n    max(ts_write) AS last_write\nFROM default.fundings_curr_2025_01_12\nWHERE toDate(ts_write) = today()\nGROUP BY ex\nORDER BY last_write ASC",
+                "refId": "A",
+                "round": "0s",
+                "skip_comments": true,
+                "useWindowFuncForMacros": true
+              }
+            ],
+            "title": "last-write-by-ex",
+            "type": "table"
+          },
+          {
+            "datasource": {
+              "type": "vertamedia-clickhouse-datasource",
+              "uid": "P17DD60A6E550C391"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "inspect": false
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green"
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 6,
+              "w": 5,
+              "x": 5,
+              "y": 14
+            },
+            "id": 8,
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true
+            },
+            "pluginVersion": "11.5.0",
+            "targets": [
+              {
+                "adHocFilters": [],
+                "adHocValuesQuery": "",
+                "add_metadata": true,
+                "contextWindowSize": "10",
+                "editorMode": "builder",
+                "extrapolate": true,
+                "format": "table",
+                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+                "interval": "",
+                "intervalFactor": 1,
+                "query": "SELECT ex, base, notes\nFROM default.ex_k_to_ccid\nWHERE k = 'fut' AND startsWith(notes, 'not-on-ui-on-')",
+                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT ex, base, notes\nFROM default.ex_k_to_ccid\nWHERE k = 'fut' AND startsWith(notes, 'not-on-ui-on-')",
+                "refId": "A",
+                "round": "0s",
+                "skip_comments": true,
+                "useWindowFuncForMacros": true
+              }
+            ],
+            "title": "non-on-ui-ccid",
+            "type": "table"
+          },
+          {
+            "datasource": {
+              "uid": "P17DD60A6E550C391"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green"
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 4,
+              "w": 3,
+              "x": 0,
+              "y": 32
+            },
+            "id": 4,
+            "options": {
+              "colorMode": "value",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            },
+            "pluginVersion": "11.5.0",
+            "targets": [
+              {
+                "adHocFilters": [],
+                "adHocValuesQuery": "",
+                "add_metadata": true,
+                "contextWindowSize": "10",
+                "editorMode": "builder",
+                "extrapolate": true,
+                "format": "table",
+                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+                "interval": "",
+                "intervalFactor": 1,
+                "query": "SELECT count()\nFROM system.parts\nWHERE (database = 'default') AND (`table` = 'fundings_curr_2025_01_12')",
+                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT count()\nFROM system.parts\nWHERE (database = 'default') AND (`table` = 'fundings_curr_2025_01_12')",
+                "refId": "A",
+                "round": "0s",
+                "skip_comments": true,
+                "useWindowFuncForMacros": true
+              }
+            ],
+            "title": "parts-amount",
+            "type": "stat"
+          },
+          {
+            "datasource": {
+              "type": "vertamedia-clickhouse-datasource",
+              "uid": "P17DD60A6E550C391"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green"
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 4,
+              "w": 3,
+              "x": 3,
+              "y": 32
+            },
+            "id": 5,
+            "options": {
+              "colorMode": "value",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            },
+            "pluginVersion": "11.5.0",
+            "targets": [
+              {
+                "adHocFilters": [],
+                "adHocValuesQuery": "",
+                "add_metadata": true,
+                "contextWindowSize": "10",
+                "editorMode": "builder",
+                "extrapolate": true,
+                "format": "table",
+                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+                "interval": "",
+                "intervalFactor": 1,
+                "query": "SELECT count()\nFROM (\n  SELECT partition\n  FROM system.parts\n  WHERE (database = 'default') AND (`table` = 'fundings_curr_2025_01_12')\n  GROUP BY partition\n)",
+                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT count()\nFROM (\n  SELECT partition\n  FROM system.parts\n  WHERE (database = 'default') AND (`table` = 'fundings_curr_2025_01_12')\n  GROUP BY partition\n)",
+                "refId": "A",
+                "round": "0s",
+                "skip_comments": true,
+                "useWindowFuncForMacros": true
+              }
+            ],
+            "title": "partitions-amount",
+            "type": "stat"
+          }
+        ],
+        "title": "debug-rest",
+        "type": "row"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 8
+        },
+        "id": 10,
+        "panels": [],
+        "title": "spreads-fut-perp-vs-spot",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex_link_fut"
+              },
+              "properties": [
+                {
+                  "id": "links",
+                  "value": [
+                    {
+                      "targetBlank": true,
+                      "title": "ex_link_fut_1",
+                      "url": "${__value.raw}"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex_link_spot"
+              },
+              "properties": [
+                {
+                  "id": "links",
+                  "value": [
+                    {
+                      "targetBlank": true,
+                      "title": "ex_link_spot_1",
+                      "url": "${__value.raw}"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 16,
+          "x": 0,
+          "y": 9
+        },
+        "id": 13,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT\n    ccid,\n    truncate((p_bid_fut - p_ask_spot) / p_ask_spot * 100, 2) diff_rel,\n    arrayElement(groupArrayIf(ex_link, k = 'fut'), 1) ex_link_fut,\n    arrayElement(groupArrayIf(ex_link, k = 'spot'), 1) ex_link_spot,\n    groupArrayIf(s, k = 'fut') s_fut,\n    groupArrayIf(s, k = 'spot') s_spot,\n    sum(if(k = 'fut', p_bid_per_1_token, 0)) p_bid_fut,\n    sum(if(k = 'spot', p_ask_per_1_token, 0)) p_ask_spot,\n    groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n    groupArrayIf(ts_write, k = 'spot') ts_write_spot\nFROM (\n    SELECT\n        *,\n        row_number() OVER (PARTITION BY k, ccid ORDER BY p_bid_per_1_token ASC) as rank_lowest_bid,\n        row_number() OVER (PARTITION BY k, ccid ORDER BY p_bid_per_1_token DESC) as rank_highest_ask\n    FROM (\n        SELECT\n            t1.*,\n            t2.ccid,\n            row_number() OVER (PARTITION BY t1.ex, t1.k, t2.ccid ORDER BY t1.ts_write DESC) as rank_last_event\n        FROM (\n            SELECT\n                *,\n                toFloat64(JSON_VALUE(obj_raw, '$.bid1Price')) p_bid_per_1_token,\n                toFloat64OrZero(JSON_VALUE(obj_raw, '$.ask1Price')) p_ask_per_1_token,\n                CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n            FROM default.tickers\n            WHERE ex = 'bybit' AND s NOT LIKE '%-%'\n            UNION ALL\n            SELECT\n                *,\n                toFloat64(JSON_VALUE(obj_raw, '$.bidPrice')) p_bid_per_1_token,\n                toFloat64OrZero(JSON_VALUE(obj_raw, '$.askPrice')) p_ask_per_1_token,\n                CONCAT(if(k = 'fut', 'https://binance.com/en/futures/', 'https://binance.com/en/trade/'), s) ex_link\n            FROM default.tickers\n            WHERE ex = 'binance' AND s NOT LIKE '%\\_%'\n            UNION ALL\n            SELECT\n                *,\n                if (\n                    k = 'fut',\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.bid1')),\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.bidPrice'))\n                ) p_bid_per_1_token,\n                if (\n                    k = 'fut',\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.ask1')),\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.askPrice'))\n                ) p_ask_per_1_token,\n                CONCAT(\n                    if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n                    if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n                ) ex_link\n            FROM default.tickers t1\n            WHERE ex = 'mexc'\n            UNION ALL\n            SELECT\n                *,\n                toFloat64OrZero(JSON_VALUE(obj_raw, '$.highest_bid')) p_bid_per_1_token,\n                toFloat64OrZero(JSON_VALUE(obj_raw, '$.lowest_ask')) p_ask_per_1_token,\n                CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n            FROM default.tickers t1\n            WHERE ex = 'gateio'\n        ) t1\n        LEFT JOIN default.ex_k_to_ccid_v2 t2 USING (ex, k, s)\n        WHERE ts_write >= NOW() - INTERVAL 30 MINUTE\n            AND t2.ccid != ''\n    )\n    WHERE rank_last_event = 1\n)\nWHERE (k = 'spot' AND rank_lowest_bid = 1) OR (k = 'fut' AND rank_highest_ask = 1)\nGROUP BY ccid\nHAVING p_bid_fut != 0 AND p_ask_spot != 0\nORDER BY diff_rel DESC\nLIMIT 20",
+            "rawQuery": "/* grafana dashboard=default, user=1 */\nSELECT\n    ccid,\n    truncate((p_bid_fut - p_ask_spot) / p_ask_spot * 100, 2) diff_rel,\n    arrayElement(groupArrayIf(ex_link, k = 'fut'), 1) ex_link_fut,\n    arrayElement(groupArrayIf(ex_link, k = 'spot'), 1) ex_link_spot,\n    groupArrayIf(s, k = 'fut') s_fut,\n    groupArrayIf(s, k = 'spot') s_spot,\n    sum(if(k = 'fut', p_bid_per_1_token, 0)) p_bid_fut,\n    sum(if(k = 'spot', p_ask_per_1_token, 0)) p_ask_spot,\n    groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n    groupArrayIf(ts_write, k = 'spot') ts_write_spot\nFROM (\n    SELECT\n        *,\n        row_number() OVER (PARTITION BY k, ccid ORDER BY p_bid_per_1_token ASC) as rank_lowest_bid,\n        row_number() OVER (PARTITION BY k, ccid ORDER BY p_bid_per_1_token DESC) as rank_highest_ask\n    FROM (\n        SELECT\n            t1.*,\n            t2.ccid,\n            row_number() OVER (PARTITION BY t1.ex, t1.k, t2.ccid ORDER BY t1.ts_write DESC) as rank_last_event\n        FROM (\n            SELECT\n                *,\n                toFloat64(JSON_VALUE(obj_raw, '$.bid1Price')) p_bid_per_1_token,\n                toFloat64OrZero(JSON_VALUE(obj_raw, '$.ask1Price')) p_ask_per_1_token,\n                CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n            FROM default.tickers\n            WHERE ex = 'bybit' AND s NOT LIKE '%-%'\n            UNION ALL\n            SELECT\n                *,\n                toFloat64(JSON_VALUE(obj_raw, '$.bidPrice')) p_bid_per_1_token,\n                toFloat64OrZero(JSON_VALUE(obj_raw, '$.askPrice')) p_ask_per_1_token,\n                CONCAT(if(k = 'fut', 'https://binance.com/en/futures/', 'https://binance.com/en/trade/'), s) ex_link\n            FROM default.tickers\n            WHERE ex = 'binance' AND s NOT LIKE '%\\_%'\n            UNION ALL\n            SELECT\n                *,\n                if (\n                    k = 'fut',\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.bid1')),\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.bidPrice'))\n                ) p_bid_per_1_token,\n                if (\n                    k = 'fut',\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.ask1')),\n                    toFloat64OrZero(JSON_VALUE(obj_raw, '$.askPrice'))\n                ) p_ask_per_1_token,\n                CONCAT(\n                    if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n                    if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n                ) ex_link\n            FROM default.tickers t1\n            WHERE ex = 'mexc'\n        ) t1\n        LEFT JOIN default.ex_k_to_ccid_v2 t2 USING (ex, k, s)\n        WHERE ts_write >= NOW() - INTERVAL 30 MINUTE\n            AND t2.ccid != ''\n    )\n    WHERE rank_last_event = 1\n)\nWHERE (k = 'spot' AND rank_lowest_bid = 1) OR (k = 'fut' AND rank_highest_ask = 1)\nGROUP BY ccid\nHAVING p_bid_fut != 0 AND p_ask_spot != 0\nORDER BY diff_rel DESC\nLIMIT 20",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "contango-ex-vs-ex",
+        "type": "table"
+      },
+      {
+        "collapsed": true,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 15
+        },
+        "id": 9,
+        "panels": [
+          {
+            "datasource": {
+              "type": "vertamedia-clickhouse-datasource",
+              "uid": "P17DD60A6E550C391"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "inspect": false
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green"
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "token_1"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 79
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "diff_abs_8h"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 92
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "diff_abs_1h"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 91
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "ex_min"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 112
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "ts_min"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 171
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "ts_max"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 161
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "coingecko_coin_id"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 142
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "ex_max"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 114
+                    }
+                  ]
+                }
+              ]
+            },
+            "gridPos": {
+              "h": 6,
+              "w": 16,
+              "x": 0,
+              "y": 16
+            },
+            "id": 1,
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "frameIndex": 2,
+              "showHeader": true,
+              "sortBy": []
+            },
+            "pluginVersion": "11.5.0",
+            "targets": [
+              {
+                "adHocFilters": [],
+                "adHocValuesQuery": "",
+                "add_metadata": true,
+                "contextWindowSize": "10",
+                "datasource": {
+                  "type": "vertamedia-clickhouse-datasource",
+                  "uid": "P17DD60A6E550C391"
+                },
+                "editorMode": "builder",
+                "extrapolate": true,
+                "format": "table",
+                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+                "interval": "",
+                "intervalFactor": 1,
+                "query": "SELECT * EXCEPT (rank_out, _fund_1h_min, _fund_1h_max)\nFROM (\n    SELECT\n        ccid,\n        truncate(_fund_1h_max - _fund_1h_min, 6) diff_abs_1h,\n        truncate(_fund_1h_max * 8 - _fund_1h_min * 8, 6) diff_abs_8h,\n        first_value(ex) OVER w_asc AS ex_min,\n        first_value(ex) OVER w_desc AS ex_max,\n        first_value(ts) OVER w_asc AS ts_min,\n        first_value(ts) OVER w_desc AS ts_max,\n        token_1,\n        first_value(funding_rate_1h) OVER w_asc AS _fund_1h_min,\n        first_value(funding_rate_1h) OVER w_desc AS _fund_1h_max,\n        truncate(_fund_1h_min, 6) fund_1h_min,\n        truncate(_fund_1h_max, 6) fund_1h_max,\n        truncate(_fund_1h_min * 8, 6) fund_8h_min,\n        truncate(_fund_1h_max * 8, 6) fund_8h_max,\n        row_number() OVER (PARTITION BY ccid) rank_out\n    FROM (\n        SELECT * EXCEPT (rank)\n        FROM (\n            SELECT\n                t1.ex,\n                conv_symbol_to_token_v2(t1.ex, s) token_1,\n                t1.funding_rate / t1.funding_hours funding_rate_1h,\n                row_number() OVER (PARTITION BY ex, s ORDER BY ts DESC) AS rank,\n                t2.ccid,\n                toDateTime(t1.ts / 1000) ts\n            FROM (\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, toUInt64(t2.funding_interval / 60) funding_hours\n                    FROM (\n                        SELECT *\n                        FROM default.tickers\n                        WHERE ex = 'bybit' AND k = 'fut'\n                    ) t1\n                    INNER JOIN (\n                        SELECT s, funding_interval\n                        FROM default.bybit_instruments_info\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.s = t2.s\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, funding_hours\n                    FROM (\n                        SELECT *\n                        FROM default.tickers\n                        WHERE ex = 'gateio' AND k = 'fut'\n                    ) t1\n                    INNER JOIN (\n                        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours\n                        FROM default.gateio_contracts\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.s = t2.s\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'hyperliquid'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'arkm'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, funding_interval funding_hours\n                    FROM (\n                        SELECT *\n                        FROM default.fundings_curr_2025_01_12\n                        WHERE ex = 'paradex'\n                    ) t1\n                    INNER JOIN (\n                        SELECT s, funding_interval\n                        FROM default.paradex_markets\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.s = t2.s\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate / 10e17 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'polynomial-fi'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.tickers\n                    WHERE ex = 'apex-pro'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.tickers\n                    WHERE ex = 'apex-omni'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'aevo'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bitunix'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'coinex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bingx'\n                )\n            ) t1\n            INNER JOIN (\n                SELECT *\n                FROM default.ex_k_to_ccid\n                WHERE k = 'fut'\n            ) t2\n                ON t1.ex = t2.ex AND token_1 = t2.base\n            WHERE t2.ccid != ''\n                AND startsWith(notes, 'not-on-ui-on-') = 0\n                AND startsWith(notes, 'delisted-on-') = 0\n                AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\n                AND ts_write >= NOW() - INTERVAL 30 MINUTE\n        )\n        WHERE rank = 1\n    )\n    WINDOW w_asc AS (PARTITION BY ccid ORDER BY funding_rate_1h ASC),\n        w_desc AS (PARTITION BY ccid ORDER BY funding_rate_1h DESC)\n)\nWHERE rank_out = 1\nORDER BY abs(diff_abs_1h) DESC\nLIMIT 10",
+                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT * EXCEPT (rank_out, _fund_1h_min, _fund_1h_max)\nFROM (\n    SELECT\n        ccid,\n        truncate(_fund_1h_max - _fund_1h_min, 6) diff_abs_1h,\n        truncate(_fund_1h_max * 8 - _fund_1h_min * 8, 6) diff_abs_8h,\n        first_value(ex) OVER w_asc AS ex_min,\n        first_value(ex) OVER w_desc AS ex_max,\n        first_value(ts) OVER w_asc AS ts_min,\n        first_value(ts) OVER w_desc AS ts_max,\n        token_1,\n        first_value(funding_rate_1h) OVER w_asc AS _fund_1h_min,\n        first_value(funding_rate_1h) OVER w_desc AS _fund_1h_max,\n        truncate(_fund_1h_min, 6) fund_1h_min,\n        truncate(_fund_1h_max, 6) fund_1h_max,\n        truncate(_fund_1h_min * 8, 6) fund_8h_min,\n        truncate(_fund_1h_max * 8, 6) fund_8h_max,\n        row_number() OVER (PARTITION BY ccid) rank_out\n    FROM (\n        SELECT * EXCEPT (rank)\n        FROM (\n            SELECT\n                t1.ex,\n                conv_symbol_to_token_v2(t1.ex, s) token_1,\n                t1.funding_rate / t1.funding_hours funding_rate_1h,\n                row_number() OVER (PARTITION BY ex, s ORDER BY ts DESC) AS rank,\n                t2.ccid,\n                toDateTime(t1.ts / 1000) ts\n            FROM (\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, toUInt64(t2.fundingInterval / 60) funding_hours\n                    FROM (\n                        SELECT *\n                        FROM default.tickers\n                        WHERE ex = 'bybit' AND k = 'fut'\n                    ) t1\n                    INNER JOIN (\n                        SELECT *\n                        FROM default.t_bybit_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.s = t2.s\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, funding_hours\n                    FROM (\n                        SELECT *\n                        FROM default.tickers\n                        WHERE ex = 'gateio' AND k = 'fut'\n                    ) t1\n                    INNER JOIN (\n                        SELECT s, toUInt64(JSONExtract(contract_raw, 'funding_interval', 'UInt64') / 60 / 60) funding_hours\n                        FROM default.t_gateio_2025_01_02\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.s = t2.s\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'hyperliquid'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'arkm'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, fundingInterval funding_hours\n                    FROM default.fundings_curr_2025_01_12 t1\n                    INNER JOIN (\n                        SELECT s, fundingInterval\n                        FROM default.t_paradex_2025_01_21\n                        WHERE k = 'fut'\n                    ) t2\n                        ON t1.s = t2.s\n                    WHERE ex = 'paradex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate / 10e17 funding_rate, ts * 1000 ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'polynomial-fi'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.tickers\n                    WHERE ex = 'apex-pro'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.tickers\n                    WHERE ex = 'apex-omni'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 1 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'aevo'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bitunix'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'coinex'\n                )\n                UNION ALL\n                SELECT *\n                FROM (\n                    SELECT s, funding_rate * 100 funding_rate, ts * 1000 ts, ex, k, ts_write, 8 funding_hours\n                    FROM default.fundings_curr_2025_01_12\n                    WHERE ex = 'bingx'\n                )\n            ) t1\n            INNER JOIN (\n                SELECT *\n                FROM default.ex_k_to_ccid\n                WHERE k = 'fut'\n            ) t2\n                ON t1.ex = t2.ex AND token_1 = t2.base\n            WHERE t2.ccid != ''\n                AND startsWith(notes, 'not-on-ui-on-') = 0\n                AND startsWith(notes, 'delisted-on-') = 0\n                AND startsWith(notes, 'index-fut-custom-for-ex-') = 0\n                AND ts_write >= NOW() - INTERVAL 30 MINUTE\n        )\n        WHERE rank = 1\n    )\n    WINDOW w_asc AS (PARTITION BY ccid ORDER BY funding_rate_1h ASC),\n        w_desc AS (PARTITION BY ccid ORDER BY funding_rate_1h DESC)\n)\nWHERE rank_out = 1\nORDER BY abs(diff_abs_1h) DESC\nLIMIT 10",
+                "refId": "A",
+                "round": "0s",
+                "skip_comments": true,
+                "useWindowFuncForMacros": true
+              }
+            ],
+            "title": "fundings-curr",
+            "type": "table"
+          },
+          {
+            "datasource": {
+              "type": "vertamedia-clickhouse-datasource",
+              "uid": "P17DD60A6E550C391"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 0,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green"
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 6,
+              "w": 16,
+              "x": 0,
+              "y": 22
+            },
+            "id": 2,
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            },
+            "pluginVersion": "11.5.0",
+            "targets": [
+              {
+                "adHocFilters": [],
+                "adHocValuesQuery": "",
+                "add_metadata": true,
+                "contextWindowSize": "10",
+                "datasource": {
+                  "type": "vertamedia-clickhouse-datasource",
+                  "uid": "P17DD60A6E550C391"
+                },
+                "editorMode": "builder",
+                "extrapolate": true,
+                "format": "time_series",
+                "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+                "interval": "",
+                "intervalFactor": 1,
+                "query": "SELECT\n  toDateTime(t1.ts_write) ts_write,\n  conv_symbol_to_token_v2(ex, s) token_1,\n  t1.funding_rate\nFROM (\n  SELECT ex, k, ts_write, s, funding_rate\n  FROM default.fundings_curr_2025_01_12\n  UNION ALL\n  SELECT ex, k, ts_write, s, funding_rate\n  FROM default.tickers\n) t1\nINNER JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid != ''\n  AND ts_write BETWEEN toDateTime($from) AND toDateTime($to)\n  AND t1.k = 'fut'\n  AND t1.ex = '$var_fundings_ex'\n  AND t2.ccid = '$var_fundings_ccid'\nORDER BY ts_write",
+                "rawQuery": "/* grafana dashboard=fundings, user=1 */\nSELECT\n  toDateTime(t1.ts_write) ts_write,\n  conv_symbol_to_token_v2(ex, s) token_1,\n  t1.funding_rate\nFROM (\n  SELECT ex, k, ts_write, s, funding_rate\n  FROM default.fundings_curr_2025_01_12\n  UNION ALL\n  SELECT ex, k, ts_write, s, funding_rate\n  FROM default.tickers\n) t1\nINNER JOIN (\n  SELECT *\n  FROM default.ex_k_to_ccid\n  WHERE k = 'fut'\n) t2\n  ON t1.ex = t2.ex AND token_1 = t2.base\nWHERE t2.ccid != ''\n  AND ts_write BETWEEN toDateTime(1742643252) AND toDateTime(1742664852)\n  AND t1.k = 'fut'\n  AND t1.ex = 'bingx'\n  AND t2.ccid = '$var_ccid'\nORDER BY ts_write",
+                "refId": "A",
+                "round": "0s",
+                "skip_comments": true,
+                "useWindowFuncForMacros": true
+              }
+            ],
+            "title": "funding-raw",
+            "type": "timeseries"
+          }
+        ],
+        "title": "fundings",
+        "type": "row"
+      }
+    ],
+    "preload": false,
+    "refresh": "30s",
+    "schemaVersion": 40,
+    "tags": [],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "text": "bingx",
+            "value": "bingx"
+          },
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "P17DD60A6E550C391"
+          },
+          "definition": "SELECT DISTINCT ex\nFROM (\n  SELECT ex\n  FROM default.tickers\n  UNION ALL\n  SELECT ex\n  FROM default.fundings_curr_2025_01_12\n)",
+          "label": "var_fundings_ex",
+          "name": "var_fundings_ex",
+          "options": [],
+          "query": "SELECT DISTINCT ex\nFROM (\n  SELECT ex\n  FROM default.tickers\n  UNION ALL\n  SELECT ex\n  FROM default.fundings_curr_2025_01_12\n)",
+          "refresh": 1,
+          "regex": "",
+          "type": "query"
+        },
+        {
+          "current": {
+            "text": "melania-meme",
+            "value": "melania-meme"
+          },
+          "datasource": {
+            "type": "vertamedia-clickhouse-datasource",
+            "uid": "P17DD60A6E550C391"
+          },
+          "definition": "SELECT DISTINCT ccid\nFROM default.ex_k_to_ccid\nWHERE ccid != ''",
+          "description": "",
+          "label": "var_fundings_ccid",
+          "name": "var_fundings_ccid",
+          "options": [],
+          "query": "SELECT DISTINCT ccid\nFROM default.ex_k_to_ccid\nWHERE ccid != ''",
+          "refresh": 1,
+          "regex": "",
+          "sort": 1,
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "default",
+    "uid": "fec14y22vtjpcb",
+    "version": 9,
+    "weekStart": ""
+  }
 }
