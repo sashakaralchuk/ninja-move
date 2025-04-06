@@ -235,7 +235,7 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912, PLR0915
     clickhouse_client = clickhouse_connect.get_client(
         dsn="clickhousedb://127.0.0.1:18123/default"
     )
-    if ex in ("bybit", "binance", "mexc", "gateio"):
+    if ex in ("bybit", "binance", "mexc", "gateio", "bitget", "kucoin"):
         if k is None:
             raise ValueError("k is mandatory")
         last_price_path = None
@@ -248,6 +248,15 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912, PLR0915
                 last_price_path = "$.lastPrice"
             case "gateio":
                 last_price_path = "$.last"
+            case "bitget":
+                last_price_path = "$.lastPr"
+            case "kucoin":
+                if k == "fut":
+                    last_price_path = "$.price"
+                elif k == "spot":
+                    last_price_path = "$.buy"
+                else:
+                    raise Exception(f"Unknown {k=}")
             case _:
                 raise Exception(f"Unknown {ex=}")
         symbols_in_tickers = clickhouse_client.query(
@@ -297,7 +306,8 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912, PLR0915
     non_matched = []
     for symbol_in_ticker, price_in_ticker in symbols_in_tickers:
         coin_in_ticker = (
-            symbol_in_ticker.replace("_USDT", "")
+            symbol_in_ticker.replace("USDTM", "")
+            .replace("_USDT", "")
             .replace("-USDT", "")
             .replace("USDT", "")
         )
@@ -327,7 +337,8 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912, PLR0915
             date_str = dt.date.today().isoformat()
             print(
                 f"({ex!r}, {k!r}, {symbol_in_ticker!r}, {match_list[0][0]!r}, "
-                f"'USDT', {match_list[0][1]!r}, 'added-by-jupy-busybox-on-{date_str}'),"
+                f"'USDT', {match_list[0][1]!r}, 0, "
+                f"'added-by-jupy-busybox-on-{date_str}'),"
             )
         else:
             non_matched.append((symbol_in_ticker, match_list))
