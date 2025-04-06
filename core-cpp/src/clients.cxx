@@ -3680,6 +3680,221 @@ void ClientPublicBinance::handle_onmessage(const std::string& msg) {
     throw std::runtime_error("not-implemented");
 }
 
+ClientPublicBitget::ClientPublicBitget(std::string kind)
+    : ClientPublic("bitget", kind) {
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSON_VALUE(obj_raw, '$.symbol') s,
+                0 funding_rate,
+                0 ts,
+                'bitget' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://api.bitget.com/api/v2/mix/market/tickers?productType=COIN-FUTURES', 'JSONAsString')
+                UNION ALL
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES', 'JSONAsString')
+                UNION ALL
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDC-FUTURES', 'JSONAsString')
+            );
+        )";
+    } else if (kind == "spot") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSON_VALUE(obj_raw, '$.symbol') s,
+                0 funding_rate,
+                0 ts,
+                'bitget' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://api.bitget.com/api/v2/spot/market/tickers', 'JSONAsString')
+            );
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
+}
+
+void ClientPublicBitget::init_idle() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitget::subscribe_to_trades(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitget::subscribe_to_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitget::unsubscribe_from_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitget::ping() { throw std::runtime_error("not-implemented"); }
+
+Ticker ClientPublicBitget::fetch_ticker(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+std::vector<Ticker> ClientPublicBitget::fetch_tickers() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitget::handle_onmessage(const std::string& msg) {
+    throw std::runtime_error("not-implemented");
+}
+
+ClientPublicOkx::ClientPublicOkx(std::string kind) : ClientPublic("okx", kind) {
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSON_VALUE(obj_raw, '$.instId') s,
+                0 funding_rate,
+                0 ts,
+                'okx' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://www.okx.com/api/v5/market/tickers?instType=FUTURES', 'JSONAsString')
+                UNION ALL
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://www.okx.com/api/v5/market/tickers?instType=SWAP', 'JSONAsString')
+            );
+        )";
+    } else if (kind == "spot") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSON_VALUE(obj_raw, '$.instId') s,
+                0 funding_rate,
+                0 ts,
+                'okx' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://www.okx.com/api/v5/market/tickers?instType=SPOT', 'JSONAsString')
+            );
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
+}
+
+void ClientPublicOkx::init_idle() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicOkx::subscribe_to_trades(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicOkx::subscribe_to_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicOkx::unsubscribe_from_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicOkx::ping() { throw std::runtime_error("not-implemented"); }
+
+Ticker ClientPublicOkx::fetch_ticker(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+std::vector<Ticker> ClientPublicOkx::fetch_tickers() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicOkx::handle_onmessage(const std::string& msg) {
+    throw std::runtime_error("not-implemented");
+}
+
+ClientPublicKucoin::ClientPublicKucoin(std::string kind)
+    : ClientPublic("kucoin", kind) {
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSON_VALUE(obj_raw, '$.symbol') s,
+                0 funding_rate,
+                0 ts,
+                'kucoin' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://api-futures.kucoin.com/api/v1/allTickers', 'JSONAsString')
+            );
+        )";
+    } else if (kind == "spot") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSON_VALUE(obj_raw, '$.symbol') s,
+                0 funding_rate,
+                0 ts,
+                'kucoin' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'ticker')) obj_raw
+                FROM url('https://api.kucoin.com/api/v1/market/allTickers', 'JSONAsString')
+            );
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
+}
+
+void ClientPublicKucoin::init_idle() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicKucoin::subscribe_to_trades(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicKucoin::subscribe_to_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicKucoin::unsubscribe_from_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicKucoin::ping() { throw std::runtime_error("not-implemented"); }
+
+Ticker ClientPublicKucoin::fetch_ticker(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+std::vector<Ticker> ClientPublicKucoin::fetch_tickers() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicKucoin::handle_onmessage(const std::string& msg) {
+    throw std::runtime_error("not-implemented");
+}
+
 const std::string TELEGRAM_NOTIFY_PRETTY_TEMPLATE = R"({{
     "message": "{}",
     "action": "{}",

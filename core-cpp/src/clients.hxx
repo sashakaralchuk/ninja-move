@@ -483,6 +483,54 @@ class ClientPublicBinance : public ClientPublic {
     void handle_onmessage(const std::string& msg);
 };
 
+class ClientPublicBitget : public ClientPublic {
+   public:
+    ClientPublicBitget(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
+class ClientPublicOkx : public ClientPublic {
+   public:
+    ClientPublicOkx(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
+class ClientPublicKucoin : public ClientPublic {
+   public:
+    ClientPublicKucoin(std::string kind);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
 class TelegramBotPort {
    public:
     TelegramBotPort(std::string token_, std::string chat_id_);

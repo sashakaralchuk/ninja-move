@@ -64,6 +64,12 @@ void upload_fundings_curr() {
     ClientPublicGateio client_gateio_spot("spot");
     ClientPublicMexc client_mexc_fut("fut");
     ClientPublicMexc client_mexc_spot("spot");
+    ClientPublicBitget client_bitget_fut("fut");
+    ClientPublicBitget client_bitget_spot("spot");
+    ClientPublicOkx client_okx_fut("fut");
+    ClientPublicOkx client_okx_spot("spot");
+    ClientPublicKucoin client_kucoin_fut("fut");
+    ClientPublicKucoin client_kucoin_spot("spot");
     ClientPublicArkm client_arkm("fut");
     ClientPublicParadex client_paradex("fut");
     ClientPublicPolynomialFi client_polynomial_fi("fut");
@@ -138,6 +144,12 @@ void upload_fundings_curr() {
             exec_insert(client_gateio_spot, "tickers");
             exec_insert(client_mexc_fut, "tickers");
             exec_insert(client_mexc_spot, "tickers");
+            exec_insert(client_bitget_fut, "tickers");
+            exec_insert(client_bitget_spot, "tickers");
+            exec_insert(client_okx_fut, "tickers");
+            exec_insert(client_okx_spot, "tickers");
+            exec_insert(client_kucoin_fut, "tickers");
+            exec_insert(client_kucoin_spot, "tickers");
             exec_insert(client_arkm);
             exec_insert(client_paradex);
             exec_insert(client_polynomial_fi);
