@@ -103,6 +103,7 @@
         "hash_set": "cpp",
         "format": "cpp",
         "execution": "cpp",
-        "future": "cpp"
+        "future": "cpp",
+        "*.ipp": "cpp"
     }
 }
