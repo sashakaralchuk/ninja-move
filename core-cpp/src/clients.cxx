@@ -3133,7 +3133,7 @@ std::string ClientPrivateHtx::sign_str(std::string qs0, std::string payload0) {
 
 ClientPublicHyperliquid::ClientPublicHyperliquid(std::string kind_) {
     ex = "hyperliquid";
-    kind = kind_;
+    k = kind_;
 }
 
 std::vector<FundingRes> ClientPublicHyperliquid::fetch_fundings_sync() {
@@ -3155,7 +3155,7 @@ std::vector<FundingRes> ClientPublicHyperliquid::fetch_fundings_sync() {
             .funding_rate = stod((std::string)assert_ctx_obj["funding"]),
             .ts = ts,
             .ex = ex,
-            .k = kind,
+            .k = k,
         });
     }
     return fundings_vec;
@@ -3420,6 +3420,8 @@ std::vector<TickerRes> ClientPublicApexOmni::fetch_tickers_sync() {
         if (res_str.size() == 0) {
             SPDLOG_WARN("ex={} k={} url={} res_str={}", ex, k, url, res_str);
             continue;
+        } else {
+            SPDLOG_DEBUG("ex={} k={} url={} res_str={}", ex, k, url, res_str);
         }
         nlohmann::json res_obj = nlohmann::json::parse(res_str);
         for (auto& obj_data : res_obj["data"]) {
@@ -3493,7 +3495,7 @@ std::vector<FundingRes> ClientPublicBitunix::fetch_fundings_sync() {
             "https://fapi.bitunix.com/api/v1/futures/market/"
             "funding_rate?symbol={}",
             s);
-        nlohmann::json res_obj = exec_http_get_req(url);
+        nlohmann::json res_obj = exec_http_get_req(url, nullptr, true);
         if (res_obj["msg"] == "result.success") {
             SPDLOG_DEBUG("ex={} k={} loaded s={}", ex, k, s);
         } else {

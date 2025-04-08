@@ -11,14 +11,14 @@ backward::SignalHandling sh{};
 
 #define GEN_VARNAME(x) #x
 
-void upload_fundings_curr();
+void upload_exchanges_entities_curr();
 void insert_fundings_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
                                          std::vector<FundingRes> fundings_vec);
 void insert_tickers_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
                                         std::vector<TickerRes> tickers_vec);
 
 std::map<std::string, void (*)()> FNS_MAP{
-    GET_FN_NAME_TO_FN(upload_fundings_curr),
+    GET_FN_NAME_TO_FN(upload_exchanges_entities_curr),
 };
 
 int main() {
@@ -50,12 +50,14 @@ void exec_safe(F&& f) {
         while (true) {
             f();
         }
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("e={}", e.what());
     } catch (...) {
-        SPDLOG_ERROR("fall");
+        SPDLOG_ERROR("e=\"Unknown exception caught!\"");
     }
 }
 
-void upload_fundings_curr() {
+void upload_exchanges_entities_curr() {
     ClientPublicBinance client_binance_fut("fut");
     ClientPublicBinance client_binance_spot("spot");
     ClientPublicBybit client_bybit_fut("fut");
@@ -87,7 +89,8 @@ void upload_fundings_curr() {
         int attempt = 1;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
-                SPDLOG_DEBUG("insert ex={} attempt={}", client.ex, attempt);
+                SPDLOG_DEBUG("exec_insert ex={} k={} attempt={}", client.ex,
+                             client.kind, attempt);
                 clickhouse_client_mutex.lock();
                 std::string sql_str = "";
                 if (k == "tickers") {
@@ -95,30 +98,32 @@ void upload_fundings_curr() {
                 } else if (k == "fundings") {
                     sql_str = client.gen_fundings_insert_sql();
                 } else {
-                    throw new std::runtime_error(
-                        fmt::format("unexpected k={}", k));
+                    throw std::runtime_error(fmt::format("unexpected k={}", k));
                 }
                 clickhouse_client.Execute(sql_str);
                 clickhouse_client_mutex.unlock();
                 return;
-            } catch (...) {
-                SPDLOG_ERROR("error for ex={} => wait 10s and continue",
-                             client.ex);
+            } catch (const std::exception& e) {
+                SPDLOG_ERROR(
+                    "backoff-error => wait 10s and continue ex={} e={}",
+                    client.ex, e.what());
                 std::this_thread::sleep_for(std::chrono::seconds(10));
                 clickhouse_client_mutex.unlock();
             }
         }
-        throw new std::runtime_error(
-            fmt::format("failed to insert={}", client.ex));
+        throw std::runtime_error(fmt::format(
+            "backoff-error: all attempts are gone ex={}", client.ex));
     };
-    auto exec_insert_fundings_vec = [&](std::vector<FundingRes> fundings_vec) {
-        SPDLOG_DEBUG("insert_fundings_vec ex={}", fundings_vec[0].ex);
+    auto exec_insert_fundings_sync = [&](ClientPublicFetchFundingsSync& c) {
+        SPDLOG_DEBUG("exec_insert_fundings_sync ex={} k={}", c.ex, c.k);
+        std::vector<FundingRes> fundings_vec = c.fetch_fundings_sync();
         clickhouse_client_mutex.lock();
         insert_fundings_vec_into_clickhouse(clickhouse_client, fundings_vec);
         clickhouse_client_mutex.unlock();
     };
-    auto exec_insert_tickers_vec = [&](std::vector<TickerRes> tickers_vec) {
-        SPDLOG_DEBUG("insert_tickers_vec ex={}", tickers_vec[0].ex);
+    auto exec_insert_tickers_sync = [&](ClientPublicFetchTickersSync& c) {
+        SPDLOG_DEBUG("exec_insert_tickers_sync ex={} k={}", c.ex, c.k);
+        std::vector<TickerRes> tickers_vec = c.fetch_tickers_sync();
         clickhouse_client_mutex.lock();
         insert_tickers_vec_into_clickhouse(clickhouse_client, tickers_vec);
         clickhouse_client_mutex.unlock();
@@ -155,27 +160,21 @@ void upload_fundings_curr() {
             exec_insert(client_polynomial_fi);
             exec_insert(client_coinex);
             exec_insert(client_bingx);
-            exec_insert_fundings_vec(client_hyperliquid.fetch_fundings_sync());
-            exec_insert_tickers_vec(client_apex_pro.fetch_tickers_sync());
+            exec_insert_fundings_sync(client_hyperliquid);
+            exec_insert_tickers_sync(client_apex_pro);
         });
         pool_alive = false;
     });
     std::thread _2([&]() {
-        exec_safe([&]() {
-            exec_insert_tickers_vec(client_apex_omni.fetch_tickers_sync());
-        });
+        exec_safe([&]() { exec_insert_tickers_sync(client_apex_omni); });
         pool_alive = false;
     });
     std::thread _3([&]() {
-        exec_safe([&]() {
-            exec_insert_fundings_vec(client_aevo.fetch_fundings_sync());
-        });
+        exec_safe([&]() { exec_insert_fundings_sync(client_aevo); });
         pool_alive = false;
     });
     std::thread _4([&]() {
-        exec_safe([&]() {
-            exec_insert_fundings_vec(client_bitunix.fetch_fundings_sync());
-        });
+        exec_safe([&]() { exec_insert_fundings_sync(client_bitunix); });
         pool_alive = false;
     });
     while (true) {
@@ -184,7 +183,6 @@ void upload_fundings_curr() {
             break;
         }
     }
-    SPDLOG_ERROR("fall");
     TelegramBotPort::new_from_envs().notify_pretty(__FILENAME__, "fall");
 }
 

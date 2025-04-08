@@ -67,7 +67,7 @@ run-trade-fundings-2025-01-12:
 	cmake --build build -j 12 --target trade_fundings_2025_01_12 && \
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
-		MODE=upload_fundings_curr \
+		MODE=upload_exchanges_entities_curr \
 		./build/trade_fundings_2025_01_12
 
 clone-libs:

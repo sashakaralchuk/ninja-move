@@ -73,6 +73,20 @@ class ClientPublic : public hv::WebSocketClient {
     std::string template_tickers_insert_sql;
 };
 
+class ClientPublicFetchFundingsSync {
+   public:
+    std::string ex;
+    std::string k;
+    virtual std::vector<FundingRes> fetch_fundings_sync() = 0;
+};
+
+class ClientPublicFetchTickersSync {
+   public:
+    std::string ex;
+    std::string k;
+    virtual std::vector<TickerRes> fetch_tickers_sync() = 0;
+};
+
 class ClientPrivate : public hv::WebSocketClient {
    public:
     bool ws_onopen_received;
@@ -333,11 +347,8 @@ class ClientPrivateHtx : public ClientPrivate {
     std::string sign_str(std::string qs0, std::string payload0);
 };
 
-class ClientPublicHyperliquid {
+class ClientPublicHyperliquid : public ClientPublicFetchFundingsSync {
    public:
-    std::string ex;
-    std::string kind;
-
     ClientPublicHyperliquid(std::string kind_);
 
     std::vector<FundingRes> fetch_fundings_sync();
@@ -395,41 +406,29 @@ class ClientPublicPolynomialFi : public ClientPublic {
     void handle_onmessage(const std::string& msg);
 };
 
-class ClientPublicApexPro {
+class ClientPublicApexPro : public ClientPublicFetchTickersSync {
    public:
-    std::string ex;
-    std::string k;
-
     ClientPublicApexPro(std::string k);
 
     std::vector<TickerRes> fetch_tickers_sync();
 };
 
-class ClientPublicApexOmni {
+class ClientPublicApexOmni : public ClientPublicFetchTickersSync {
    public:
-    std::string ex;
-    std::string k;
-
     ClientPublicApexOmni(std::string k);
 
     std::vector<TickerRes> fetch_tickers_sync();
 };
 
-class ClientPublicAevo {
+class ClientPublicAevo : public ClientPublicFetchFundingsSync {
    public:
-    std::string ex;
-    std::string k;
-
     ClientPublicAevo(std::string kind);
 
     std::vector<FundingRes> fetch_fundings_sync();
 };
 
-class ClientPublicBitunix {
+class ClientPublicBitunix : public ClientPublicFetchFundingsSync {
    public:
-    std::string ex;
-    std::string k;
-
     ClientPublicBitunix(std::string kind);
 
     std::vector<FundingRes> fetch_fundings_sync();
