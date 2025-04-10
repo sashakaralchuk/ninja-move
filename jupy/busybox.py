@@ -27,8 +27,12 @@ def main() -> typing.NoReturn:
             parse_coinglass_funding_rates_2025_01_12()
         case "parse-coingecko-token-2025-01-06":
             parse_coingecko_token_2025_01_06()
-        case "match-ex-tokens-with-ccid":
-            match_ex_tokens_with_ccid(ex=args_.ex, k=args_.k)
+        case "match-ex-tokens-with-ccid-throught-search":
+            match_ex_tokens_with_ccid_throught_search(ex=args_.ex, k=args_.k)
+        case "match-ex-tokens-with-spot-coingecko-api":
+            match_ex_tokens_with_spot_coingecko_api(ex=args_.ex)
+        case "fetch-insert-coingecko-tickers":
+            fetch_insert_coingecko_tickers(ex=args_.ex)
         case _:
             raise NotImplementedError(f"Unknown {args_.mode=}")
 
@@ -227,14 +231,74 @@ def markets_select_curr_exchanges(
     return out
 
 
-def match_ex_tokens_with_ccid(  # noqa: PLR0912, PLR0915
-    ex: typing.Optional[str], k: typing.Optional[str]
+def fetch_insert_coingecko_tickers(ex: str) -> typing.NoReturn:
+    if ex is None:
+        raise ValueError("ex is mandatory")
+    clickhouse_dsn = "clickhousedb://127.0.0.1:18123/default"
+    clickhouse_client = clickhouse_connect.get_client(dsn=clickhouse_dsn)
+    clickhouse_client.query(
+        """
+        CREATE TABLE IF NOT EXISTS default.tickers_coingecko_2025_04_09 (
+            obj_raw String,
+            ex String,
+            k String,
+            coin_id String,
+            trade_url String,
+            base String,
+            target String,
+            last String,
+            ts_write DateTime
+        )
+        ENGINE = TinyLog;
+        """
+    )
+    ex_coingecko = None
+    match ex:
+        case "mexc":
+            ex_coingecko = "mxc"
+        case "gateio":
+            ex_coingecko = "gate"
+        case _:
+            raise Exception(f"unknown ex={ex}")
+    i = 0
+    while True:
+        logger.info("load coingecko tickers i=%s", i)
+        res = requests.get(
+            f"https://api.coingecko.com/api/v3/exchanges/{ex_coingecko}/tickers?page={i}",
+            headers={
+                "x-cg-demo-api-key": "CG-SW1M45WZhgX1R29iEfWJYCme",
+            },
+        )
+        res.raise_for_status()
+        if len(res.json()["tickers"]) == 0:
+            logger.info("tickers are empty => break")
+            break
+        rows = [
+            [
+                json.dumps(obj),
+                ex,
+                "spot",
+                obj["coin_id"],
+                obj["trade_url"],
+                obj["base"],
+                obj["target"],
+                str(obj["last"]),
+                int(time.time()),
+            ]
+            for obj in res.json()["tickers"]
+        ]
+        clickhouse_client.insert("default.tickers_coingecko_2025_04_09", rows)
+        i += 1
+
+
+def match_ex_tokens_with_ccid_throught_search(  # noqa: PLR0912, PLR0915
+    ex: typing.Optional[str],
+    k: typing.Optional[str],
 ) -> typing.NoReturn:
     if ex is None:
         raise ValueError("ex is mandatory")
-    clickhouse_client = clickhouse_connect.get_client(
-        dsn="clickhousedb://127.0.0.1:18123/default"
-    )
+    clickhouse_dsn = "clickhousedb://127.0.0.1:18123/default"
+    clickhouse_client = clickhouse_connect.get_client(dsn=clickhouse_dsn)
     if ex in ("bybit", "binance", "mexc", "gateio", "bitget", "kucoin"):
         if k is None:
             raise ValueError("k is mandatory")
@@ -344,6 +408,87 @@ def match_ex_tokens_with_ccid(  # noqa: PLR0912, PLR0915
             non_matched.append((symbol_in_ticker, match_list))
     for symbol_in_ticker, match_list in non_matched:
         print(f"{symbol_in_ticker=} {ex=} {k=} match_list !=1 {match_list=}")
+
+
+def match_ex_tokens_with_spot_coingecko_api(
+    ex: typing.Optional[str],
+) -> typing.NoReturn:
+    if ex is None:
+        raise ValueError("ex is mandatory")
+    clickhouse_dsn = "clickhousedb://127.0.0.1:18123/default"
+    clickhouse_client = clickhouse_connect.get_client(dsn=clickhouse_dsn)
+    q_tickers_price, q_s_concat = None, None
+    match ex:
+        case "mexc":
+            q_tickers_price = "$.lastPrice"
+            q_s_concat = "CONCAT(base, target)"
+        case "gateio":
+            q_tickers_price = "$.last"
+            q_s_concat = "CONCAT(base, '_', target)"
+        case _:
+            raise Exception(f"unknown ex={ex}")
+    query_str = f"""
+        SELECT
+            t1.s,
+            t2.coin_id,
+            t2.base,
+            t2.target,
+            truncate(t1.last, 4) t1_last,
+            truncate(t2.last, 4) t2_last,
+            truncate(abs((t1.last - t2.last) / t1.last) * 100, 4) diff_rel
+        FROM (
+            SELECT * EXCEPT(rank_last_write)
+            FROM (
+                SELECT
+                    s,
+                    toFloat64(JSON_VALUE(obj_raw, {q_tickers_price!r})) last,
+                    row_number() OVER (PARTITION BY ex, k, s ORDER BY ts_write DESC) as rank_last_write
+                FROM default.tickers t1
+                LEFT JOIN default.ex_k_to_ccid_v2 t2
+                    USING (ex, k, s)
+                WHERE t1.ex = {ex!r}
+                    AND k = 'spot'
+                    AND ts_write >= NOW() - INTERVAL 7 DAY
+                    AND t2.ccid = ''
+                    AND startsWith(t2.notes, 'index-fut-') = 0
+                    AND startsWith(t2.notes, 'non-fut-perp-') = 0
+                    AND startsWith(t2.notes, 'non-on-ui-') = 0
+                    AND startsWith(t2.notes, 'non-usd-based-') = 0
+            )
+            WHERE rank_last_write = 1
+        ) t1
+        LEFT JOIN (
+            SELECT * EXCEPT(rank_last_write)
+            FROM (
+                SELECT
+                    {q_s_concat} s,
+                    toFloat64(last) last,
+                    coin_id,
+                    base,
+                    target,
+                    row_number() OVER (PARTITION BY ex, k, s ORDER BY ts_write DESC) as rank_last_write
+                FROM default.tickers_coingecko_2025_04_09
+                WHERE ex = {ex!r} AND k = 'spot'
+            )
+            WHERE rank_last_write = 1
+        ) t2
+            ON t1.s = t2.s
+        WHERE t2.coin_id != ''
+        ORDER BY diff_rel DESC
+    """
+    s_coingecko_match_list = clickhouse_client.query(query_str).result_rows
+    date_str = dt.date.today().isoformat()
+    notes = f"added-by-jupy-busybox-coingecko-api-on-{date_str}"
+    logger.info("iterate through tickers notes=%s", notes)
+    for obj in s_coingecko_match_list:
+        (t1_s, t2_coin_id, t2_base, t2_target, _, _, diff_rel) = obj
+        if diff_rel > 3.0:
+            print(f"workout: {t1_s} {t2_coin_id}")
+            continue
+        print(
+            f"({ex!r}, 'spot', {t1_s!r}, {t2_base!r}, {t2_target!r}, "
+            f"{t2_coin_id!r}, 0, {notes!r}),"
+        )
 
 
 if __name__ == "__main__":
