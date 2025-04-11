@@ -258,6 +258,8 @@ def fetch_insert_coingecko_tickers(ex: str) -> typing.NoReturn:
             ex_coingecko = "mxc"
         case "gateio":
             ex_coingecko = "gate"
+        case "kucoin":
+            ex_coingecko = "kucoin"
         case _:
             raise Exception(f"unknown ex={ex}")
     i = 0
@@ -425,6 +427,10 @@ def match_ex_tokens_with_spot_coingecko_api(
         case "gateio":
             q_tickers_price = "$.last"
             q_s_concat = "CONCAT(base, '_', target)"
+        case "kucoin":
+            pass
+            q_tickers_price = "$.last"
+            q_s_concat = "CONCAT(base, '-', target)"
         case _:
             raise Exception(f"unknown ex={ex}")
     query_str = f"""
@@ -448,6 +454,7 @@ def match_ex_tokens_with_spot_coingecko_api(
                     USING (ex, k, s)
                 WHERE t1.ex = {ex!r}
                     AND k = 'spot'
+                    AND JSON_VALUE(obj_raw, {q_tickers_price!r}) != 'null' -- NOTE: kucoin specific
                     AND ts_write >= NOW() - INTERVAL 7 DAY
                     AND t2.ccid = ''
                     AND startsWith(t2.notes, 'index-fut-') = 0
