@@ -591,6 +591,7 @@ PARTITION BY toDate(ts_write)
 ORDER BY (ex, k, ts);
 --
 -- cat /dumps/dump_ex_k_to_ccid_v2.sql | xargs -I {} -0 clickhouse-client '{}'
+-- clickhouse-client --query 'TRUNCATE TABLE default.ex_k_to_ccid_v2' && clickhouse-client --queries-file /dumps/dump_ex_k_to_ccid_v2.sql && clickhouse-client --query 'SELECT count() FROM default.ex_k_to_ccid_v2'
 CREATE TABLE default.ex_k_to_ccid_v2 (
     `ex` String,
     `k` String,
@@ -598,6 +599,7 @@ CREATE TABLE default.ex_k_to_ccid_v2 (
     `base` String,
     `quote` String,
     `ccid` String,
+    `qty_mult` UInt64,
     `notes` String
 )
 ENGINE = TinyLog;
