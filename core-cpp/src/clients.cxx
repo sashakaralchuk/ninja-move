@@ -3454,7 +3454,16 @@ std::vector<FundingRes> ClientPublicAevo::fetch_fundings_sync() {
     for (std::string asset : res_assets_obj) {
         std::string url = fmt::format(
             "https://api.aevo.xyz/funding?instrument_name={}-PERP", asset);
-        nlohmann::json res_obj = exec_http_get_req(url);
+
+        std::string buff = exec_http_get_req_raw(url, nullptr);
+        SPDLOG_DEBUG("url={} buff={}", url, buff);
+        nlohmann::json res_obj;
+        try {
+            res_obj = nlohmann::json::parse(buff);
+        } catch (...) {
+            SPDLOG_WARN("unable to parse res_obj for aevo buff={}", buff);
+            continue;
+        }
         if (res_obj["error"] == nullptr) {
             SPDLOG_DEBUG("ex={} k={} loaded asset={}", ex, k, asset);
         } else {
@@ -3495,7 +3504,15 @@ std::vector<FundingRes> ClientPublicBitunix::fetch_fundings_sync() {
             "https://fapi.bitunix.com/api/v1/futures/market/"
             "funding_rate?symbol={}",
             s);
-        nlohmann::json res_obj = exec_http_get_req(url, nullptr, true);
+        std::string readBuffer = exec_http_get_req_raw(url, nullptr);
+        SPDLOG_DEBUG("url={} readBuffer={}", url, readBuffer);
+        nlohmann::json res_obj;
+        try {
+            res_obj = nlohmann::json::parse(readBuffer);
+        } catch (...) {
+            SPDLOG_WARN("unable to parse res_obj for bitunix");
+            continue;
+        }
         if (res_obj["msg"] == "result.success") {
             SPDLOG_DEBUG("ex={} k={} loaded s={}", ex, k, s);
         } else {

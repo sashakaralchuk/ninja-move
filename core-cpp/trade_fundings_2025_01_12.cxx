@@ -139,10 +139,8 @@ void upload_exchanges_entities_curr() {
     clickhouse_client.Execute(ClientPublicParadex::QUERY_TRUNCATE_MARKETS);
     clickhouse_client.Execute(ClientPublicParadex::QUERY_INSERT_MARKETS);
     std::atomic<bool> pool_alive(true);
-    std::thread _1([&]() {
+    std::thread _main_list([&]() {
         exec_safe([&]() {
-            exec_insert(client_binance_fut, "tickers");
-            exec_insert(client_binance_spot, "tickers");
             exec_insert(client_bybit_fut, "tickers");
             exec_insert(client_bybit_spot, "tickers");
             exec_insert(client_gateio_fut, "tickers");
@@ -151,10 +149,17 @@ void upload_exchanges_entities_curr() {
             exec_insert(client_mexc_spot, "tickers");
             exec_insert(client_bitget_fut, "tickers");
             exec_insert(client_bitget_spot, "tickers");
-            exec_insert(client_okx_fut, "tickers");
-            exec_insert(client_okx_spot, "tickers");
             exec_insert(client_kucoin_fut, "tickers");
             exec_insert(client_kucoin_spot, "tickers");
+        });
+        pool_alive = false;
+    });
+    std::thread _remaining_list([&]() {
+        exec_safe([&]() {
+            exec_insert(client_binance_fut, "tickers");
+            exec_insert(client_binance_spot, "tickers");
+            exec_insert(client_okx_fut, "tickers");
+            exec_insert(client_okx_spot, "tickers");
             exec_insert(client_arkm);
             exec_insert(client_paradex);
             exec_insert(client_polynomial_fi);
@@ -162,19 +167,10 @@ void upload_exchanges_entities_curr() {
             exec_insert(client_bingx);
             exec_insert_fundings_sync(client_hyperliquid);
             exec_insert_tickers_sync(client_apex_pro);
+            exec_insert_tickers_sync(client_apex_omni);
+            exec_insert_fundings_sync(client_aevo);
+            exec_insert_fundings_sync(client_bitunix);
         });
-        pool_alive = false;
-    });
-    std::thread _2([&]() {
-        exec_safe([&]() { exec_insert_tickers_sync(client_apex_omni); });
-        pool_alive = false;
-    });
-    std::thread _3([&]() {
-        exec_safe([&]() { exec_insert_fundings_sync(client_aevo); });
-        pool_alive = false;
-    });
-    std::thread _4([&]() {
-        exec_safe([&]() { exec_insert_fundings_sync(client_bitunix); });
         pool_alive = false;
     });
     while (true) {
