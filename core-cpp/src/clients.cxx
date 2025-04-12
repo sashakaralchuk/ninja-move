@@ -3446,15 +3446,23 @@ ClientPublicAevo::ClientPublicAevo(std::string kind) {
 
 std::vector<FundingRes> ClientPublicAevo::fetch_fundings_sync() {
     std::string url_assets = "https://api.aevo.xyz/assets";
-    nlohmann::json res_assets_obj = exec_http_get_req(url_assets);
+    std::string res_assets_buff = exec_http_get_req_raw(url_assets, nullptr);
+    SPDLOG_DEBUG("url_assets={} res_assets_buff={}", url_assets,
+                 res_assets_buff);
+    nlohmann::json res_assets_obj;
     std::vector<FundingRes> fundings_vec;
+    try {
+        res_assets_obj = nlohmann::json::parse(res_assets_buff);
+    } catch (...) {
+        SPDLOG_WARN("unable to parse res_assets_obj for aevo => return");
+        return fundings_vec;
+    }
     long ts = now_millis();
     SPDLOG_INFO("ex={} k={} start fundings upload size={}", ex, k,
                 res_assets_obj.size());
     for (std::string asset : res_assets_obj) {
         std::string url = fmt::format(
             "https://api.aevo.xyz/funding?instrument_name={}-PERP", asset);
-
         std::string buff = exec_http_get_req_raw(url, nullptr);
         SPDLOG_DEBUG("url={} buff={}", url, buff);
         nlohmann::json res_obj;
