@@ -16,6 +16,8 @@ void insert_fundings_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
                                          std::vector<FundingRes> fundings_vec);
 void insert_tickers_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
                                         std::vector<TickerRes> tickers_vec);
+void check_send_fut_spot_spread_alert(clickhouse::Client& clickhouse_client,
+                                      double diff_rel_threshold);
 
 std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(upload_exchanges_entities_curr),
@@ -138,7 +140,20 @@ void upload_exchanges_entities_curr() {
     SPDLOG_INFO("re-upload paradex-markets");
     clickhouse_client.Execute(ClientPublicParadex::QUERY_TRUNCATE_MARKETS);
     clickhouse_client.Execute(ClientPublicParadex::QUERY_INSERT_MARKETS);
+    // XXX: use boost.asio here, install instruction -
+    // https://www.youtube.com/watch?v=CP_U4sb75cM
     std::atomic<bool> pool_alive(true);
+    std::thread _check_alert_threshold([&]() {
+        exec_safe([&]() {
+            std::this_thread::sleep_for(std::chrono::seconds(60));
+            clickhouse_client_mutex.lock();
+            double diff_rel_threshold = 5.0;
+            check_send_fut_spot_spread_alert(clickhouse_client,
+                                             diff_rel_threshold);
+            clickhouse_client_mutex.unlock();
+        });
+        pool_alive = false;
+    });
     std::thread _main_list([&]() {
         exec_safe([&]() {
             exec_insert(client_bybit_fut, "tickers");
@@ -243,4 +258,45 @@ void insert_tickers_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
     block.AppendColumn("k", k_vec);
     block.AppendColumn("ts_write", ts_write_vec);
     clickhouse_client.Insert("default.tickers", block);
+}
+
+void check_send_fut_spot_spread_alert(clickhouse::Client& clickhouse_client,
+                                      double diff_rel_threshold) {
+    std::ifstream f("../grafana/dashboards/default.json");
+    nlohmann::json obj_file = nlohmann::json::parse(f);
+    std::string query_spreads_str = "";
+    for (auto& obj : obj_file["dashboard"]["panels"]) {
+        if (obj["title"] == "contango-ex-vs-ex") {
+            query_spreads_str = obj["targets"][0]["query"];
+            break;
+        }
+    }
+    std::string message_to_send = "";
+    clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
+                                                        b) {
+        for (size_t i = 0; i < b.GetRowCount(); ++i) {
+            std::string ccid =
+                (std::string)b[0]->As<clickhouse::ColumnString>()->At(i);
+            double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
+            std::string ex_link_fut =
+                (std::string)b[2]->As<clickhouse::ColumnString>()->At(i);
+            std::string ex_link_spot =
+                (std::string)b[3]->As<clickhouse::ColumnString>()->At(i);
+            if (diff_rel > diff_rel_threshold) {
+                message_to_send += fmt::format(
+                    "i={} ccid={} diff_rel={} ex_link_fut={} ex_link_spot={};",
+                    i, ccid, diff_rel, ex_link_fut, ex_link_spot);
+            }
+        }
+    });
+    if (message_to_send.size() > 0) {
+        SPDLOG_INFO("send telegram diff_rel_threshold={} message_to_send={}",
+                    diff_rel_threshold, message_to_send);
+        TelegramBotPort::new_from_envs().notify_pretty(
+            __FILENAME__,
+            "check_send_fut_spot_spread_alert; " + message_to_send);
+    } else {
+        SPDLOG_INFO("there is no spreads with diff_rel_threshold={}",
+                    diff_rel_threshold);
+    }
 }
