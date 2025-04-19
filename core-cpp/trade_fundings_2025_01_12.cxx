@@ -77,17 +77,18 @@ void upload_exchanges_entities_curr() {
     ClientPublicArkm client_arkm("fut");
     ClientPublicParadex client_paradex("fut");
     ClientPublicPolynomialFi client_polynomial_fi("fut");
-    ClientPublicCoinEx client_coinex("fut");
-    ClientPublicBingx client_bingx("fut");
+    ClientPublicCoinEx client_coinex_fut("fut");
+    ClientPublicBingx client_bingx_fut("fut");
     ClientPublicHyperliquid client_hyperliquid("fut");
     ClientPublicApexPro client_apex_pro("fut");
     ClientPublicApexOmni client_apex_omni("fut");
     ClientPublicAevo client_aevo("fut");
     ClientPublicBitunix client_bitunix("fut");
+    ClientPublicLBank client_lbank_fut("fut");
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
     std::mutex clickhouse_client_mutex;
-    auto exec_insert = [&](ClientPublic& client, std::string k = "fundings") {
+    auto exec_insert = [&](ClientPublic& client, std::string k) {
         int attempt = 1;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
@@ -175,16 +176,19 @@ void upload_exchanges_entities_curr() {
             exec_insert(client_binance_spot, "tickers");
             exec_insert(client_okx_fut, "tickers");
             exec_insert(client_okx_spot, "tickers");
-            exec_insert(client_arkm);
-            exec_insert(client_paradex);
-            exec_insert(client_polynomial_fi);
-            exec_insert(client_coinex);
-            exec_insert(client_bingx);
+            exec_insert(client_arkm, "fundings");
+            exec_insert(client_paradex, "fundings");
+            exec_insert(client_polynomial_fi, "fundings");
+            exec_insert(client_coinex_fut, "fundings");
+            exec_insert(client_coinex_fut, "tickers");
+            exec_insert(client_bingx_fut, "fundings");
+            exec_insert(client_bingx_fut, "tickers");
             exec_insert_fundings_sync(client_hyperliquid);
             exec_insert_tickers_sync(client_apex_pro);
             exec_insert_tickers_sync(client_apex_omni);
             exec_insert_fundings_sync(client_aevo);
             exec_insert_fundings_sync(client_bitunix);
+            exec_insert_tickers_sync(client_lbank_fut);
         });
         pool_alive = false;
     });

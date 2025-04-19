@@ -530,6 +530,13 @@ class ClientPublicKucoin : public ClientPublic {
     void handle_onmessage(const std::string& msg);
 };
 
+class ClientPublicLBank : public ClientPublicFetchTickersSync {
+   public:
+    ClientPublicLBank(std::string k);
+
+    std::vector<TickerRes> fetch_tickers_sync();
+};
+
 class TelegramBotPort {
    public:
     TelegramBotPort(std::string token_, std::string chat_id_);

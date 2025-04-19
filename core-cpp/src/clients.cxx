@@ -3544,22 +3544,41 @@ std::vector<FundingRes> ClientPublicBitunix::fetch_fundings_sync() {
 
 ClientPublicCoinEx::ClientPublicCoinEx(std::string kind)
     : ClientPublic("coinex", kind) {
-    template_fundings_insert_sql = R"(
-        INSERT INTO {}
-        SELECT
-            obj_raw,
-            'futures-funding-rate' obj_k,
-            JSONExtractString(obj_raw, 'market') s,
-            toFloat64(JSON_VALUE(obj_raw, '$.latest_funding_rate')) funding_rate,
-            toUInt64(JSON_VALUE(obj_raw, '$.latest_funding_time')) ts,
-            'coinex' ex,
-            'fut' k,
-            NOW() ts_write
-        FROM (
-            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
-            FROM url('https://api.coinex.com/v2/futures/funding-rate', 'JSONAsString')
-        );
-    )";
+    if (kind == "fut") {
+        template_fundings_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                'futures-funding-rate' obj_k,
+                JSONExtractString(obj_raw, 'market') s,
+                toFloat64(JSON_VALUE(obj_raw, '$.latest_funding_rate')) funding_rate,
+                toUInt64(JSON_VALUE(obj_raw, '$.latest_funding_time')) ts,
+                'coinex' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://api.coinex.com/v2/futures/funding-rate', 'JSONAsString')
+            );
+        )";
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSONExtractString(obj_raw, 'market') s,
+                0 funding_rate,
+                0 ts,
+                'coinex' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://api.coinex.com/v2/futures/ticker', 'JSONAsString')
+            );
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
 }
 
 void ClientPublicCoinEx::init_idle() {
@@ -3594,22 +3613,42 @@ void ClientPublicCoinEx::handle_onmessage(const std::string& msg) {
 
 ClientPublicBingx::ClientPublicBingx(std::string kind)
     : ClientPublic("bingx", kind) {
-    template_fundings_insert_sql = R"(
-        INSERT INTO {}
-        SELECT
-            obj_raw,
-            'quote-promium-index' obj_k,
-            JSONExtractString(obj_raw, 'symbol') s,
-            toFloat64(JSON_VALUE(obj_raw, '$.lastFundingRate')) funding_rate,
-            NOW() ts,
-            'bingx' ex,
-            'fut' k,
-            NOW() ts_write
-        FROM (
-            SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
-            FROM url('https://open-api.bingx.com/openApi/swap/v2/quote/premiumIndex', 'JSONAsString')
-        );
-    )";
+    if (kind == "fut") {
+        template_fundings_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                'quote-promium-index' obj_k,
+                JSONExtractString(obj_raw, 'symbol') s,
+                toFloat64(JSON_VALUE(obj_raw, '$.lastFundingRate')) funding_rate,
+                NOW() ts,
+                'bingx' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://open-api.bingx.com/openApi/swap/v2/quote/premiumIndex', 'JSONAsString')
+            );
+        )";
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                obj_raw,
+                JSONExtractString(obj_raw, 'symbol') s,
+                0 funding_rate,
+                0 ts,
+                'bingx' ex,
+                'fut' k,
+                NOW() ts_write
+            FROM (
+                SELECT
+                    arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw
+                FROM url('https://open-api.bingx.com/openApi/swap/v2/quote/ticker', 'JSONAsString')
+            );
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
 }
 
 void ClientPublicBingx::init_idle() {
@@ -3920,6 +3959,40 @@ std::vector<Ticker> ClientPublicKucoin::fetch_tickers() {
 
 void ClientPublicKucoin::handle_onmessage(const std::string& msg) {
     throw std::runtime_error("not-implemented");
+}
+
+ClientPublicLBank::ClientPublicLBank(std::string kind) {
+    ex = "lbank";
+    k = kind;
+}
+
+std::vector<TickerRes> ClientPublicLBank::fetch_tickers_sync() {
+    // NOTE: Tickert url found in terminal on next item open
+    // https://prnt.sc/i3OL-Vq9ArVb
+    std::string url_tickers =
+        "https://uuapi.ierpifvid.com/cfd/instrment/v1/ticker/24hr/intact";
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(
+        headers, "content-type: application/json; charset=UTF-8");
+    headers = curl_slist_append(headers, "source: 4");
+    std::string body_str = "{\"product\":[\"FUTURES\"],\"area\":\"usdt\"}";
+    nlohmann::json res_obj =
+        execute_http_post_req(url_tickers, headers, body_str);
+    std::vector<TickerRes> tickers_vec;
+    long ts = now_millis();
+    for (auto& obj_wrapper : res_obj["dataWrapper"]) {
+        for (auto& obj_ticker : obj_wrapper["tickers"]) {
+            tickers_vec.push_back(TickerRes{
+                .obj_raw = obj_ticker,
+                .s = obj_ticker["s"],
+                .funding_rate = 0.0,
+                .ts = ts,
+                .ex = ex,
+                .k = k,
+            });
+        }
+    }
+    return tickers_vec;
 }
 
 const std::string TELEGRAM_NOTIFY_PRETTY_TEMPLATE = R"({{
