@@ -45,4 +45,5 @@ local = [
     "clickhouse-connect>=0.8.13",
     "pydantic==2.8.2",
     "avantis-trader-sdk==0.6.0",
+    "telethon==1.40.0",
 ]
