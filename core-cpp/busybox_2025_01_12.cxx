@@ -16,11 +16,13 @@ void insert_fundings_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
                                          std::vector<FundingRes> fundings_vec);
 void insert_tickers_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
                                         std::vector<TickerRes> tickers_vec);
-void check_send_fut_spot_spread_alert(clickhouse::Client& clickhouse_client,
-                                      double diff_rel_threshold);
+void check_send_spot_fut_perp_spread_alert(
+    clickhouse::Client& clickhouse_client, double diff_rel_threshold);
+void observe_send_spot_fut_perp_spread_converge_v1();
 
 std::map<std::string, void (*)()> FNS_MAP{
     GET_FN_NAME_TO_FN(upload_exchanges_entities_curr),
+    GET_FN_NAME_TO_FN(observe_send_spot_fut_perp_spread_converge_v1),
 };
 
 int main() {
@@ -149,8 +151,8 @@ void upload_exchanges_entities_curr() {
             std::this_thread::sleep_for(std::chrono::seconds(60));
             clickhouse_client_mutex.lock();
             double diff_rel_threshold = 5.0;
-            check_send_fut_spot_spread_alert(clickhouse_client,
-                                             diff_rel_threshold);
+            check_send_spot_fut_perp_spread_alert(clickhouse_client,
+                                                  diff_rel_threshold);
             clickhouse_client_mutex.unlock();
         });
         pool_alive = false;
@@ -264,8 +266,7 @@ void insert_tickers_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
     clickhouse_client.Insert("default.tickers", block);
 }
 
-void check_send_fut_spot_spread_alert(clickhouse::Client& clickhouse_client,
-                                      double diff_rel_threshold) {
+std::string read_grafan_spot_fut_perp_spread_sql() {
     std::ifstream f("../grafana/dashboards/default.json");
     nlohmann::json obj_file = nlohmann::json::parse(f);
     std::string query_spreads_str = "";
@@ -275,6 +276,15 @@ void check_send_fut_spot_spread_alert(clickhouse::Client& clickhouse_client,
             break;
         }
     }
+    if (query_spreads_str.length() == 0) {
+        throw std::runtime_error("sql haven't extracted");
+    }
+    return query_spreads_str;
+}
+
+void check_send_spot_fut_perp_spread_alert(
+    clickhouse::Client& clickhouse_client, double diff_rel_threshold) {
+    std::string query_spreads_str = read_grafan_spot_fut_perp_spread_sql();
     std::string message_to_send = "";
     clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
                                                         b) {
@@ -296,11 +306,59 @@ void check_send_fut_spot_spread_alert(clickhouse::Client& clickhouse_client,
     if (message_to_send.size() > 0) {
         SPDLOG_INFO("send telegram diff_rel_threshold={} message_to_send={}",
                     diff_rel_threshold, message_to_send);
-        TelegramBotPort::new_from_envs().notify_pretty(
-            __FILENAME__,
-            "check_send_fut_spot_spread_alert; " + message_to_send);
+        TelegramBotPort::new_from_envs().notify_pretty_v2(
+            {std::make_tuple("message", "check-send-spot-fut-perp-spread"),
+             std::make_tuple("filename", __FILENAME__),
+             std::make_tuple("diff_rel_threshold",
+                             std::to_string(diff_rel_threshold)),
+             std::make_tuple("message_to_send", message_to_send)});
     } else {
         SPDLOG_INFO("there is no spreads with diff_rel_threshold={}",
                     diff_rel_threshold);
+    }
+}
+
+void observe_send_spot_fut_perp_spread_converge_v1() {
+    std::string input_ex_spot = std::getenv("INPUT_EX_SPOT");
+    std::string input_ex_fut_perp = std::getenv("INPUT_EX_FUT_PERP");
+    std::string input_ccid = std::getenv("INPUT_CCID");
+    double diff_rel_threshold = 1.0;
+    clickhouse::Client clickhouse_client(
+        clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
+    std::string query_spreads_str = read_grafan_spot_fut_perp_spread_sql();
+    while (true) {
+        double diff_rel_iter = -1.0;
+        clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
+                                                            b) {
+            for (size_t i = 0; i < b.GetRowCount(); ++i) {
+                std::string ccid =
+                    (std::string)b[0]->As<clickhouse::ColumnString>()->At(i);
+                double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
+                std::string ex_fut =
+                    (std::string)b[10]->As<clickhouse::ColumnString>()->At(i);
+                std::string ex_spot =
+                    (std::string)b[11]->As<clickhouse::ColumnString>()->At(i);
+                if (ccid == input_ccid && ex_fut == input_ex_fut_perp &&
+                    ex_spot == input_ex_spot) {
+                    diff_rel_iter = diff_rel;
+                }
+            }
+        });
+        if (diff_rel_iter < diff_rel_threshold) {
+            SPDLOG_INFO("send telegram diff_rel_threshold={}",
+                        diff_rel_threshold);
+            TelegramBotPort::new_from_envs().notify_pretty_v2(
+                {std::make_tuple("message", "spread-disappeared"),
+                 std::make_tuple("filename", __FILENAME__),
+                 std::make_tuple("input_ccid", input_ccid),
+                 std::make_tuple("diff_rel_iter",
+                                 std::to_string(diff_rel_iter))});
+            break;
+        } else {
+            SPDLOG_INFO(
+                "spread still exists diff_rel_iter={} diff_rel_threshold={}",
+                diff_rel_iter, diff_rel_threshold);
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 }

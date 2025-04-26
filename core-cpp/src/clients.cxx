@@ -3995,12 +3995,6 @@ std::vector<TickerRes> ClientPublicLBank::fetch_tickers_sync() {
     return tickers_vec;
 }
 
-const std::string TELEGRAM_NOTIFY_PRETTY_TEMPLATE = R"({{
-    "message": "{}",
-    "action": "{}",
-    "now": "{}"
-}})";
-
 TelegramBotPort::TelegramBotPort(std::string token_, std::string chat_id_) {
     token = token_;
     chat_id = chat_id_;
@@ -4012,10 +4006,23 @@ TelegramBotPort TelegramBotPort::new_from_envs() {
 }
 
 void TelegramBotPort::notify_pretty(std::string message, std::string action) {
-    std::string m_raw =
-        fmt::format(TELEGRAM_NOTIFY_PRETTY_TEMPLATE, message, action,
-                    time_point_to_str(std::chrono::system_clock::now()));
-    std::string m_encoded = fmt::format("```%0A{}```", url_encode(m_raw));
+    notify_pretty_v2({
+        std::make_tuple("message", message),
+        std::make_tuple("action", action),
+    });
+}
+
+void TelegramBotPort::notify_pretty_v2(
+    std::vector<std::tuple<std::string, std::string>> key_value_vec) {
+    std::ostringstream m_oss;
+    m_oss << "{\n";
+    for (auto& [k, v] : key_value_vec) {
+        m_oss << fmt::format("  \"{}\": \"{}\",\n", k, v);
+    }
+    m_oss << fmt::format("  \"now\": \"{}\"",
+                         time_point_to_str(std::chrono::system_clock::now()));
+    m_oss << "\n}";
+    std::string m_encoded = fmt::format("```%0A{}```", url_encode(m_oss.str()));
     std::string url_str = fmt::format(
         "https://api.telegram.org/bot{}/"
         "sendMessage?chat_id={}&text={}&parse_mode=Markdown",

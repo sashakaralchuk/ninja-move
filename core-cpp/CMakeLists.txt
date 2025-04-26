@@ -119,13 +119,13 @@ target_link_libraries(trade_contango_arbitrage_2024_11_11 PRIVATE
     ${LIBRDKAFKA}
 )
 
-add_executable(trade_fundings_2025_01_12
-    trade_fundings_2025_01_12.cxx
+add_executable(busybox_2025_01_12
+    busybox_2025_01_12.cxx
     src/lib.cxx
     src/models.cxx
     src/clients.cxx
 )
-target_include_directories(trade_fundings_2025_01_12 PRIVATE
+target_include_directories(busybox_2025_01_12 PRIVATE
     libs/libhv/build/include/hv
     libs/spdlog/include
     libs/curl/include/curl
@@ -133,7 +133,7 @@ target_include_directories(trade_fundings_2025_01_12 PRIVATE
     libs/gmp-6.3.0/build/include
     libs/clickhouse-cpp
 )
-target_link_libraries(trade_fundings_2025_01_12 PRIVATE
+target_link_libraries(busybox_2025_01_12 PRIVATE
     nlohmann_json::nlohmann_json
     ${LIBHV}
     ${SPDLOG}
