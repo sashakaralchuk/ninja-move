@@ -63,7 +63,7 @@ run-trade-contango-arbitrage-2024-11-11-fetch-process-tickers:
 		DIFF_REL_BOTTOM_THRESHOLD=1.5 \
 		./build/trade_contango_arbitrage_2024_11_11
 
-run-busybox-trade-fundings-2025-01-12:
+run-busybox-upload-exchanges-entities-curr:
 	cmake --build build -j 12 --target busybox_2025_01_12 && \
 		${env_vars} \
 		SPDLOG_LEVEL=debug \
