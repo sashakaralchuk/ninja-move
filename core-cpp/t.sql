@@ -585,10 +585,12 @@ CREATE TABLE default.tickers (
     ts UInt64,
     ex String,
     k String,
-    ts_write DateTime
+    ts_write DateTime DEFAULT NOW()
 )
+ENGINE = MergeTree
 PARTITION BY toDate(ts_write)
-ORDER BY (ex, k, ts);
+ORDER BY (ex, k, ts_write)
+TTL ts_write + INTERVAL 7 DAYS;
 --
 -- cat /dumps/dump_ex_k_to_ccid_v2.sql | xargs -I {} -0 clickhouse-client '{}'
 -- clickhouse-client --query 'TRUNCATE TABLE default.ex_k_to_ccid_v2' && clickhouse-client --queries-file /dumps/dump_ex_k_to_ccid_v2.sql && clickhouse-client --query 'SELECT count() FROM default.ex_k_to_ccid_v2'
