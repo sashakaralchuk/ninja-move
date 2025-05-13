@@ -61,6 +61,24 @@ void exec_safe(F&& f) {
     }
 }
 
+void backoff_call(std::function<void(int)> f_success,
+                  std::function<void()> f_error, std::string ex) {
+    int attempt = 1;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        try {
+            f_success(attempt);
+            return;
+        } catch (const std::exception& e) {
+            f_error();
+            SPDLOG_ERROR("backoff-error => wait 10s and continue ex={} e={}",
+                         ex, e.what());
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+        }
+    }
+    throw std::runtime_error(
+        fmt::format("backoff-error: all attempts are gone ex={}", ex));
+}
+
 void upload_exchanges_entities_curr() {
     ClientPublicBinance client_binance_fut("fut");
     ClientPublicBinance client_binance_spot("spot");
@@ -92,9 +110,8 @@ void upload_exchanges_entities_curr() {
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
     std::mutex clickhouse_client_mutex;
     auto exec_insert = [&](ClientPublic& client, std::string k) {
-        int attempt = 1;
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            try {
+        backoff_call(
+            [&](int attempt) {
                 SPDLOG_DEBUG("exec_insert ex={} k={} attempt={}", client.ex,
                              client.kind, attempt);
                 clickhouse_client_mutex.lock();
@@ -108,31 +125,34 @@ void upload_exchanges_entities_curr() {
                 }
                 clickhouse_client.Execute(sql_str);
                 clickhouse_client_mutex.unlock();
-                return;
-            } catch (const std::exception& e) {
-                SPDLOG_ERROR(
-                    "backoff-error => wait 10s and continue ex={} e={}",
-                    client.ex, e.what());
-                std::this_thread::sleep_for(std::chrono::seconds(10));
-                clickhouse_client_mutex.unlock();
-            }
-        }
-        throw std::runtime_error(fmt::format(
-            "backoff-error: all attempts are gone ex={}", client.ex));
+            },
+            [&]() { clickhouse_client_mutex.unlock(); }, client.ex);
     };
     auto exec_insert_fundings_sync = [&](ClientPublicFetchFundingsSync& c) {
-        SPDLOG_DEBUG("exec_insert_fundings_sync ex={} k={}", c.ex, c.k);
-        std::vector<FundingRes> fundings_vec = c.fetch_fundings_sync();
-        clickhouse_client_mutex.lock();
-        insert_fundings_vec_into_clickhouse(clickhouse_client, fundings_vec);
-        clickhouse_client_mutex.unlock();
+        backoff_call(
+            [&](int attempt) {
+                SPDLOG_DEBUG("exec_insert_fundings_sync ex={} k={} attempt={}",
+                             c.ex, c.k, attempt);
+                std::vector<FundingRes> fundings_vec = c.fetch_fundings_sync();
+                clickhouse_client_mutex.lock();
+                insert_fundings_vec_into_clickhouse(clickhouse_client,
+                                                    fundings_vec);
+                clickhouse_client_mutex.unlock();
+            },
+            [&] { clickhouse_client_mutex.unlock(); }, c.ex);
     };
     auto exec_insert_tickers_sync = [&](ClientPublicFetchTickersSync& c) {
-        SPDLOG_DEBUG("exec_insert_tickers_sync ex={} k={}", c.ex, c.k);
-        std::vector<TickerRes> tickers_vec = c.fetch_tickers_sync();
-        clickhouse_client_mutex.lock();
-        insert_tickers_vec_into_clickhouse(clickhouse_client, tickers_vec);
-        clickhouse_client_mutex.unlock();
+        backoff_call(
+            [&](int attempt) {
+                SPDLOG_DEBUG("exec_insert_tickers_sync ex={} k={} attempt={}",
+                             c.ex, c.k, attempt);
+                std::vector<TickerRes> tickers_vec = c.fetch_tickers_sync();
+                clickhouse_client_mutex.lock();
+                insert_tickers_vec_into_clickhouse(clickhouse_client,
+                                                   tickers_vec);
+                clickhouse_client_mutex.unlock();
+            },
+            [&] { clickhouse_client_mutex.unlock(); }, c.ex);
     };
     SPDLOG_INFO("re-upload gateio-contracts");
     clickhouse_client.Execute(ClientPublicGateio::QUERY_TRUNCATE_CONTRACTS);
