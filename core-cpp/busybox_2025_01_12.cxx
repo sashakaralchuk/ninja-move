@@ -87,6 +87,7 @@ void upload_exchanges_entities_curr() {
     ClientPublicAevo client_aevo("fut");
     ClientPublicBitunix client_bitunix("fut");
     ClientPublicLBank client_lbank_fut("fut");
+    ClientPublicLBank client_lbank_spot("spot");
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
     std::mutex clickhouse_client_mutex;
@@ -169,6 +170,8 @@ void upload_exchanges_entities_curr() {
             exec_insert(client_bitget_spot, "tickers");
             exec_insert(client_kucoin_fut, "tickers");
             exec_insert(client_kucoin_spot, "tickers");
+            exec_insert_tickers_sync(client_lbank_fut);
+            exec_insert_tickers_sync(client_lbank_spot);
         });
         pool_alive = false;
     });
@@ -190,7 +193,6 @@ void upload_exchanges_entities_curr() {
             exec_insert_tickers_sync(client_apex_omni);
             exec_insert_fundings_sync(client_aevo);
             exec_insert_fundings_sync(client_bitunix);
-            exec_insert_tickers_sync(client_lbank_fut);
         });
         pool_alive = false;
     });

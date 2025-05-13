@@ -3967,20 +3967,40 @@ ClientPublicLBank::ClientPublicLBank(std::string kind) {
 }
 
 std::vector<TickerRes> ClientPublicLBank::fetch_tickers_sync() {
-    // NOTE: Tickert url found in terminal on next item open
-    // https://prnt.sc/i3OL-Vq9ArVb
-    std::string url_tickers =
-        "https://uuapi.ierpifvid.com/cfd/instrment/v1/ticker/24hr/intact";
-    struct curl_slist* headers = NULL;
-    headers = curl_slist_append(
-        headers, "content-type: application/json; charset=UTF-8");
-    headers = curl_slist_append(headers, "source: 4");
-    std::string body_str = "{\"product\":[\"FUTURES\"],\"area\":\"usdt\"}";
-    nlohmann::json res_obj =
-        execute_http_post_req(url_tickers, headers, body_str);
+    std::string product_kind = "";
+    nlohmann::json data_list_obj;
+    if (k == "fut") {
+        // NOTE: Tickert url found in terminal on next item open
+        // https://prnt.sc/i3OL-Vq9ArVb
+        product_kind = "FUTURES";
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(
+            headers, "content-type: application/json; charset=UTF-8");
+        headers = curl_slist_append(headers, "source: 4");
+        std::string body_str = "{\"product\":[\"FUTURES\"],\"area\":\"usdt\"}";
+        data_list_obj = execute_http_post_req(
+            "https://uuapi.ierpifvid.com/cfd/instrment/v1/ticker/24hr/intact",
+            headers, body_str)["dataWrapper"];
+    } else if (k == "spot") {
+        product_kind = "SPOT";
+        struct curl_slist* h = NULL;
+        h = curl_slist_append(h, "content-type: application/json");
+        std::string body_str = "{\"product\":[\"SPOT\"],\"area\":\"usdt\"}";
+        data_list_obj = execute_http_post_req(
+            "https://ccapi.ierpifvid.com/spot-market-center/v2/ticker/24hr/"
+            "intact",
+            h, body_str)["data"];
+    } else {
+        throw std::runtime_error(fmt::format("unexpected k={}", k));
+    }
     std::vector<TickerRes> tickers_vec;
     long ts = now_millis();
-    for (auto& obj_wrapper : res_obj["dataWrapper"]) {
+    for (auto& obj_wrapper : data_list_obj) {
+        if (obj_wrapper["product"] != product_kind) {
+            throw std::runtime_error(fmt::format(
+                "lbank unexpected product={} for k={} product_kind={}",
+                (std::string)obj_wrapper["product"], k, product_kind));
+        }
         for (auto& obj_ticker : obj_wrapper["tickers"]) {
             tickers_vec.push_back(TickerRes{
                 .obj_raw = obj_ticker,
