@@ -3,6 +3,7 @@
 
 #include <backward.hpp>
 #include <iostream>
+#include <unordered_set>
 
 #include "src/clients.hxx"
 #include "src/lib.hxx"
@@ -292,14 +293,18 @@ void insert_tickers_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
     clickhouse_client.Insert("default.tickers", block);
 }
 
-std::string read_grafan_spot_fut_perp_spread_sql() {
+std::string read_grafan_spot_fut_perp_spread_sql(std::string title_key) {
     std::ifstream f("../grafana/dashboards/default.json");
     nlohmann::json obj_file = nlohmann::json::parse(f);
     std::string query_spreads_str = "";
     for (auto& obj : obj_file["dashboard"]["panels"]) {
-        if (obj["title"] == "contango-ex-vs-ex") {
+        if (obj["title"] == title_key) {
             query_spreads_str = obj["targets"][0]["query"];
-            break;
+        }
+        for (auto& obj_int : obj["panels"]) {
+            if (obj_int["title"] == title_key) {
+                query_spreads_str = obj_int["targets"][0]["query"];
+            }
         }
     }
     if (query_spreads_str.length() == 0) {
@@ -310,34 +315,72 @@ std::string read_grafan_spot_fut_perp_spread_sql() {
 
 void check_send_spot_fut_perp_spread_alert(
     clickhouse::Client& clickhouse_client, double diff_rel_threshold) {
-    std::string query_spreads_str = read_grafan_spot_fut_perp_spread_sql();
-    std::string message_to_send = "";
-    clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
-                                                        b) {
-        for (size_t i = 0; i < b.GetRowCount(); ++i) {
-            std::string ccid =
-                (std::string)b[0]->As<clickhouse::ColumnString>()->At(i);
-            double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
-            std::string ex_link_fut =
-                (std::string)b[2]->As<clickhouse::ColumnString>()->At(i);
-            std::string ex_link_spot =
-                (std::string)b[3]->As<clickhouse::ColumnString>()->At(i);
-            if (diff_rel > diff_rel_threshold) {
-                message_to_send += fmt::format(
-                    "i={} ccid={} diff_rel={} ex_link_fut={} ex_link_spot={};",
-                    i, ccid, diff_rel, ex_link_fut, ex_link_spot);
+    std::vector<std::tuple<std::string, std::string>> messages;
+    {
+        std::string query_spreads_str =
+            read_grafan_spot_fut_perp_spread_sql("contango-ex-vs-ex");
+        std::unordered_set<std::string> ccids_to_ignore = {
+            "nakamoto-games", "axelar", "peaq-2", "blockstack",
+            "cryptogpt-token"};
+        clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
+                                                            b) {
+            for (size_t i = 0; i < b.GetRowCount(); ++i) {
+                std::string ccid =
+                    (std::string)b[0]->As<clickhouse::ColumnString>()->At(i);
+                double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
+                std::string ex_link_fut =
+                    (std::string)b[2]->As<clickhouse::ColumnString>()->At(i);
+                std::string ex_link_spot =
+                    (std::string)b[3]->As<clickhouse::ColumnString>()->At(i);
+                if (diff_rel > diff_rel_threshold &&
+                    ccids_to_ignore.find(ccid) == ccids_to_ignore.end()) {
+                    messages.push_back(std::make_tuple(
+                        fmt::format("contango-ex-vs-ex.{}", i),
+                        fmt::format("ccid={} diff_rel={} ex_link_fut={} "
+                                    "ex_link_spot={}",
+                                    ccid, diff_rel, ex_link_fut,
+                                    ex_link_spot)));
+                }
             }
-        }
-    });
-    if (message_to_send.size() > 0) {
-        SPDLOG_INFO("send telegram diff_rel_threshold={} message_to_send={}",
-                    diff_rel_threshold, message_to_send);
-        TelegramBotPort::new_from_envs().notify_pretty_v2(
-            {std::make_tuple("message", "check-send-spot-fut-perp-spread"),
-             std::make_tuple("filename", __FILENAME__),
-             std::make_tuple("diff_rel_threshold",
-                             std::to_string(diff_rel_threshold)),
-             std::make_tuple("message_to_send", message_to_send)});
+        });
+    }
+    {
+        std::string query_spreads_str = read_grafan_spot_fut_perp_spread_sql(
+            "contango-ex-vs-ex-on-base-token");
+        std::unordered_set<std::string> tokens_to_ignore = {
+            "NAKA", "AXL", "YFI", "LAI", "PEAQ", "STX"};
+        clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
+                                                            b) {
+            for (size_t i = 0; i < b.GetRowCount(); ++i) {
+                std::string token_0 =
+                    (std::string)b[0]->As<clickhouse::ColumnString>()->At(i);
+                double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
+                std::string ex_link_fut =
+                    (std::string)b[2]->As<clickhouse::ColumnString>()->At(i);
+                std::string ex_link_spot =
+                    (std::string)b[3]->As<clickhouse::ColumnString>()->At(i);
+                if (diff_rel > diff_rel_threshold &&
+                    tokens_to_ignore.find(token_0) == tokens_to_ignore.end()) {
+                    messages.push_back(std::make_tuple(
+                        fmt::format("contango-ex-vs-ex-on-base-token.{}", i),
+                        fmt::format("token_0={} diff_rel={} ex_link_fut={} "
+                                    "ex_link_spot={}",
+                                    token_0, diff_rel, ex_link_fut,
+                                    ex_link_spot)));
+                }
+            }
+        });
+    }
+    if (messages.size() > 0) {
+        SPDLOG_INFO("send telegram diff_rel_threshold={} messages.size={}",
+                    diff_rel_threshold, messages.size());
+        messages.insert(
+            messages.begin(),
+            std::make_tuple("message", "check-send-spot-fut-perp-spread"));
+        messages.push_back(std::make_tuple("filename", __FILENAME__));
+        messages.push_back(std::make_tuple("diff_rel_threshold",
+                                           std::to_string(diff_rel_threshold)));
+        TelegramBotPort::new_from_envs().notify_pretty_v2(messages);
     } else {
         SPDLOG_INFO("there is no spreads with diff_rel_threshold={}",
                     diff_rel_threshold);
@@ -351,7 +394,8 @@ void observe_send_spot_fut_perp_spread_converge_v1() {
     double diff_rel_threshold = 1.0;
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
-    std::string query_spreads_str = read_grafan_spot_fut_perp_spread_sql();
+    std::string query_spreads_str =
+        read_grafan_spot_fut_perp_spread_sql("contango-ex-vs-ex");
     while (true) {
         double diff_rel_iter = -1.0;
         clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&

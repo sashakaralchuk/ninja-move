@@ -528,7 +528,7 @@ CREATE FUNCTION conv_symbol_to_token_v2 AS (ex, s) -> replaceRegexpOne(
     ex = 'apex-pro', replaceRegexpOne(s, 'USDC$', ''),
     ex = 'paradex', replaceRegexpOne(s, '-USD-PERP$', ''),
     ex = 'bybit', replaceRegexpOne(s, '(USDT|PERP|(USDT)?-[0-9]{2}[A-Z]{3}[0-9]{2})$', ''),
-    ex = 'mexc', replaceRegexpOne(s, '_(USDT|USD)$', ''),
+    ex = 'mexc', replaceRegexpOne(s, '_?(USDT|USD)$', ''),
     ex = 'arkm', replaceRegexpOne(s, '_USDT_PERP$', ''),
     ex = 'aevo', replaceRegexpOne(s, '-USD$', ''),
     ex = 'coinex', replaceRegexpOne(s, '(USDT|USDC|USD)$', ''),
@@ -536,9 +536,99 @@ CREATE FUNCTION conv_symbol_to_token_v2 AS (ex, s) -> replaceRegexpOne(
     ex = 'apex-omni', replaceRegexpOne(s, 'USDT$', ''),
     ex = 'polynomial-fi', s,
     ex = 'binance', replaceRegexpOne(s, '(USDT|USDC)(_\d{6})?$', ''),
+    ex = 'kucoin', replaceRegexpOne(s, '(-USDT|USDTM)$', ''),
+    ex = 'bitget', replaceRegexpOne(s, '(USDT|USDC)$', ''),
     ''
   ),
   '^(100*)', ''
+);
+--
+CREATE FUNCTION ext_tokens_meta_v3 AS (ex, k, s) -> multiIf(
+  ex = 'apex-omni' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, 'USDT$', ''), '^(100*)', ''),
+    'USDT',
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'apex-pro' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, 'USDC$', ''), '^(100*)', ''),
+    'USDC',
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'binance' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(USDC|USDT|BTC)(_[0-9]{6})?$', ''), '^(100*)', ''),
+    regexpExtract(s, '(USDC|USDT|BTC)(_[0-9]{6})?$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'binance' and k = 'spot', tuple(
+    replaceRegexpOne(s, '(FDUSD|USDC|TRY|BUSD|BTC|ETH|USDT|TUSD|BNB|UAH|EUR|RUB|PLN|BRL|AUD|JPY|GBP|BIDR|ARS|DAI|PAX|UST|BKRW|ZAR|NGN|MXN|BUSDS|EURI|TRX|USDP|CZK|IDRT|VAI|XRP|RON|BVND|DOT|SOL|COP|DOGE|USDS)$', ''),
+    regexpExtract(s, '(FDUSD|USDC|TRY|BUSD|BTC|ETH|USDT|TUSD|BNB|UAH|EUR|RUB|PLN|BRL|AUD|JPY|GBP|BIDR|ARS|DAI|PAX|UST|BKRW|ZAR|NGN|MXN|BUSDS|EURI|TRX|USDP|CZK|IDRT|VAI|XRP|RON|BVND|DOT|SOL|COP|DOGE|USDS)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'bingx' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '-(USDC|USDT)$', ''), '^(100*)', ''),
+    regexpExtract(s, '(USDC|USDT)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'bitget' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(PERP|USDT|USD)([FGHJKMNQUVXZ][0-9]{2})?$', ''), '^(100*)', ''),
+    if(regexpExtract(s, '(PERP|USDT|USD)([FGHJKMNQUVXZ][0-9]{2})?$') = 'PERP', 'USDC', regexpExtract(s, '(PERP|USDT|USD)([FGHJKMNQUVXZ][0-9]{2})?$')),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'bitget' and k = 'spot', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(USDT|BRL|USDC|EUR|BTC|ETH|USDE|WUSD)$', ''), '^(100*)', ''),
+    regexpExtract(s, '(USDT|BRL|USDC|EUR|BTC|ETH|USDE|WUSD)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'bybit' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(PERP|USDT)?(-[0-9]{2}[A-Z]{3}[0-9]{2})?$', ''), '^(100*)', ''),
+    multiIf(
+      regexpExtract(s, '(PERP|USDT)?(-[0-9]{2}[A-Z]{3}[0-9]{2})?$') = 'PERP', 'USDC',
+      regexpExtract(s, '(PERP|USDT)?(-[0-9]{2}[A-Z]{3}[0-9]{2})?$') = '', 'USD', 
+      regexpExtract(s, '(PERP|USDT)?(-[0-9]{2}[A-Z]{3}[0-9]{2})?$')
+    ),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'bybit' and k = 'spot', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(USDC|USDT|EUR|BRL|BTC|PLN|USDQ|USDE|SOL|TRY|BRZ|USDR|ETH|DAI)$', ''), '^(100*)', ''),
+    regexpExtract(s, '(USDC|USDT|EUR|BRL|BTC|PLN|USDQ|USDE|SOL|TRY|BRZ|USDR|ETH|DAI)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'gateio' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '_(USDT)$', ''), '^(100*)', ''),
+    regexpExtract(s, '_(USDT)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'gateio' and k = 'spot', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '_(USDT|USDC|BTC|ETH|USD)$', ''), '^(100*)', ''),
+    regexpExtract(s, '_(USDT|USDC|BTC|ETH|USD)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'kucoin' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(USDT|USDC|USD)M$', ''), '^(100*)', ''),
+    regexpExtract(s, '(USDT|USDC|USD)M$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'kucoin' and k = 'spot', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '-(USDT|EUR|ETH|BTC|USDC|KCS|DAI|BRL|DOGE|TRX)$', ''), '^(100*)', ''),
+    regexpExtract(s, '-(USDT|EUR|ETH|BTC|USDC|KCS|DAI|BRL|DOGE|TRX)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'lbank' and k = 'fut', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(USDT)$', ''), '^(100*)', ''),
+    regexpExtract(s, '(USDT)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'lbank' and k = 'spot', tuple(
+    upper(replaceRegexpOne(s, '_(usdt)$', '')),
+    upper(regexpExtract(s, '_(usdt)$')),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  ex = 'mexc' and k = 'spot', tuple(
+    replaceRegexpOne(replaceRegexpOne(s, '(USDT|USDC|EUR|BTC|USDE|BRL|ETH|TUSD)$', ''), '^(100*)', ''),
+    regexpExtract(s, '(USDT|USDC|EUR|BTC|USDE|BRL|ETH|TUSD)$'),
+    length(regexpExtract(s, '^(100*)'))
+  ),
+  tuple('', '', 0)
 );
 --
 CREATE TABLE default.ex_k_to_ccid (
@@ -594,6 +684,9 @@ TTL ts_write + INTERVAL 7 DAYS;
 --
 -- cat /dumps/dump_ex_k_to_ccid_v2.sql | xargs -I {} -0 clickhouse-client '{}'
 -- clickhouse-client --query 'TRUNCATE TABLE default.ex_k_to_ccid_v2' && clickhouse-client --queries-file /dumps/dump_ex_k_to_ccid_v2.sql && clickhouse-client --query 'SELECT count() FROM default.ex_k_to_ccid_v2'
+-- NOTE: all in all coingecko coin id changes from time to time
+--       => mapping with it is not precise
+--       => in case if continuing with ex_k_to_ccid_v2 better to get rid of (added-by-jupy-busybox, not-found-on-coingecko, added-by-jupy-busybox-coingecko-api)
 CREATE TABLE default.ex_k_to_ccid_v2 (
     `ex` String,
     `k` String,

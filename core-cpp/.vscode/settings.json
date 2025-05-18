@@ -104,6 +104,7 @@
         "format": "cpp",
         "execution": "cpp",
         "future": "cpp",
-        "*.ipp": "cpp"
+        "*.ipp": "cpp",
+        "sim_unordered_set": "cpp"
     }
 }
