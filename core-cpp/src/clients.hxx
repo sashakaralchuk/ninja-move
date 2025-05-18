@@ -557,6 +557,7 @@ class TelegramBotPort {
    public:
     TelegramBotPort(std::string token_, std::string chat_id_);
     static TelegramBotPort new_from_envs();
+    void encode_notify_markdown(std::string message);
     void notify_pretty(std::string message, std::string action);
     void notify_pretty_v2(
         std::vector<std::tuple<std::string, std::string>> key_value_vec);

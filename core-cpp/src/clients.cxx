@@ -4091,6 +4091,15 @@ TelegramBotPort TelegramBotPort::new_from_envs() {
                            std::getenv("TELEGRAM_BOT_CHAT_ID"));
 }
 
+void TelegramBotPort::encode_notify_markdown(std::string message) {
+    std::string url_str = fmt::format(
+        "https://api.telegram.org/bot{}/"
+        "sendMessage?chat_id={}&text={}&parse_mode=Markdown&"
+        "disable_web_page_preview=true",
+        token, chat_id, url_encode(message));
+    exec_http_get_req(url_str);
+}
+
 void TelegramBotPort::notify_pretty(std::string message, std::string action) {
     notify_pretty_v2({
         std::make_tuple("message", message),

@@ -11,6 +11,8 @@
 backward::SignalHandling sh{};
 
 #define GEN_VARNAME(x) #x
+#define GET_STR_COL_AT(vec, idx, i) \
+    (std::string)(vec)[(idx)]->As<clickhouse::ColumnString>()->At((i))
 
 void upload_exchanges_entities_curr();
 void insert_fundings_vec_into_clickhouse(clickhouse::Client& clickhouse_client,
@@ -316,75 +318,100 @@ std::string read_grafan_spot_fut_perp_spread_sql(std::string title_key) {
 void check_send_spot_fut_perp_spread_alert(
     clickhouse::Client& clickhouse_client, double diff_rel_threshold) {
     std::vector<std::tuple<std::string, std::string>> messages;
+    std::ostringstream message_oss;
+    auto gen_title = [&](std::string& query_key) {
+        return fmt::format("### {}\n", query_key);
+    };
+    auto gen_clause_str = [&](std::string& key, double diff_rel,
+                              std::string& ex_fut, std::string& ex_link_fut,
+                              std::string& ex_spot, std::string& ex_link_spot) {
+        return fmt::format(
+            "\\* {}: diff\\_rel={} [{}-fut]({}) vs [{}-spot]({})\n", key,
+            diff_rel, ex_fut, ex_link_fut, ex_spot, ex_link_spot);
+    };
     {
+        std::string query_key = "contango-ex-vs-ex";
         std::string query_spreads_str =
-            read_grafan_spot_fut_perp_spread_sql("contango-ex-vs-ex");
+            read_grafan_spot_fut_perp_spread_sql(query_key);
         std::unordered_set<std::string> ccids_to_ignore = {
             "nakamoto-games", "axelar", "peaq-2", "blockstack",
             "cryptogpt-token"};
-        clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
-                                                            b) {
-            for (size_t i = 0; i < b.GetRowCount(); ++i) {
-                std::string ccid =
-                    (std::string)b[0]->As<clickhouse::ColumnString>()->At(i);
-                double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
-                std::string ex_link_fut =
-                    (std::string)b[2]->As<clickhouse::ColumnString>()->At(i);
-                std::string ex_link_spot =
-                    (std::string)b[3]->As<clickhouse::ColumnString>()->At(i);
-                if (diff_rel > diff_rel_threshold &&
-                    ccids_to_ignore.find(ccid) == ccids_to_ignore.end()) {
-                    messages.push_back(std::make_tuple(
-                        fmt::format("contango-ex-vs-ex.{}", i),
-                        fmt::format("ccid={} diff_rel={} ex_link_fut={} "
-                                    "ex_link_spot={}",
-                                    ccid, diff_rel, ex_link_fut,
-                                    ex_link_spot)));
+        std::vector<std::string> messages_int = {};
+        clickhouse_client.Select(
+            query_spreads_str, [&](const clickhouse::Block& b) {
+                for (size_t i = 0; i < b.GetRowCount(); ++i) {
+                    std::string ccid = GET_STR_COL_AT(b, 0, i);
+                    double diff_rel =
+                        b[1]->As<clickhouse::ColumnFloat64>()->At(i);
+                    std::string ex_link_fut = GET_STR_COL_AT(b, 2, i);
+                    std::string ex_link_spot = GET_STR_COL_AT(b, 3, i);
+                    std::string ex_fut = GET_STR_COL_AT(b, 10, i);
+                    std::string ex_spot = GET_STR_COL_AT(b, 11, i);
+                    if (diff_rel > diff_rel_threshold &&
+                        ccids_to_ignore.find(ccid) == ccids_to_ignore.end()) {
+                        messages_int.push_back(
+                            gen_clause_str(ccid, diff_rel, ex_fut, ex_link_fut,
+                                           ex_spot, ex_link_spot));
+                    }
                 }
+            });
+        if (messages_int.size() > 0) {
+            message_oss << gen_title(query_key);
+            for (auto& m : messages_int) {
+                message_oss << m;
             }
-        });
+        }
     }
     {
-        std::string query_spreads_str = read_grafan_spot_fut_perp_spread_sql(
-            "contango-ex-vs-ex-on-base-token");
+        std::string query_key = "contango-ex-vs-ex-on-base-token";
+        std::string query_spreads_str =
+            read_grafan_spot_fut_perp_spread_sql(query_key);
         std::unordered_set<std::string> tokens_to_ignore = {
             "NAKA", "AXL", "YFI", "LAI", "PEAQ", "STX"};
-        clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
-                                                            b) {
-            for (size_t i = 0; i < b.GetRowCount(); ++i) {
-                std::string token_0 =
-                    (std::string)b[0]->As<clickhouse::ColumnString>()->At(i);
-                double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
-                std::string ex_link_fut =
-                    (std::string)b[2]->As<clickhouse::ColumnString>()->At(i);
-                std::string ex_link_spot =
-                    (std::string)b[3]->As<clickhouse::ColumnString>()->At(i);
-                if (diff_rel > diff_rel_threshold &&
-                    tokens_to_ignore.find(token_0) == tokens_to_ignore.end()) {
-                    messages.push_back(std::make_tuple(
-                        fmt::format("contango-ex-vs-ex-on-base-token.{}", i),
-                        fmt::format("token_0={} diff_rel={} ex_link_fut={} "
-                                    "ex_link_spot={}",
-                                    token_0, diff_rel, ex_link_fut,
-                                    ex_link_spot)));
+        std::vector<std::string> messages_int = {};
+        clickhouse_client.Select(
+            query_spreads_str, [&](const clickhouse::Block& b) {
+                for (size_t i = 0; i < b.GetRowCount(); ++i) {
+                    std::string token_0 = GET_STR_COL_AT(b, 0, i);
+                    double diff_rel =
+                        b[1]->As<clickhouse::ColumnFloat64>()->At(i);
+                    std::string ex_link_fut = GET_STR_COL_AT(b, 2, i);
+                    std::string ex_link_spot = GET_STR_COL_AT(b, 3, i);
+                    std::string ex_fut = GET_STR_COL_AT(b, 10, i);
+                    std::string ex_spot = GET_STR_COL_AT(b, 11, i);
+                    if (diff_rel > diff_rel_threshold &&
+                        tokens_to_ignore.find(token_0) ==
+                            tokens_to_ignore.end()) {
+                        messages_int.push_back(
+                            gen_clause_str(token_0, diff_rel, ex_fut,
+                                           ex_link_fut, ex_spot, ex_link_spot));
+                    }
                 }
+            });
+        if (messages_int.size() > 0) {
+            message_oss << gen_title(query_key);
+            for (auto& m : messages_int) {
+                message_oss << m;
             }
-        });
+        }
     }
-    if (messages.size() > 0) {
-        SPDLOG_INFO("send telegram diff_rel_threshold={} messages.size={}",
-                    diff_rel_threshold, messages.size());
-        messages.insert(
-            messages.begin(),
-            std::make_tuple("message", "check-send-spot-fut-perp-spread"));
-        messages.push_back(std::make_tuple("filename", __FILENAME__));
-        messages.push_back(std::make_tuple("diff_rel_threshold",
-                                           std::to_string(diff_rel_threshold)));
-        TelegramBotPort::new_from_envs().notify_pretty_v2(messages);
-    } else {
+    std::cout << "message=" << message_oss.str() << std::endl;
+    std::cout << "empty=" << message_oss.str().empty() << std::endl;
+    if (message_oss.str().empty()) {
         SPDLOG_INFO("there is no spreads with diff_rel_threshold={}",
                     diff_rel_threshold);
+        return;
     }
+    nlohmann::json meta = {
+        {"message", "check-send-spot-fut-perp-spread"},
+        {"diff_rel_threshold", diff_rel_threshold},
+        {"filename", __FILENAME__},
+        {"now", time_point_to_str(std::chrono::system_clock::now())},
+    };
+    message_oss << "```json\n" << meta.dump(2) << "\n```";
+    SPDLOG_INFO("send telegram diff_rel_threshold={} messages={}",
+                diff_rel_threshold, message_oss.str());
+    TelegramBotPort::new_from_envs().encode_notify_markdown(message_oss.str());
 }
 
 void observe_send_spot_fut_perp_spread_converge_v1() {
