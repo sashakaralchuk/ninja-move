@@ -537,6 +537,22 @@ class ClientPublicLBank : public ClientPublicFetchTickersSync {
     std::vector<TickerRes> fetch_tickers_sync();
 };
 
+class ClientPublicBitmart : public ClientPublic {
+   public:
+    ClientPublicBitmart(std::string k);
+
+    void init_idle();
+    void subscribe_to_trades(std::string& symbol);
+    void subscribe_to_depth(std::string& symbol);
+    void unsubscribe_from_depth(std::string& symbol);
+    void ping();
+    Ticker fetch_ticker(std::string& symbol);
+    std::vector<Ticker> fetch_tickers();
+
+   protected:
+    void handle_onmessage(const std::string& msg);
+};
+
 class TelegramBotPort {
    public:
     TelegramBotPort(std::string token_, std::string chat_id_);

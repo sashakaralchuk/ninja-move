@@ -106,6 +106,8 @@ void upload_exchanges_entities_curr() {
     ClientPublicBitunix client_bitunix("fut");
     ClientPublicLBank client_lbank_fut("fut");
     ClientPublicLBank client_lbank_spot("spot");
+    ClientPublicBitmart client_bitmart_fut("fut");
+    ClientPublicBitmart client_bitmart_spot("spot");
     clickhouse::Client clickhouse_client(
         clickhouse::ClientOptions().SetHost("127.0.0.1").SetPort(9000));
     std::mutex clickhouse_client_mutex;
@@ -192,6 +194,8 @@ void upload_exchanges_entities_curr() {
             exec_insert(client_kucoin_spot, "tickers");
             exec_insert_tickers_sync(client_lbank_fut);
             exec_insert_tickers_sync(client_lbank_spot);
+            exec_insert(client_bitmart_fut, "tickers");
+            exec_insert(client_bitmart_spot, "tickers");
         });
         pool_alive = false;
     });

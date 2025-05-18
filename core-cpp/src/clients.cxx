@@ -4015,6 +4015,72 @@ std::vector<TickerRes> ClientPublicLBank::fetch_tickers_sync() {
     return tickers_vec;
 }
 
+ClientPublicBitmart::ClientPublicBitmart(std::string k)
+    : ClientPublic("bitmart", k) {
+    if (kind == "fut") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                arrayJoin(JSONExtractArrayRaw(JSONExtractRaw(json, 'data'), 'tickers')) obj_raw,
+                JSONExtractString(obj_raw, 'contract_name') s,
+                JSONExtractFloat(obj_raw, 'funding_rate') funding_rate,
+                NOW() ts,
+                'bitmart' ex,
+                'fut' k,
+                NOW() ts_write
+            -- NOTE: url is from ui futures page
+            FROM url('https://contract-v2.bitmart.com/v1/ifcontract/tickers', 'JSONAsString');
+        )";
+    } else if (kind == "spot") {
+        template_tickers_insert_sql = R"(
+            INSERT INTO {}
+            SELECT
+                arrayJoin(JSONExtractArrayRaw(json, 'data')) obj_raw,
+                arrayElement(JSONExtractArrayRaw(obj_raw), 1) s,
+                0 funding_rate,
+                0 ts,
+                'bitmart' ex,
+                'spot' k,
+                NOW() ts_write
+            FROM url('https://api-cloud.bitmart.com/spot/quotation/v3/tickers', 'JSONAsString');
+        )";
+    } else {
+        throw gen_unexp_kind_err(ex, kind);
+    }
+}
+
+void ClientPublicBitmart::init_idle() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitmart::subscribe_to_trades(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitmart::subscribe_to_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitmart::unsubscribe_from_depth(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitmart::ping() {
+    throw std::runtime_error("not-implemented");
+}
+
+Ticker ClientPublicBitmart::fetch_ticker(std::string& symbol) {
+    throw std::runtime_error("not-implemented");
+}
+
+std::vector<Ticker> ClientPublicBitmart::fetch_tickers() {
+    throw std::runtime_error("not-implemented");
+}
+
+void ClientPublicBitmart::handle_onmessage(const std::string& msg) {
+    throw std::runtime_error("not-implemented");
+}
+
 TelegramBotPort::TelegramBotPort(std::string token_, std::string chat_id_) {
     token = token_;
     chat_id = chat_id_;
