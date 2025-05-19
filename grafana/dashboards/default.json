@@ -10,10 +10,10 @@
     "url": "/d/fec14y22vtjpcb/default",
     "expires": "0001-01-01T00:00:00Z",
     "created": "2025-03-30T09:45:17Z",
-    "updated": "2025-05-18T17:22:51Z",
+    "updated": "2025-05-19T09:16:31Z",
     "updatedBy": "admin1",
     "createdBy": "admin1",
-    "version": 91,
+    "version": 97,
     "hasAcl": false,
     "isFolder": false,
     "folderId": 0,
@@ -504,7 +504,7 @@
               "h": 4,
               "w": 3,
               "x": 0,
-              "y": 44
+              "y": 80
             },
             "id": 4,
             "options": {
@@ -578,7 +578,7 @@
               "h": 4,
               "w": 3,
               "x": 3,
-              "y": 44
+              "y": 80
             },
             "id": 5,
             "options": {
@@ -658,7 +658,8 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green"
+                      "color": "green",
+                      "value": null
                     },
                     {
                       "color": "red",
@@ -796,7 +797,8 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green"
+                      "color": "green",
+                      "value": null
                     },
                     {
                       "color": "red",
@@ -898,7 +900,8 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green"
+                      "color": "green",
+                      "value": null
                     },
                     {
                       "color": "red",
@@ -999,7 +1002,8 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green"
+                      "color": "green",
+                      "value": null
                     },
                     {
                       "color": "red",
@@ -1377,8 +1381,8 @@
             "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
             "interval": "",
             "intervalFactor": 1,
-            "query": "-- TODO: for huge spread symbols either ignore them (code below) or make external mapping\nSELECT\n  `token.1`,\n  truncate((p_bid_fut - p_ask_spot) / p_ask_spot * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, k = 'fut'), 1) ex_link_fut,\n  arrayElement(groupArrayIf(ex_link, k = 'spot'), 1) ex_link_spot,\n  groupArrayIf(s, k = 'fut') s_fut,\n  groupArrayIf(s, k = 'spot') s_spot,\n  sum(if(k = 'fut', p_bid_per_1_token, 0)) p_bid_fut,\n  sum(if(k = 'spot', p_ask_per_1_token, 0)) p_ask_spot,\n  groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n  groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n  arrayElement(groupArrayIf(ex, k = 'fut'), 1) ex_fut,\n  arrayElement(groupArrayIf(ex, k = 'spot'), 1) ex_spot\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token DESC) as rank_lowest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token ASC) as rank_highest_ask\n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 'sc_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n)\nWHERE (k = 'fut' AND rank_lowest_bid = 1) OR (k = 'spot' AND rank_highest_ask = 1)\nGROUP BY `token.1`\nHAVING p_bid_fut != 0 AND p_ask_spot != 0\nORDER BY diff_rel DESC\nLIMIT 100",
-            "rawQuery": "/* grafana dashboard=default, user=1 */\n\nSELECT\n  `token.1`,\n  truncate((p_bid_fut - p_ask_spot) / p_ask_spot * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, k = 'fut'), 1) ex_link_fut,\n  arrayElement(groupArrayIf(ex_link, k = 'spot'), 1) ex_link_spot,\n  groupArrayIf(s, k = 'fut') s_fut,\n  groupArrayIf(s, k = 'spot') s_spot,\n  sum(if(k = 'fut', p_bid_per_1_token, 0)) p_bid_fut,\n  sum(if(k = 'spot', p_ask_per_1_token, 0)) p_ask_spot,\n  groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n  groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n  arrayElement(groupArrayIf(ex, k = 'fut'), 1) ex_fut,\n  arrayElement(groupArrayIf(ex, k = 'spot'), 1) ex_spot\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token DESC) as rank_lowest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token ASC) as rank_highest_ask\n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 's_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n)\nWHERE (k = 'fut' AND rank_lowest_bid = 1) OR (k = 'spot' AND rank_highest_ask = 1)\nGROUP BY `token.1`\nHAVING p_bid_fut != 0 AND p_ask_spot != 0\nORDER BY diff_rel DESC\nLIMIT 100",
+            "query": "-- TODO: for huge spread symbols either ignore them (code below) or make external mapping\nSELECT\n  `token.1`,\n  truncate((p_bid_fut - p_ask_spot) / p_ask_spot * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, k = 'fut'), 1) ex_link_fut,\n  arrayElement(groupArrayIf(ex_link, k = 'spot'), 1) ex_link_spot,\n  groupArrayIf(s, k = 'fut') s_fut,\n  groupArrayIf(s, k = 'spot') s_spot,\n  sum(if(k = 'fut', p_bid_per_1_token, 0)) p_bid_fut,\n  sum(if(k = 'spot', p_ask_per_1_token, 0)) p_ask_spot,\n  groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n  groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n  arrayElement(groupArrayIf(ex, k = 'fut'), 1) ex_fut,\n  arrayElement(groupArrayIf(ex, k = 'spot'), 1) ex_spot\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token DESC) as rank_highest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token ASC) as rank_lowest_ask\n  -- base-query start\n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != '' AND s NOT LIKE '%-%'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 'sc_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n  -- base-query end\n)\nWHERE (k = 'fut' AND rank_highest_bid = 1) OR (k = 'spot' AND rank_lowest_ask = 1)\nGROUP BY `token.1`\nHAVING p_bid_fut != 0 AND p_ask_spot != 0\nORDER BY diff_rel DESC\nLIMIT 100",
+            "rawQuery": "/* grafana dashboard=default, user=1 */\n\nSELECT\n  `token.1`,\n  truncate((p_bid_fut - p_ask_spot) / p_ask_spot * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, k = 'fut'), 1) ex_link_fut,\n  arrayElement(groupArrayIf(ex_link, k = 'spot'), 1) ex_link_spot,\n  groupArrayIf(s, k = 'fut') s_fut,\n  groupArrayIf(s, k = 'spot') s_spot,\n  sum(if(k = 'fut', p_bid_per_1_token, 0)) p_bid_fut,\n  sum(if(k = 'spot', p_ask_per_1_token, 0)) p_ask_spot,\n  groupArrayIf(ts_write, k = 'fut') ts_write_fut,\n  groupArrayIf(ts_write, k = 'spot') ts_write_spot,\n  arrayElement(groupArrayIf(ex, k = 'fut'), 1) ex_fut,\n  arrayElement(groupArrayIf(ex, k = 'spot'), 1) ex_spot\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token DESC) as rank_lowest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token ASC) as rank_highest_ask\n  \n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != '' AND s NOT LIKE '%-%'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 'sc_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n  \n)\nWHERE (k = 'fut' AND rank_lowest_bid = 1) OR (k = 'spot' AND rank_highest_ask = 1)\nGROUP BY `token.1`\nHAVING p_bid_fut != 0 AND p_ask_spot != 0\nORDER BY diff_rel DESC\nLIMIT 100",
             "refId": "A",
             "round": "0s",
             "skip_comments": true,
@@ -1602,6 +1606,120 @@
         "fieldConfig": {
           "defaults": {
             "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex_link_min"
+              },
+              "properties": [
+                {
+                  "id": "links",
+                  "value": [
+                    {
+                      "targetBlank": true,
+                      "title": "ex_link_min_1",
+                      "url": "${__value.raw}"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex_link_max"
+              },
+              "properties": [
+                {
+                  "id": "links",
+                  "value": [
+                    {
+                      "targetBlank": true,
+                      "title": "ex_link_max_1",
+                      "url": "${__value.raw}"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 16,
+          "x": 0,
+          "y": 10
+        },
+        "id": 24,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT\n  `token.1`,\n  truncate((p_ask_max - p_bid_min) / p_bid_min * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, rank_highest_ask = 1), 1) ex_link_min,\n  arrayElement(groupArrayIf(ex_link, rank_lowest_bid = 1), 1) ex_link_max,\n  groupArrayIf(s, rank_highest_ask = 1) s_min,\n  groupArrayIf(s, rank_lowest_bid = 1) s_max,\n  sum(if(rank_highest_ask = 1, p_bid_per_1_token, 0)) p_bid_min,\n  sum(if(rank_lowest_bid = 1, p_ask_per_1_token, 0)) p_ask_max,\n  groupArrayIf(ts_write, rank_highest_ask = 1) ts_write_min,\n  groupArrayIf(ts_write, rank_lowest_bid = 1) ts_write_max,\n  arrayElement(groupArrayIf(ex, rank_highest_ask = 1), 1) ex_min,\n  arrayElement(groupArrayIf(ex, rank_lowest_bid = 1), 1) ex_max\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token ASC) as rank_lowest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token DESC) as rank_highest_ask\n  -- base-query start\n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != '' AND s NOT LIKE '%-%'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 'sc_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n  -- base-query end\n    AND k = 'spot'\n)\nGROUP BY `token.1`\nHAVING p_bid_min != 0 AND p_ask_max != 0 AND ex_min != ex_max\nORDER BY diff_rel DESC\nLIMIT 100",
+            "rawQuery": "/* grafana dashboard=default, user=1 */\nSELECT\n  `token.1`,\n  truncate((p_ask_max - p_bid_min) / p_bid_min * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, rank_highest_ask = 1), 1) ex_link_min,\n  arrayElement(groupArrayIf(ex_link, rank_lowest_bid = 1), 1) ex_link_max,\n  groupArrayIf(s, rank_highest_ask = 1) s_min,\n  groupArrayIf(s, rank_lowest_bid = 1) s_max,\n  sum(if(rank_highest_ask = 1, p_bid_per_1_token, 0)) p_bid_min,\n  sum(if(rank_lowest_bid = 1, p_ask_per_1_token, 0)) p_ask_max,\n  groupArrayIf(ts_write, rank_highest_ask = 1) ts_write_min,\n  groupArrayIf(ts_write, rank_lowest_bid = 1) ts_write_max,\n  arrayElement(groupArrayIf(ex, rank_highest_ask = 1), 1) ex_min,\n  arrayElement(groupArrayIf(ex, rank_lowest_bid = 1), 1) ex_max\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token ASC) as rank_lowest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token DESC) as rank_highest_ask\n  \n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != '' AND s NOT LIKE '%-%'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 'sc_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n  \n    AND k = 'spot'\n)\nGROUP BY `token.1`\nHAVING p_bid_min != 0 AND p_ask_max != 0 AND ex_min != ex_max\nORDER BY diff_rel DESC\nLIMIT 100",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "spot-vs-spot-ex-vs-ex-on-base-token",
+        "type": "table"
+      },
+      {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
               "mode": "palette-classic"
             },
             "custom": {
@@ -1698,12 +1816,126 @@
         "type": "timeseries"
       },
       {
+        "datasource": {
+          "type": "vertamedia-clickhouse-datasource",
+          "uid": "P17DD60A6E550C391"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex_link_min"
+              },
+              "properties": [
+                {
+                  "id": "links",
+                  "value": [
+                    {
+                      "targetBlank": true,
+                      "title": "ex_link_min_1",
+                      "url": "${__value.raw}"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "ex_link_max"
+              },
+              "properties": [
+                {
+                  "id": "links",
+                  "value": [
+                    {
+                      "targetBlank": true,
+                      "title": "ex_link_max_1",
+                      "url": "${__value.raw}"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 16,
+          "x": 0,
+          "y": 16
+        },
+        "id": 25,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "11.5.0",
+        "targets": [
+          {
+            "adHocFilters": [],
+            "adHocValuesQuery": "",
+            "add_metadata": true,
+            "contextWindowSize": "10",
+            "editorMode": "builder",
+            "extrapolate": true,
+            "format": "table",
+            "formattedQuery": "SELECT $timeSeries as t, count() FROM $table WHERE $timeFilter GROUP BY t ORDER BY t",
+            "interval": "",
+            "intervalFactor": 1,
+            "query": "SELECT\n  `token.1`,\n  truncate((p_ask_max - p_bid_min) / p_bid_min * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, rank_highest_ask = 1), 1) ex_link_min,\n  arrayElement(groupArrayIf(ex_link, rank_lowest_bid = 1), 1) ex_link_max,\n  groupArrayIf(s, rank_highest_ask = 1) s_min,\n  groupArrayIf(s, rank_lowest_bid = 1) s_max,\n  sum(if(rank_highest_ask = 1, p_bid_per_1_token, 0)) p_bid_min,\n  sum(if(rank_lowest_bid = 1, p_ask_per_1_token, 0)) p_ask_max,\n  groupArrayIf(ts_write, rank_highest_ask = 1) ts_write_min,\n  groupArrayIf(ts_write, rank_lowest_bid = 1) ts_write_max,\n  arrayElement(groupArrayIf(ex, rank_highest_ask = 1), 1) ex_min,\n  arrayElement(groupArrayIf(ex, rank_lowest_bid = 1), 1) ex_max\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token ASC) as rank_lowest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token DESC) as rank_highest_ask\n  -- base-query start\n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != '' AND s NOT LIKE '%-%'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 'sc_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n  -- base-query end\n    AND k = 'fut'\n)\nGROUP BY `token.1`\nHAVING p_bid_min != 0 AND p_ask_max != 0 AND ex_min != ex_max\nORDER BY diff_rel DESC\nLIMIT 100",
+            "rawQuery": "/* grafana dashboard=default, user=1 */\nSELECT\n  `token.1`,\n  truncate((p_ask_max - p_bid_min) / p_bid_min * 100, 2) diff_rel,\n  arrayElement(groupArrayIf(ex_link, rank_highest_ask = 1), 1) ex_link_min,\n  arrayElement(groupArrayIf(ex_link, rank_lowest_bid = 1), 1) ex_link_max,\n  groupArrayIf(s, rank_highest_ask = 1) s_min,\n  groupArrayIf(s, rank_lowest_bid = 1) s_max,\n  sum(if(rank_highest_ask = 1, p_bid_per_1_token, 0)) p_bid_min,\n  sum(if(rank_lowest_bid = 1, p_ask_per_1_token, 0)) p_ask_max,\n  groupArrayIf(ts_write, rank_highest_ask = 1) ts_write_min,\n  groupArrayIf(ts_write, rank_lowest_bid = 1) ts_write_max,\n  arrayElement(groupArrayIf(ex, rank_highest_ask = 1), 1) ex_min,\n  arrayElement(groupArrayIf(ex, rank_lowest_bid = 1), 1) ex_max\nFROM (\n  SELECT\n    t1.*,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_bid_per_1_token ASC) as rank_lowest_bid,\n    row_number() OVER (PARTITION BY t1.k, t1.`token.1` ORDER BY t1.p_ask_per_1_token DESC) as rank_highest_ask\n  \n  FROM (\n    SELECT\n      *,\n      p_bid / pow(10, `token.3`) p_bid_per_1_token,\n      p_ask / pow(10, `token.3`) p_ask_per_1_token,\n      row_number() OVER (PARTITION BY ex, k, `token.1` ORDER BY ts_write DESC) as rank_last_events_on_ex\n    FROM (\n      SELECT *, untuple(ext_tokens_meta_v3(ex, k, s)) AS token\n      FROM (\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bidPr') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.askPr') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.baseVolume'), JSON_VALUE(obj_raw, '$.quoteVolume')) volumes,\n          CONCAT(if(k = 'fut', 'https://bitget.com/futures/usdt/', 'https://bitget.com/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bitget' AND _p_bid != 'null' AND _p_ask != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.bid1Price') _p_bid,\n          toFloat64OrZero(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.ask1Price') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          array(JSON_VALUE(obj_raw, '$.volume24h')) volumes,\n          CONCAT(if(k = 'fut', 'https://bybit.com/trade/usdt/', 'https://bybit.com/en/trade/spot/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'bybit' AND _p_bid != '' AND _p_ask != '' AND s NOT LIKE '%-%'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.highest_bid') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          JSON_VALUE(obj_raw, '$.lowest_ask') _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume_24h_base'), JSON_VALUE(obj_raw, '$.volume_24h_quote')),\n            array(JSON_VALUE(obj_raw, '$.base_volume'), JSON_VALUE(obj_raw, '$.quote_volume'))\n          ) volumes,\n          CONCAT(if(k = 'fut', 'https://gate.io/futures/USDT/', 'https://gate.io/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'gateio' AND _p_bid != '' AND _p_ask != ''\n        UNION ALL\n        SELECT\n          *,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestBidPrice'), JSON_VALUE(obj_raw, '$.buy')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if(k = 'fut', JSON_VALUE(obj_raw, '$.bestAskPrice'), JSON_VALUE(obj_raw, '$.sell')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(k = 'fut', array(), array(JSON_VALUE(obj_raw, '$.vol'), JSON_VALUE(obj_raw, '$.volValue'))) volumes,\n          CONCAT(if(k = 'fut', 'https://www.kucoin.com/futures/trade/', 'https://www.kucoin.com/trade/margin/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'kucoin' AND _p_bid != 'null'\n        UNION ALL\n        SELECT\n          *,\n          JSON_VALUE(obj_raw, '$.c') _p_bid,\n          toFloat64(_p_bid) p_bid,\n          _p_bid _p_ask,\n          p_bid p_ask,\n          array(JSON_VALUE(obj_raw, '$.v')) volumes,\n          CONCAT(if(k = 'fut', 'https://lbank.com/futures/', 'https://lbank.com/trade/'), s) ex_link\n        FROM default.tickers\n        WHERE ex = 'lbank' AND _p_bid != ''\n        UNION ALL\n        SELECT\n          *,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.bid1'), JSON_VALUE(obj_raw, '$.bidPrice')) _p_bid,\n          toFloat64(_p_bid) p_bid,\n          if (k = 'fut', JSON_VALUE(obj_raw, '$.ask1'), JSON_VALUE(obj_raw, '$.askPrice')) _p_ask,\n          toFloat64(_p_ask) p_ask,\n          if(\n            k = 'fut',\n            array(JSON_VALUE(obj_raw, '$.volume24'), JSON_VALUE(obj_raw, '$.holdVol')),\n            array(JSON_VALUE(obj_raw, '$.volume'), JSON_VALUE(obj_raw, '$.quoteVolume'))\n          ) volumes,\n          CONCAT(\n            if(k = 'fut', 'https://mexc.com/futures/', 'https://mexc.com/exchange/'),\n            if (k = 'fut', s, replaceRegexpOne(s, 'USDT$', '_USDT'))\n          ) ex_link\n        FROM default.tickers\n        WHERE ex = 'mexc' AND k = 'spot' AND _p_bid != ''\n      )\n      WHERE ts_write >= NOW() - INTERVAL 10 MINUTES\n    )\n    WHERE `token.2` in ('USDE', 'USDT', 'USDQ', 'DAI', 'USDR', 'USDC')\n  ) t1\n  LEFT JOIN (\n    SELECT *\n    FROM VALUES(\n      'ex String, k String, s String, ignore UInt8',\n      ('gateio', 'spot', 'GTC_USDT', 1),\n      ('gateio', 'spot', 'MTN_USDT', 1),\n      ('gateio', 'spot', 'TALK_USDT', 1),\n      ('gateio', 'spot', 'CULT_USDT', 1),\n      ('gateio', 'spot', 'QI_USDT', 1),\n      ('kucoin', 'fut', 'XBTUSDCM', 1),\n      ('kucoin', 'fut', 'XBTUSDTM', 1),\n      ('kucoin', 'fut', 'NEIROUSDTM', 1),\n      ('kucoin', 'spot', 'FORM-USDT', 1),\n      ('kucoin', 'spot', 'ACE-USDT', 1),\n      ('kucoin', 'spot', 'LAYER-USDT', 1),\n      ('kucoin', 'spot', 'ARC-USDT', 1),\n      ('kucoin', 'spot', 'BROCCOLI-USDT', 1),\n      ('lbank', 'fut', 'TROLLUSDT', 1),\n      ('lbank', 'fut', 'TSTUSDT', 1),\n      ('lbank', 'fut', 'VELOUSDT', 1),\n      ('lbank', 'spot', 'aic_usdt', 1),\n      ('lbank', 'spot', 'mnt_usdt', 1),\n      ('lbank', 'spot', 'send_usdt', 1),\n      ('lbank', 'spot', 'neiro_usdt', 1),\n      ('lbank', 'spot', 'super_usdt', 1),\n      ('lbank', 'spot', 'pundix_usdt', 1),\n      ('lbank', 'spot', 'sc_usdt', 1),\n      ('mexc', 'spot', 'MAGAUSDT', 1),\n      ('mexc', 'spot', 'ARCUSDT', 1),\n      ('mexc', 'spot', 'ALTUSDT', 1),\n      ('mexc', 'spot', 'QIUSDT', 1)\n    )\n  ) t2\n    USING (ex, k, s)\n  WHERE rank_last_events_on_ex = 1\n    AND t2.ignore = 0\n  \n    AND k = 'fut'\n)\nGROUP BY `token.1`\nHAVING p_bid_min != 0 AND p_ask_max != 0 AND ex_min != ex_max\nORDER BY diff_rel DESC\nLIMIT 100",
+            "refId": "A",
+            "round": "0s",
+            "skip_comments": true,
+            "useWindowFuncForMacros": true
+          }
+        ],
+        "title": "fut-vs-fut-ex-vs-ex-on-base-token",
+        "type": "table"
+      },
+      {
         "collapsed": true,
         "gridPos": {
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 13
+          "y": 22
         },
         "id": 9,
         "panels": [
@@ -1841,7 +2073,7 @@
               "h": 6,
               "w": 16,
               "x": 0,
-              "y": 159
+              "y": 195
             },
             "id": 1,
             "options": {
@@ -1949,7 +2181,7 @@
               "h": 6,
               "w": 16,
               "x": 0,
-              "y": 165
+              "y": 201
             },
             "id": 2,
             "options": {
@@ -2150,7 +2382,7 @@
     "timezone": "browser",
     "title": "default",
     "uid": "fec14y22vtjpcb",
-    "version": 91,
+    "version": 97,
     "weekStart": ""
   }
 }

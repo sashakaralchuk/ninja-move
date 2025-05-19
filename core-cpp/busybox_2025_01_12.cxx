@@ -319,84 +319,48 @@ void check_send_spot_fut_perp_spread_alert(
     clickhouse::Client& clickhouse_client, double diff_rel_threshold) {
     std::vector<std::tuple<std::string, std::string>> messages;
     std::ostringstream message_oss;
-    auto gen_title = [&](std::string& query_key) {
-        return fmt::format("### {}\n", query_key);
-    };
-    auto gen_clause_str = [&](std::string& key, double diff_rel,
-                              std::string& ex_fut, std::string& ex_link_fut,
-                              std::string& ex_spot, std::string& ex_link_spot) {
-        return fmt::format(
-            "\\* {}: diff\\_rel={} [{}-fut]({}) vs [{}-spot]({})\n", key,
-            diff_rel, ex_fut, ex_link_fut, ex_spot, ex_link_spot);
-    };
-    {
-        std::string query_key = "contango-ex-vs-ex";
+    auto query_key_and_extend_message = [&](std::string query_key,
+                                            std::unordered_set<std::string>&
+                                                keys_to_ignore) {
         std::string query_spreads_str =
             read_grafan_spot_fut_perp_spread_sql(query_key);
-        std::unordered_set<std::string> ccids_to_ignore = {
-            "nakamoto-games", "axelar", "peaq-2", "blockstack",
-            "cryptogpt-token"};
         std::vector<std::string> messages_int = {};
-        clickhouse_client.Select(
-            query_spreads_str, [&](const clickhouse::Block& b) {
-                for (size_t i = 0; i < b.GetRowCount(); ++i) {
-                    std::string ccid = GET_STR_COL_AT(b, 0, i);
-                    double diff_rel =
-                        b[1]->As<clickhouse::ColumnFloat64>()->At(i);
-                    std::string ex_link_fut = GET_STR_COL_AT(b, 2, i);
-                    std::string ex_link_spot = GET_STR_COL_AT(b, 3, i);
-                    std::string ex_fut = GET_STR_COL_AT(b, 10, i);
-                    std::string ex_spot = GET_STR_COL_AT(b, 11, i);
-                    if (diff_rel > diff_rel_threshold &&
-                        ccids_to_ignore.find(ccid) == ccids_to_ignore.end()) {
-                        messages_int.push_back(
-                            gen_clause_str(ccid, diff_rel, ex_fut, ex_link_fut,
-                                           ex_spot, ex_link_spot));
-                    }
+        clickhouse_client.Select(query_spreads_str, [&](const clickhouse::Block&
+                                                            b) {
+            for (size_t i = 0; i < b.GetRowCount(); ++i) {
+                std::string key = GET_STR_COL_AT(b, 0, i);
+                double diff_rel = b[1]->As<clickhouse::ColumnFloat64>()->At(i);
+                std::string ex_link_fut = GET_STR_COL_AT(b, 2, i);
+                std::string ex_link_spot = GET_STR_COL_AT(b, 3, i);
+                std::string ex_fut = GET_STR_COL_AT(b, 10, i);
+                std::string ex_spot = GET_STR_COL_AT(b, 11, i);
+                if (diff_rel > diff_rel_threshold &&
+                    keys_to_ignore.find(key) == keys_to_ignore.end()) {
+                    messages_int.push_back(fmt::format(
+                        "\\* {}: diff\\_rel={} [{}-fut]({}) vs [{}-spot]({})\n",
+                        key, diff_rel, ex_fut, ex_link_fut, ex_spot,
+                        ex_link_spot));
                 }
-            });
+            }
+        });
         if (messages_int.size() > 0) {
-            message_oss << gen_title(query_key);
+            message_oss << fmt::format("### {}\n", query_key);
             for (auto& m : messages_int) {
                 message_oss << m;
             }
         }
-    }
-    {
-        std::string query_key = "contango-ex-vs-ex-on-base-token";
-        std::string query_spreads_str =
-            read_grafan_spot_fut_perp_spread_sql(query_key);
-        std::unordered_set<std::string> tokens_to_ignore = {
-            "NAKA", "AXL", "YFI", "LAI", "PEAQ", "STX"};
-        std::vector<std::string> messages_int = {};
-        clickhouse_client.Select(
-            query_spreads_str, [&](const clickhouse::Block& b) {
-                for (size_t i = 0; i < b.GetRowCount(); ++i) {
-                    std::string token_0 = GET_STR_COL_AT(b, 0, i);
-                    double diff_rel =
-                        b[1]->As<clickhouse::ColumnFloat64>()->At(i);
-                    std::string ex_link_fut = GET_STR_COL_AT(b, 2, i);
-                    std::string ex_link_spot = GET_STR_COL_AT(b, 3, i);
-                    std::string ex_fut = GET_STR_COL_AT(b, 10, i);
-                    std::string ex_spot = GET_STR_COL_AT(b, 11, i);
-                    if (diff_rel > diff_rel_threshold &&
-                        tokens_to_ignore.find(token_0) ==
-                            tokens_to_ignore.end()) {
-                        messages_int.push_back(
-                            gen_clause_str(token_0, diff_rel, ex_fut,
-                                           ex_link_fut, ex_spot, ex_link_spot));
-                    }
-                }
-            });
-        if (messages_int.size() > 0) {
-            message_oss << gen_title(query_key);
-            for (auto& m : messages_int) {
-                message_oss << m;
-            }
-        }
-    }
-    std::cout << "message=" << message_oss.str() << std::endl;
-    std::cout << "empty=" << message_oss.str().empty() << std::endl;
+    };
+    std::unordered_set<std::string> ccids_to_ignore = {
+        "nakamoto-games", "axelar",          "peaq-2",
+        "blockstack",     "cryptogpt-token", "ice"};
+    query_key_and_extend_message("contango-ex-vs-ex", ccids_to_ignore);
+    std::unordered_set<std::string> tokens_to_ignore = {
+        "NAKA", "AXL", "YFI", "LAI", "PEAQ", "STX", "ICE"};
+    query_key_and_extend_message("contango-ex-vs-ex-on-base-token",
+                                 tokens_to_ignore);
+    std::unordered_set<std::string> t = {};
+    query_key_and_extend_message("spot-vs-spot-ex-vs-ex-on-base-token", t);
+    query_key_and_extend_message("fut-vs-fut-ex-vs-ex-on-base-token", t);
     if (message_oss.str().empty()) {
         SPDLOG_INFO("there is no spreads with diff_rel_threshold={}",
                     diff_rel_threshold);
