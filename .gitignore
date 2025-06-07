@@ -178,3 +178,5 @@ cython_debug/
 .DS_Store
 
 .var
+jupy/default-persistant-session.session
+

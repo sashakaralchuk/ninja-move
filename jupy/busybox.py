@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import time
 import typing
 
@@ -14,12 +15,14 @@ import pydantic as pc
 import requests
 from playwright import sync_api as p_sync_api
 from telethon.sync import TelegramClient
+from telethon.tl.types import UpdateNewChannelMessage
 
 logger = logging.getLogger()
 
 
 def main() -> typing.NoReturn:
-    logging.basicConfig(level=logging.INFO)
+    log_level = os.environ.get("LOG_LEVEL", "info").upper()
+    logging.basicConfig(level=logging.getLevelNamesMapping()[log_level])
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, help="Input file name", required=True)
     parser.add_argument("--ex", type=str, required=False)
@@ -40,6 +43,8 @@ def main() -> typing.NoReturn:
             fetch_telegram_messages()
         case "print-telegram-updates":
             print_telegram_updates()
+        case "listen_and_print_appartments_rent_warsaw":
+            listen_and_print_appartments_rent_warsaw()
         case _:
             raise NotImplementedError(f"Unknown {args_.mode=}")
 
@@ -536,16 +541,52 @@ def fetch_telegram_messages() -> typing.NoReturn:
             f.write("\n")
 
 
+def listen_and_print_appartments_rent_warsaw() -> typing.NoReturn:
+    """
+    Channel "Аренда жилья Варшава" on 2025-06-07 has handle @home_Warszawa
+    and channel_id=1726457020.
+
+    Run: `LOG_LEVEL=debug API_ID= API_HASH= CHANNEL_ID=1726457020 \
+        uv run busybox.py --mode=listen_and_print_appartments_rent_warsaw`
+    """
+    api_id, api_hash, channel_id = (
+        os.environ["API_ID"],
+        os.environ["API_HASH"],
+        os.environ["CHANNEL_ID"],
+    )
+
+    async def handler(update: UpdateNewChannelMessage) -> typing.NoReturn:
+        if not isinstance(update, UpdateNewChannelMessage):
+            logger.debug("not UpdateNewChannelMessage => skip update=%s", update)
+            return
+        if update.message.peer_id.channel_id != channel_id:
+            logger.debug("not channel_id=%s => skip message", channel_id)
+            return
+        message_text = update.message.message
+        logger.debug("handle message_text=%s", message_text)
+        area = re.findall("Район: (.*)\n", message_text)[0]
+        prices_strs = re.findall(r"Цена: ([0-9]*) zł \[\+([0-9]*) zł ", message_text)
+        price = sum(map(lambda x: float(x), prices_strs[0]))
+        offer_link = None
+        for reply_markup_row in update.message.reply_markup.rows:
+            for reply_markup_button in reply_markup_row.buttons:
+                if reply_markup_button.text == "К объявлению":
+                    offer_link = reply_markup_button.url
+        # XXX: send telegram notify here
+        logger.info("Found area=%s price=%s offer_link=%s", area, price, offer_link)
+
+    with TelegramClient("default-persistant-session", api_id, api_hash) as client:
+        # XXX: store this session between runs
+        client.add_event_handler(handler)
+        client.run_until_disconnected()
+
+
 def print_telegram_updates() -> typing.NoReturn:
     asyncio.get_event_loop().run_until_complete(_print_telegram_updates())
 
 
 def _print_telegram_updates() -> asyncio.Future:
-    api_id, api_hash, _chat_id = (
-        os.environ["API_ID"],
-        os.environ["API_HASH"],
-        os.environ["CHAT_ID"],
-    )
+    api_id, api_hash = (os.environ["API_ID"], os.environ["API_HASH"])
 
     async def handler(update):
         print(update)
