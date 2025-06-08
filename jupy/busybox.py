@@ -1,10 +1,8 @@
 import argparse
-import asyncio
 import datetime as dt
 import json
 import logging
 import os
-import re
 import time
 import typing
 
@@ -14,8 +12,6 @@ import playwright._impl._errors
 import pydantic as pc
 import requests
 from playwright import sync_api as p_sync_api
-from telethon.sync import TelegramClient
-from telethon.tl.types import UpdateNewChannelMessage
 
 logger = logging.getLogger()
 
@@ -39,12 +35,6 @@ def main() -> typing.NoReturn:
             match_ex_tokens_with_spot_coingecko_api(ex=args_.ex)
         case "fetch-insert-coingecko-tickers":
             fetch_insert_coingecko_tickers(ex=args_.ex)
-        case "fetch-telegram-messages":
-            fetch_telegram_messages()
-        case "print-telegram-updates":
-            print_telegram_updates()
-        case "listen_and_print_appartments_rent_warsaw":
-            listen_and_print_appartments_rent_warsaw()
         case _:
             raise NotImplementedError(f"Unknown {args_.mode=}")
 
@@ -508,92 +498,6 @@ def match_ex_tokens_with_spot_coingecko_api(
             f"({ex!r}, 'spot', {t1_s!r}, {t2_base!r}, {t2_target!r}, "
             f"{t2_coin_id!r}, 0, {notes!r}),"
         )
-
-
-def fetch_telegram_messages() -> typing.NoReturn:
-    api_id, api_hash, chat_id = (
-        os.environ["API_ID"],
-        os.environ["API_HASH"],
-        int(os.environ["CHAT_ID"]),
-    )
-    logger.info("download message for chat_id=%s", chat_id)
-    with TelegramClient("", api_id, api_hash) as client:
-        dialogs = client.get_dialogs(archived=False)
-        dialog_dest = [x for x in dialogs if x.id == chat_id][0]
-        d0 = dt.date.today()
-        d1 = d0 - dt.timedelta(days=1)
-        messages_d1 = []
-        for message in client.iter_messages(dialog_dest, offset_date=d0):
-            if message.date.date() != d1:
-                break
-            messages_d1.append(message)
-        messages_d1.sort(key=lambda x: x.date)
-    filename = f".var/messages-{chat_id}-{d1}.jsonl"
-    logger.info("write len(messages_d1)=%s into filename=%s", len(messages_d1), filename)
-    with open(filename, "w") as f:
-        for m in messages_d1:
-            o = {
-                "date": m.date.isoformat(),
-                "username": m.sender.username,
-                "text": m.text,
-            }
-            f.write(json.dumps(o, ensure_ascii=False))
-            f.write("\n")
-
-
-def listen_and_print_appartments_rent_warsaw() -> typing.NoReturn:
-    """
-    Channel "Аренда жилья Варшава" on 2025-06-07 has handle @home_Warszawa
-    and channel_id=1726457020.
-
-    Run: `LOG_LEVEL=debug API_ID= API_HASH= CHANNEL_ID=1726457020 \
-        uv run busybox.py --mode=listen_and_print_appartments_rent_warsaw`
-    """
-    api_id, api_hash, channel_id = (
-        os.environ["API_ID"],
-        os.environ["API_HASH"],
-        os.environ["CHANNEL_ID"],
-    )
-
-    async def handler(update: UpdateNewChannelMessage) -> typing.NoReturn:
-        if not isinstance(update, UpdateNewChannelMessage):
-            logger.debug("not UpdateNewChannelMessage => skip update=%s", update)
-            return
-        if update.message.peer_id.channel_id != channel_id:
-            logger.debug("not channel_id=%s => skip message", channel_id)
-            return
-        message_text = update.message.message
-        logger.debug("handle message_text=%s", message_text)
-        area = re.findall("Район: (.*)\n", message_text)[0]
-        prices_strs = re.findall(r"Цена: ([0-9]*) zł \[\+([0-9]*) zł ", message_text)
-        price = sum(map(lambda x: float(x), prices_strs[0]))
-        offer_link = None
-        for reply_markup_row in update.message.reply_markup.rows:
-            for reply_markup_button in reply_markup_row.buttons:
-                if reply_markup_button.text == "К объявлению":
-                    offer_link = reply_markup_button.url
-        # XXX: send telegram notify here
-        logger.info("Found area=%s price=%s offer_link=%s", area, price, offer_link)
-
-    with TelegramClient("default-persistant-session", api_id, api_hash) as client:
-        # XXX: store this session between runs
-        client.add_event_handler(handler)
-        client.run_until_disconnected()
-
-
-def print_telegram_updates() -> typing.NoReturn:
-    asyncio.get_event_loop().run_until_complete(_print_telegram_updates())
-
-
-def _print_telegram_updates() -> asyncio.Future:
-    api_id, api_hash = (os.environ["API_ID"], os.environ["API_HASH"])
-
-    async def handler(update):
-        print(update)
-
-    with TelegramClient("", api_id, api_hash) as client:
-        client.add_event_handler(handler)
-        client.run_until_disconnected()
 
 
 if __name__ == "__main__":
